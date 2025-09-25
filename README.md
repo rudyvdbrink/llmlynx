@@ -1,7 +1,7 @@
 # LLMLYNX
 
-<p align="center" style="background:#555;padding:16px;">
-  <img src="./public/logo_text.png" width="128" alt="LLMLYNX Logo" />
+<p align="center" style="padding:16px;">
+  <img src="./public/logo_bg.png" width="256" alt="LLMLYNX Logo" />
 </p>
 
 > Fast, elegant, and under your control.
