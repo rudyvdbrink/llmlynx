@@ -1,0 +1,32 @@
+/* Truly global styles only: reset, tokens, base typography */
+
+/* Theme variables */
+:root {
+  --bg: #0b0f14;
+  --panel: #0c1422;
+  --text: #e6edf3;
+  --muted: #9aa4b2;
+  --border: rgba(255, 255, 255, 0.08);
+  --accent: #3b82f6;
+
+  /* Bubbles (can be used in multiple pages if desired) */
+  --bubble-user: #111827;
+  --bubble-user-text: #e5e7eb;
+}
+
+/* Base */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}

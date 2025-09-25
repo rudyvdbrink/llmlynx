@@ -1,0 +1,173 @@
+/* Minimal dark chat theme — scoped to Chat page */
+
+/* Layout */
+.page {
+    min-height: 100dvh;
+    display: flex;
+    padding: 16px;
+    position: relative;
+    z-index: 1; /* above the fixed logo */
+  }
+  
+  .chat {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 860px;
+    margin: 0 auto;
+  }
+  
+  /* Fixed, centered logo behind content */
+  .fixedCenterLogo {
+    position: fixed;
+    top: 96px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: clamp(512px, 50vw, 512px);
+    height: 384px;
+    pointer-events: none;
+    opacity: 0.01;
+    background: var(--text);
+    -webkit-mask: url("/logo_text.png") no-repeat center / contain;
+    mask: url("/logo_text.png") no-repeat center / contain;
+    z-index: 0;
+  }
+  
+  /* Messages */
+  .messages {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    padding: 2px 6px 2px 2px;
+  }
+  
+  /* Message rows and bubbles */
+  .messageRow { display: flex; }
+  /* .user { }
+  .bot { } */
+  
+  .messageRow.user { justify-content: flex-end; }
+  .messageRow.bot { justify-content: flex-start; }
+  
+  .bubble {
+    width: fit-content;
+    max-width: 100%;
+    padding: 10px 12px;
+    line-height: 1.45;
+    border-radius: 8px;
+    overflow-wrap: anywhere;
+  }
+  
+  .messageRow.user .bubble {
+    background: var(--bubble-user);
+    color: var(--bubble-user-text);
+    border: 1px solid #1f2937;
+    border-radius: 8px;
+  }
+  
+  .messageRow.bot .bubble {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    color: inherit;
+  }
+  
+  /* Composer (input bar) */
+  .composer {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 32px;
+    overflow: hidden;
+    padding: 8px 8px 8px 14px;
+  }
+  
+  .composer textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.4;
+    caret-color: var(--accent);
+    resize: none;
+    overflow-y: auto;
+    padding: 8px 6px 8px 0;
+    max-height: 40vh;
+  }
+  
+  .composer textarea::placeholder { color: var(--muted); }
+  
+  .composer button {
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: #0b1220;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.12s ease, transform 0.02s ease;
+  }
+  .composer button:hover { background: #0e1628; }
+  .composer button:active { transform: translateY(1px); }
+  
+  /* Scrollbars (scoped) */
+  .messages { scrollbar-width: thin; scrollbar-color: #2a3446 transparent; }
+  .messages::-webkit-scrollbar { width: 6px; }
+  .messages::-webkit-scrollbar-thumb { background: #2a3446; border-radius: 999px; }
+  .messages::-webkit-scrollbar-track { background: transparent; }
+  
+  .bubble pre { scrollbar-width: thin; scrollbar-color: #2a3446 transparent; }
+  .bubble pre::-webkit-scrollbar { height: 6px; }
+  .bubble pre::-webkit-scrollbar-thumb { background: #2a3446; border-radius: 999px; }
+  .bubble pre::-webkit-scrollbar-track { background: transparent; }
+  
+  /* Markdown inside bubbles */
+  .bubble p { margin: 0.35rem 0; }
+  .bubble p:first-child { margin-top: 0; }
+  .bubble p:last-child { margin-bottom: 0; }
+  
+  .bubble :not(pre) > code {
+    background: #0b1220;
+    border: none;
+    padding: 2px 6px;
+    border-radius: 6px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.95em;
+  }
+  
+  /* Fenced code blocks */
+  .bubble pre,
+  .bubble pre code,
+  .bubble code.hljs,
+  .bubble .hljs {
+    background: #2f2e36 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
+    padding: 8px !important;
+    margin: 8px 0 !important;
+    border-radius: 8px !important;
+    overflow: auto;
+  }
+  
+  /* Responsive tweaks */
+  @media (max-width: 520px) {
+    .bubble { max-width: 100%; }
+  }
+  
+  @media (min-width: 1024px) {
+    .page { padding-block: 128px; }
+  }
