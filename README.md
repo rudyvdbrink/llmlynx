@@ -10,7 +10,7 @@
 
 ## Overview
 
-LLMLYNX is a lightweight, Next.js–based web interface for interacting with Large Language Models (LLMs). Supported models include: GPT-oss (OpenAI), llama3 (Meta), Gemma3 (Google), deepseek-r1, quen3, mistral, and others. All model interactions and data storage happen locally so your data remains your own property. You can reach the UI from any device within your local network, so LLMLYNX forms your home LLM interface.
+LLMLYNX is a lightweight, Next.js–based web interface for interacting with Large Language Models (LLMs). Supported models include: GPT-oss (OpenAI), llama3 (Meta), Gemma3 (Google), deepseek-r1, quen3, mistral, and others. All model interactions and data storage happen locally so your data remains your own property. You can reach the UI through the browser and from any device within your local network, so LLMLYNX is your home LLM interface.
 
 LLMLYNX is designed to be:
 
@@ -19,6 +19,13 @@ LLMLYNX is designed to be:
 - **Secure by design** – system prompts and model control live server‑side.
 - **Performant** – streams tokens in real time.
 - **Organized** – clean separation of auth, chat UI, and API logic.
+
+<p align="center" style="padding:16px;">
+  <img src="./public/screen.png" alt="LLMLYNX Logo" />
+</p>
+
+> ⚠️ **Warning:** LLMs hallucinate: they can sound convincing and still be wrong. 
+
 
 ---
 
