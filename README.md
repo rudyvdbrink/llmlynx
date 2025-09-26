@@ -4,7 +4,7 @@
   <img src="./public/logo_bg.png" width="256" alt="LLMLYNX Logo" />
 </p>
 
-> Fast, elegant, and under your control.
+> Fast, elegant, and independent.
 
 ---
 
