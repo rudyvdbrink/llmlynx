@@ -10,9 +10,9 @@
 
 ## Overview
 
-LLMLYNX is a lightweight, Next.js–based web interface for chatting with locally running Large Language Models (LLMs).  
+LLMLYNX is a lightweight, Next.js–based web interface for interacting with Large Language Models (LLMs). Supported models include: GPT-oss (OpenAI), llama3 (Meta), Gemma3 (Google), deepseek-r1, quen3, mistral, and others. All model interactions and data storage happen locally so your data remains your own property. You can reach the UI from any device within your local network, so LLMLYNX forms your home LLM interface.
 
-It is designed to be:
+LLMLYNX is designed to be:
 
 - **Self‑hosted** – run entirely on your own machine or server via [Ollama](https://ollama.ai/).
 - **Extensible** – plug in custom agents, tools, or retrieval layers.
