@@ -142,4 +142,7 @@ vite.config.ts.timestamp-*
 run.ps1
 /src/generated/prisma
 
-/src/generated/prisma
+# Prisma
+/prisma/dev.db
+/prisma/dev.db-journal
+*.db

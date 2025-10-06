@@ -3,7 +3,7 @@
     min-height: 100dvh;
     display: grid;
     place-items: start center;
-    padding: clamp(360px, 46vh, 480px) 20px 56px;
+    padding: clamp(360px, 46vh, 100px) 0px 100px;
     position: relative;
     isolation: isolate;
   }
