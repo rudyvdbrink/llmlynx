@@ -160,7 +160,7 @@
   /* Very narrow phones */
   @media (max-width: 380px) {
     .logoBackdrop {
-      top: 22px;
+      top: 40px;
       width: clamp(180px, 70vw, 260px);
       height: 140px;
     }
