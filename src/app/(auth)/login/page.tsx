@@ -71,12 +71,15 @@ export default function LoginPage() {
             onChange={(e) => setPw(e.target.value)}
             placeholder="Your password"
           />
+          <div style={{ marginTop: 2 }}>
+            <a className={styles.inlineLink} href="/recovery">Forgot password?</a>
+          </div>
         </div>
 
         <button
           type="submit"
-            className={styles.button}
-            disabled={loading || !email || pw.length === 0}
+          className={styles.button}
+          disabled={loading || !email || pw.length === 0}
         >
           {loading ? "Signing in..." : "Log In"}
         </button>
