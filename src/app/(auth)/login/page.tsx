@@ -3,56 +3,97 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import styles from "../auth.module.css";
-import Link from "next/link";
 
 export default function LoginPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [pw, setPw] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
-  function onSubmit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
-    // TODO: Replace with real authentication
-    router.push("/chat");
+    setMsg(null);
+    setLoading(true);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: pw }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setMsg({ type: "error", text: data?.message || "Invalid credentials" });
+      } else {
+        setMsg({ type: "success", text: "Logged in. Redirecting..." });
+        setTimeout(() => router.push("/dashboard"), 500);
+      }
+    } catch {
+      setMsg({ type: "error", text: "Network error" });
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
-    <main className={styles.container}>
-      <section className={styles.card} aria-label="Login">
-        <h1 className={styles.title}>Welcome back</h1>
-        <p className={styles.subtitle}>Log in to continue</p>
+    <section className={styles.card} aria-label="Log in">
+      <h1 className={styles.title}>Welcome back</h1>
+      <p className={styles.subtitle}>Enter your credentials to continue.</p>
 
-        <form className={styles.form} onSubmit={onSubmit}>
-          <label className={styles.label} htmlFor="email">Email</label>
+      <form className={styles.form} onSubmit={submit} noValidate>
+        <div className={styles.fieldGroup}>
+          <div className={styles.labelRow}>
+            <label htmlFor="email" className={styles.label}>Email</label>
+          </div>
           <input
             id="email"
             className={styles.input}
             type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
             required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
           />
+        </div>
 
-          <label className={styles.label} htmlFor="password">Password</label>
+        <div className={styles.fieldGroup}>
+          <div className={styles.labelRow}>
+            <label htmlFor="password" className={styles.label}>Password</label>
+          </div>
           <input
             id="password"
             className={styles.input}
             type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
             required
+            autoComplete="current-password"
+            value={pw}
+            onChange={(e) => setPw(e.target.value)}
+            placeholder="Your password"
           />
-
-          <button className={styles.button} type="submit">Log in</button>
-        </form>
-
-        <div className={styles.linkRow}>
-          New here?{" "}
-          <Link className={styles.link} href="/signup">Create an account</Link>
         </div>
-      </section>
-    </main>
+
+        <button
+          type="submit"
+            className={styles.button}
+            disabled={loading || !email || pw.length === 0}
+        >
+          {loading ? "Signing in..." : "Log In"}
+        </button>
+
+        {msg && (
+          <p className={msg.type === "error" ? styles.error : styles.success}>
+            {msg.text}
+          </p>
+        )}
+
+        <p className={styles.linkRow}>
+          Need an account?{" "}
+          <a className={styles.inlineLink} href="/signup">
+            Sign up
+          </a>
+        </p>
+      </form>
+    </section>
   );
 }

@@ -1,4 +1,12 @@
+import React from "react";
+import styles from "./auth.module.css";
+
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
-    // Simple wrapper; you can add a logo or different background here later if desired.
-    return <>{children}</>;
-  }
+  return (
+    <div className={styles.container}>
+      <div className={styles.logoBackdrop} aria-hidden="true" />
+      <div className={styles.vignette} aria-hidden="true" />
+      {children}
+    </div>
+  );
+}

@@ -16,7 +16,7 @@ export default function ChatPage() {
   const [uiMessages, setUiMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [model, setModel] = useState("gemma3:1b");
+  const [model, setModel] = useState("gpt-oss:20b");
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);

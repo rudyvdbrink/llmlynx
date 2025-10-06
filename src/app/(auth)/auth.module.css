@@ -1,69 +1,206 @@
+/* Root auth layout container */
 .container {
     min-height: 100dvh;
     display: grid;
-    place-items: center;
-    padding: 24px;
+    place-items: start center;
+    padding: clamp(360px, 46vh, 100px) 0px 100px;
+    position: relative;
+    isolation: isolate;
   }
   
+  /* Faint background logo */
+  .logoBackdrop {
+    position: fixed;
+    top: 90px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: clamp(340px, 42vw, 480px);
+    height: 256px;
+    pointer-events: none;
+    opacity: 0.05;
+    background: var(--text);
+    -webkit-mask: url("/logo_notext.png") no-repeat center / contain;
+    mask: url("/logo_notext.png") no-repeat center / contain;
+    z-index: 0;
+  }
+  
+  /* Card */
   .card {
+    position: relative;
     width: 100%;
     max-width: 420px;
-    background: var(--panel);
+    background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015)), var(--panel);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 20px;
+    border-radius: 16px;
+    padding: 28px 26px 30px;
+    box-shadow: 0 4px 16px -8px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.04) inset;
+    backdrop-filter: blur(4px);
+    z-index: 1;
   }
   
   .title {
     margin: 0 0 4px 0;
-    font-size: 22px;
+    font-size: 24px;
     font-weight: 600;
+    letter-spacing: 0.5px;
   }
   
   .subtitle {
-    margin: 0 0 16px 0;
+    margin: 0 0 18px 0;
     color: var(--muted);
     font-size: 14px;
+    line-height: 1.4;
   }
   
-  .form {
-    display: grid;
-    gap: 10px;
-    margin-top: 12px;
-  }
-  
+  .form { display: grid; gap: 14px; margin-top: 8px; }
+  .fieldGroup { display: grid; gap: 6px; }
+  .labelRow { display: flex; justify-content: space-between; align-items: center; }
   .label {
-    font-size: 13px;
+    font-size: 12px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    font-weight: 600;
     color: var(--muted);
   }
   
   .input {
     width: 100%;
-    padding: 10px 12px;
-    border-radius: 8px;
+    padding: 12px 14px;
+    border-radius: 10px;
     border: 1px solid var(--border);
     background: #0b1220;
     color: var(--text);
+    font-size: 14px;
     outline: none;
+    transition: border-color 0.16s ease, background 0.16s ease, box-shadow 0.16s ease;
+  }
+  .input:focus {
+    border-color: var(--accent, #3b82f6);
+    box-shadow: 0 0 0 1px var(--accent, #3b82f6);
+    background: #0d1525;
   }
   
   .button {
-    margin-top: 8px;
-    padding: 10px 12px;
-    border-radius: 8px;
+    margin-top: 4px;
+    padding: 12px 14px;
+    border-radius: 10px;
     border: 1px solid var(--border);
-    background: #0b1220;
+    background: linear-gradient(135deg, #0f172a, #121b2f);
     color: var(--text);
-    cursor: pointer;
-  }
-  
-  .linkRow {
-    margin-top: 10px;
+    font-weight: 600;
     font-size: 14px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: background 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+  }
+  .button:hover { background: linear-gradient(135deg, #162338, #182b45); }
+  .button:active { transform: translateY(1px); }
+  .button:disabled { opacity: 0.6; cursor: not-allowed; }
+  
+  .error { margin: 4px 0 0; color: #f87171; font-size: 13px; line-height: 1.3; }
+  .success { margin: 4px 0 0; color: #4ade80; font-size: 13px; line-height: 1.3; }
+  
+  .linkRow { margin-top: 14px; font-size: 14px; color: var(--muted); }
+  .inlineLink {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .inlineLink:hover { text-decoration-thickness: 2px; }
+  
+  .dashboardWrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 0 20px 48px;
+    display: grid;
+    gap: 28px;
+  }
+  .dashboardCard {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px;
+    display: grid;
+    gap: 16px;
+  }
+  .logoutForm { margin-top: 8px; }
+  .badge {
+    display: inline-block;
+    padding: 4px 10px 5px;
+    font-size: 11px;
+    border-radius: 100px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
     color: var(--muted);
   }
   
-  .link {
-    color: var(--text);
-    text-decoration: underline;
+  /* Mobile-first adjustments: ensure full logo visibility */
+  @media (max-width: 640px) {
+    .logoBackdrop {
+      top: 16px;
+      width: clamp(200px, 60vw, 300px);
+      height: 160px;
+      opacity: 0.06;
+    }
+    /* Top padding = top offset (16) + logo height (160) + gap (~32) = 208 */
+    .container {
+      padding: 208px 16px 40px;
+    }
+    .card {
+      padding: 24px 20px 26px;
+    }
+    .title { font-size: 22px; }
+  }
+  
+  /* Very narrow phones */
+  @media (max-width: 380px) {
+    .logoBackdrop {
+      top: 40px;
+      width: clamp(180px, 70vw, 260px);
+      height: 140px;
+    }
+    .container {
+      padding: 184px 14px 40px; /* 12 + 140 + 32 */
+    }
+  }
+  
+  /* Short height viewports */
+  @media (max-height: 700px) {
+    .logoBackdrop {
+      top: 12px;
+      height: 150px;
+    }
+    .container {
+      padding-top: 194px; /* 12 + 150 + 32 */
+    }
+  }
+  
+  @media (max-height: 600px) {
+    .logoBackdrop {
+      top: 8px;
+      height: 130px;
+    }
+    .container {
+      padding-top: 170px; /* 8 + 130 + 32 */
+    }
+  }
+  
+  /* Extremely short (keyboard open scenarios) */
+  @media (max-height: 520px) {
+    .logoBackdrop {
+      top: 6px;
+      height: 110px;
+    }
+    .container {
+      padding-top: 152px; /* 6 + 110 + 36 */
+    }
+  }
+  
+  @media (prefers-reduced-motion: reduce) {
+    .button, .input { transition: none; }
   }
