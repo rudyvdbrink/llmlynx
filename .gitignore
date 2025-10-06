@@ -141,3 +141,5 @@ vite.config.ts.timestamp-*
 # Misc
 run.ps1
 /src/generated/prisma
+
+/src/generated/prisma
