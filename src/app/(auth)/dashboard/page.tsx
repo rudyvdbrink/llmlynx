@@ -26,9 +26,7 @@ export default async function DashboardPage() {
         <p className={styles.subtitle} style={{ marginBottom: 4 }}>
           Welcome, <strong>{user.email}</strong>
         </p>
-        <form className={styles.logoutForm} action="/api/auth/logout" method="POST">
-          <button className={styles.button} type="submit">Log Out</button>
-        </form>
+        <a className={styles.button} href="/logout">Log Out</a>
       </div>
     </div>
   );
