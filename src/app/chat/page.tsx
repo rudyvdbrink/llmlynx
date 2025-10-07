@@ -3,15 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import MarkdownMessage from "../../components/MarkdownMessage";
 import styles from "./Chat.module.css";
+import Sidebar from "./Sidebar";
 
 type Role = "user" | "assistant";
 type ChatMessage = { role: Role; content: string };
-
-// UI-friendly shape (maps assistant -> bot)
 type UiMessage = { sender: "user" | "bot"; text: string };
+type User = { id: string; email: string } | null;
 
 export default function ChatPage() {
-  // Only keep user & assistant messages client-side; system prompt stays server-only
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
   const [uiMessages, setUiMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
@@ -21,7 +20,24 @@ export default function ChatPage() {
   const endRef = useRef<HTMLDivElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  // Auto-resize textarea
+  const [collapsed, setCollapsed] = useState<boolean>(false);
+  const [user, setUser] = useState<User>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.innerWidth < 760) {
+      setCollapsed(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch("/api/auth/me")
+      .then(r => r.json().catch(() => ({ user: null })))
+      .then(data => { if (active) setUser(data.user ?? null); })
+      .catch(() => { if (active) setUser(null); });
+    return () => { active = false; };
+  }, []);
+
   useEffect(() => {
     const ta = textAreaRef.current;
     if (!ta) return;
@@ -41,13 +57,12 @@ export default function ChatPage() {
     setConversation(prev => [...prev, userMsg]);
     setUiMessages(prev => [...prev, { sender: "user", text: trimmed }]);
     setInput("");
-
     setIsStreaming(true);
+
     const controller = new AbortController();
     abortRef.current = controller;
 
-    // Placeholder assistant (bot) entry
-    const botIndex = uiMessages.length + 1; // after adding user above
+    const botIndex = uiMessages.length + 1;
     setUiMessages(prev => [...prev, { sender: "bot", text: "" }]);
 
     try {
@@ -55,15 +70,12 @@ export default function ChatPage() {
         method: "POST",
         body: JSON.stringify({
           model,
-          // Do NOT send system prompt; server injects from env
           messages: [...conversation, userMsg],
         }),
         signal: controller.signal,
       });
 
-      if (!res.ok || !res.body) {
-        throw new Error("Network/response error");
-      }
+      if (!res.ok || !res.body) throw new Error("Network/response error");
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -74,7 +86,6 @@ export default function ChatPage() {
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
 
-        // Split newline-delimited JSON
         const lines = chunk.split("\n").map(l => l.trim()).filter(Boolean);
         for (const line of lines) {
           try {
@@ -91,7 +102,7 @@ export default function ChatPage() {
               setConversation(prev => [...prev, { role: "assistant", content: botAccum }]);
             }
           } catch {
-            // Ignore partial/invalid line
+            /* ignore partial JSON */
           }
         }
       }
@@ -99,10 +110,10 @@ export default function ChatPage() {
       if (err.name !== "AbortError") {
         setUiMessages(prev => {
           const copy = [...prev];
-          copy[botIndex] = {
-            sender: "bot",
-            text: (copy[botIndex]?.text || "") + "\n\n*(Stream error)*",
-          };
+            copy[botIndex] = {
+              sender: "bot",
+              text: (copy[botIndex]?.text || "") + "\n\n*(Stream error)*",
+            };
           return copy;
         });
       }
@@ -114,13 +125,14 @@ export default function ChatPage() {
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isStreaming) return; // Prevent submit while streaming (stop button handles cancel)
     handleSend();
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      if (!isStreaming) handleSend();
     }
   }
 
@@ -130,44 +142,16 @@ export default function ChatPage() {
 
   return (
     <main className={styles.page}>
-      <div className={styles.chat}>
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-          <select
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            aria-label="Model"
-            style={{
-              background: "#0b1220",
-              color: "var(--text)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              padding: "6px 10px",
-            }}
-            disabled={isStreaming}
-          >
-	        <option value="gpt-oss:20b">gpt-oss:20b</option>
-            <option value="gemma3:1b">gemma3:1b</option>
-            <option value="gemma3:12b">gemma3:12b</option>
-            <option value="mistral">mistral</option>
-          </select>
-          {isStreaming && (
-            <button
-              type="button"
-              onClick={handleCancel}
-              style={{
-                background: "#501f1f",
-                color: "var(--text)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                padding: "6px 12px",
-                cursor: "pointer",
-              }}
-            >
-              Stop
-            </button>
-          )}
-        </div>
+      <Sidebar
+        collapsed={collapsed}
+        onToggle={() => setCollapsed(c => !c)}
+        user={user}
+        model={model}
+        onChangeModel={setModel}
+        modelDisabled={isStreaming}
+      />
 
+      <div className={styles.chatArea}>
         <section className={styles.messages} aria-live="polite" aria-label="Chat messages">
           {uiMessages.map((msg, idx) => (
             <div
@@ -191,22 +175,46 @@ export default function ChatPage() {
             disabled={isStreaming}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder={isStreaming ? "Waiting for model..." : "Ask the llynx..."}
+            placeholder={isStreaming ? "Model is responding..." : "Ask the llynx..."}
             aria-label="Message"
             rows={1}
           />
-          <button type="submit" aria-label="Send" disabled={isStreaming || !input.trim()}>
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              fill="none"
-              xmlns="http://www.w3.org/2000/svg"
-              aria-hidden="true"
+          {isStreaming ? (
+            <button
+              type="button"
+              aria-label="Stop response"
+              className={`${styles.stopButton} ${styles.iconButton}`}
+              onClick={handleCancel}
             >
-              <path d="M4 12L20 4L12 20L11 13L4 12Z" fill="currentColor" />
-            </svg>
-          </button>
+              {/* Stop square */}
+              <svg
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <rect x="7" y="7" width="10" height="10" rx="1" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              type="submit"
+              aria-label="Send"
+              disabled={!input.trim()}
+              className={styles.iconButton}
+            >
+              <svg
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M4 12L20 4L12 20L11 13L4 12Z" transform="translate(-0.5 0)" />
+              </svg>
+            </button>
+          )}
         </form>
       </div>
     </main>
