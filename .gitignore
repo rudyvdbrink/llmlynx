@@ -141,7 +141,7 @@ vite.config.ts.timestamp-*
 # Misc
 run.ps1
 /src/generated/prisma
-to_do.txt
+to_do*
 
 # Prisma
 /prisma/dev.db

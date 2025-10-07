@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
+import { getCurrentUser } from "../lib/session";
 
-// For now, always show login first.
-// Later, replace with a session check and redirect to /chat if authenticated.
-export default function Index() {
-  redirect("/login");
+export default async function Index() {
+  const user = await getCurrentUser();
+  redirect(user ? "/chat" : "/login");
 }

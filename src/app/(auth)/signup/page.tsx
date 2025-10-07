@@ -14,7 +14,7 @@ export default function SignupPage() {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (recoveryCode) return; // Prevent double submit after success
+    if (recoveryCode) return;
     setMsg(null);
     setLoading(true);
     try {
@@ -40,8 +40,8 @@ export default function SignupPage() {
     }
   }
 
-  function goToDashboard() {
-    router.push("/dashboard");
+  function goToChat() {
+    router.push("/chat");
   }
 
   return (
@@ -105,11 +105,11 @@ export default function SignupPage() {
             </div>
             <button
               type="button"
-              onClick={goToDashboard}
+              onClick={goToChat}
               className={styles.button}
               style={{ marginTop: 12 }}
             >
-              Go to Dashboard
+              Go to Chat
             </button>
           </div>
         )}
