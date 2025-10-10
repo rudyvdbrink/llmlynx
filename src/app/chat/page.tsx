@@ -249,6 +249,35 @@ export default function ChatPage() {
     setUiMessages([]);
   }
 
+  // Rename conversation
+  async function onRenameConversation(id: string, newTitle: string) {
+    if (!user) return;
+    await fetch(`/api/conversations/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: newTitle }),
+    }).then((r) => {
+      if (!r.ok) throw new Error("Rename failed");
+    }).catch(() => {});
+    refreshConversations();
+  }
+
+  // Delete conversation
+  async function onDeleteConversation(id: string) {
+    if (!user) return;
+    await fetch(`/api/conversations/${id}`, { method: "DELETE" })
+      .then((r) => {
+        if (!r.ok && r.status !== 204) throw new Error("Delete failed");
+      })
+      .catch(() => {});
+    if (id === activeConversationId) {
+      setActiveConversationId(null);
+      setConversation([]);
+      setUiMessages([]);
+    }
+    refreshConversations();
+  }
+
   return (
     <main className={styles.page}>
       <Sidebar
@@ -262,6 +291,8 @@ export default function ChatPage() {
         activeConversationId={activeConversationId}
         onNewConversation={onNewConversation}
         onOpenConversation={onOpenConversation}
+        onRenameConversation={onRenameConversation}
+        onDeleteConversation={onDeleteConversation}
       />
 
       <div className={styles.chatArea}>

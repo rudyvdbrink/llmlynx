@@ -11,7 +11,7 @@
     padding: 16px 16px 20px 16px;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow: hidden;              /* hide any accidental horizontal overflow */
     z-index: 50;
     transform: translateX(0);
     transition:
@@ -39,6 +39,7 @@
     flex-direction: column;
     gap: 14px;
     overflow-y: auto;
+    overflow-x: hidden;            /* prevent horizontal scrollbar in sidebar */
     opacity: 1;
     transform: translateX(0);
     transition:
@@ -132,7 +133,7 @@
   
   /* Model select block */
   .modelBlock { display: flex; flex-direction: column; gap: 6px; }
-  /* Note: Model label now uses .sidebarTitle in Sidebar.tsx for consistency */
+  /* Model label now uses .sidebarTitle in Sidebar.tsx for consistency */
   
   /* Keep the select visuals aligned with conversation items */
   .modelSelect {
@@ -189,6 +190,7 @@
     display: flex;
     flex-direction: column;
     gap: 6px; /* mobile default spacing */
+    overflow-x: hidden;            /* ensure no horizontal scroll appears */
   }
   /* Desktop/tablet: a tiny bit more spacing */
   @media (min-width: 761px) {
@@ -197,45 +199,106 @@
     }
   }
   
-  /* Each conversation: like the select option */
+  /* Conversation container with border/background */
   .conversationItem {
+    position: relative;
     width: 100%;
-    text-align: left;
     background: #0b1220;          /* align with .modelSelect */
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 6px 10px;
-    font-size: 13px;
-    outline: none;
-    display: flex;
+    box-sizing: border-box;        /* prevent border overflow */
+    display: grid;
+    grid-template-columns: 1fr auto; /* title area + kebab area */
     align-items: center;
-    cursor: pointer;
-    box-sizing: border-box;        /* prevent border/shadow overflow */
-    letter-spacing: 0.01em;        /* slightly increase character spacing */
+    font-size: 13px;               /* keep the previous font size */
   }
-  
   .conversationItem:hover,
-  .conversationItem:focus-visible {
-    border-color: var(--accent);
-    box-shadow: none;              /* avoid clipped glow at edges */
+  .conversationItem:focus-within {
+    border-color: var(--accent);   /* outline effect without glow to avoid clip */
     background: #0d1424;
   }
-  
-  /* Active conversation emphasis */
   .conversationItem.active {
     border-color: var(--accent);
-    box-shadow: none;              /* avoid clipped glow at edges */
+  }
+  
+  /* Inner main button (title area) */
+  .conversationMainBtn {
+    grid-column: 1 / 2;
+    min-width: 0;                  /* allow inner text to actually overflow */
+    text-align: left;
+    background: transparent;
+    border: none;
+    padding: 6px 10px;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    letter-spacing: 0.01em;        /* slightly increased char spacing */
+  }
+  
+  /* Kebab (ellipsis) button — always visible on the right */
+  .kebabBtn {
+    grid-column: 2 / 3;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-right: 6px;
+  }
+  .kebabBtn:hover,
+  .kebabBtn:focus-visible {
+    color: var(--text);
+    outline: 1px solid var(--border);
+    outline-offset: 0;
+  }
+  
+  /* Context menu: fixed to viewport with very high z-index */
+  .menu {
+    position: fixed;               /* detach from scrolling/overflow containers */
+    min-width: 180px;
+    background: #0b1220;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 10000;                /* ensure always on top */
+    box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+  }
+  .menuItem {
+    background: transparent;
+    border: none;
+    text-align: left;
+    color: var(--text);
+    padding: 6px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .menuItem:hover,
+  .menuItem:focus-visible {
+    background: #0e1628;
+  }
+  .menuDanger {
+    color: #f87171;
+  }
+  .menuDanger:hover,
+  .menuDanger:focus-visible {
+    background: #2a0f14;
   }
   
   /* Title: single line; fade only when overflowing (toggle via extra class) */
   .conversationTitle {
     display: block;
+    width: 100%;
     white-space: nowrap;
     overflow: hidden;              /* no wrapping */
     text-overflow: clip;           /* base behavior without fade */
   }
-  
   /* Applied only when text actually overflows (Sidebar.tsx toggles this class) */
   .conversationTitleFade {
     -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
@@ -257,7 +320,7 @@
     .sidebar.collapsed {
       transform: translateX(calc(-100% + var(--collapsed-width)));
       background: transparent;
-      border-right: none;
+      border-right: none;          /* remove faint gray edge on mobile when collapsed */
       box-shadow: none;
     }
     .sidebar.collapsed .sidebarContent {
