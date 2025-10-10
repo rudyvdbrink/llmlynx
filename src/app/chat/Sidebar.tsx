@@ -117,7 +117,7 @@ export default function Sidebar({
 
         {/* Model Selection */}
         <div className={styles.modelBlock}>
-          <p className={styles.modelLabel} id="model-select-label">Model</p>
+          <p className={styles.sidebarTitle} id="model-select-label">Model</p>
           <select
             aria-labelledby="model-select-label"
             className={styles.modelSelect}

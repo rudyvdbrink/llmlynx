@@ -130,16 +130,11 @@
     border-radius: 1px;
   }
   
-  /* Model select block (kept in sidebar to match its visuals) */
+  /* Model select block */
   .modelBlock { display: flex; flex-direction: column; gap: 6px; }
-  .modelLabel {
-    font-size: 12px;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-    text-transform: uppercase;
-    margin: 0;
-  }
+  /* Note: Model label now uses .sidebarTitle in Sidebar.tsx for consistency */
+  
+  /* Keep the select visuals aligned with conversation items */
   .modelSelect {
     background: #0b1220;
     color: var(--text);
@@ -223,23 +218,22 @@
   .conversationItem:hover,
   .conversationItem:focus-visible {
     border-color: var(--accent);
-    /* remove outer box-shadow to prevent clipped edges by container overflow */
-    box-shadow: none;
+    box-shadow: none;              /* avoid clipped glow at edges */
     background: #0d1424;
   }
   
   /* Active conversation emphasis */
   .conversationItem.active {
     border-color: var(--accent);
-    box-shadow: none; /* ensure no overflow clipping */
+    box-shadow: none;              /* avoid clipped glow at edges */
   }
   
   /* Title: single line; fade only when overflowing (toggle via extra class) */
   .conversationTitle {
     display: block;
     white-space: nowrap;
-    overflow: hidden; /* no wrapping */
-    text-overflow: clip; /* we'll add a fade when necessary */
+    overflow: hidden;              /* no wrapping */
+    text-overflow: clip;           /* base behavior without fade */
   }
   
   /* Applied only when text actually overflows (Sidebar.tsx toggles this class) */
