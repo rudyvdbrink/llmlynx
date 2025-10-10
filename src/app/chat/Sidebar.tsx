@@ -1,6 +1,7 @@
 "use client";
 
-import styles from "./Chat.module.css";
+import { useEffect, useRef, useState } from "react";
+import styles from "./Sidebar.module.css";
 
 type User = { id: string; email: string } | null;
 
@@ -37,6 +38,36 @@ export default function Sidebar({
   onNewConversation,
   onOpenConversation,
 }: SidebarProps) {
+  const listRef = useRef<HTMLUListElement | null>(null);
+  const [overflowIds, setOverflowIds] = useState<Set<string>>(new Set());
+
+  // Measure which titles overflow and toggle fade class only for those
+  useEffect(() => {
+    const measure = () => {
+      const next = new Set<string>();
+      const root = listRef.current;
+      if (root) {
+        const spans = root.querySelectorAll<HTMLElement>('[data-convo-title="true"]');
+        spans.forEach((el) => {
+          const id = el.dataset.id;
+          if (!id) return;
+          // Add a small epsilon to account for subpixel rounding
+          const overflows = el.scrollWidth - el.clientWidth > 1;
+          if (overflows) next.add(id);
+        });
+      }
+      setOverflowIds(next);
+    };
+
+    // Measure asap and on resize
+    const rAF = requestAnimationFrame(measure);
+    window.addEventListener("resize", measure);
+    return () => {
+      cancelAnimationFrame(rAF);
+      window.removeEventListener("resize", measure);
+    };
+  }, [conversations, collapsed]);
+
   return (
     <aside
       className={`${styles.sidebar} ${collapsed ? styles.collapsed : ""}`}
@@ -111,9 +142,10 @@ export default function Sidebar({
               + New
             </button>
           </div>
-          <ul className={styles.conversationList} aria-label="Conversations">
+          <ul className={styles.conversationList} aria-label="Conversations" ref={listRef}>
             {conversations.map((c) => {
               const isActive = c.id === activeConversationId;
+              const fade = overflowIds.has(c.id);
               return (
                 <li key={c.id}>
                   <button
@@ -122,10 +154,13 @@ export default function Sidebar({
                     onClick={() => onOpenConversation(c.id)}
                     title={c.title ?? "Untitled"}
                   >
-                    <span className={styles.conversationTitle}>
+                    <span
+                      className={`${styles.conversationTitle} ${fade ? styles.conversationTitleFade : ""}`}
+                      data-convo-title="true"
+                      data-id={c.id}
+                    >
                       {c.title ?? "Untitled"}
                     </span>
-                    {c.model ? <span className={styles.conversationModel}>{c.model}</span> : null}
                   </button>
                 </li>
               );
