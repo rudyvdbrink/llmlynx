@@ -8,12 +8,13 @@ datasource db {
 }
 
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
+  id           String       @id @default(uuid())
+  email        String       @unique
   passwordHash String
-  recoveryCode String?   @unique
-  createdAt    DateTime  @default(now())
+  recoveryCode String?      @unique
+  createdAt    DateTime     @default(now())
   sessions     Session[]
+  conversations Conversation[]
 }
 
 model Session {
@@ -26,4 +27,34 @@ model Session {
 
   @@index([userId])
   @@index([token])
+}
+
+enum MessageRole {
+  user
+  assistant
+  system
+}
+
+model Conversation {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String?
+  model     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  messages  Message[]
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id             String        @id @default(uuid())
+  conversationId String
+  conversation   Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  content        String
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId, createdAt])
 }
