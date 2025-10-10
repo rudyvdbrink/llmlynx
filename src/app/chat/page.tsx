@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import MarkdownMessage from "../../components/MarkdownMessage";
 import styles from "./Chat.module.css";
-import Sidebar from "./Sidebar";
+import Sidebar from "./sidebar/Sidebar";
 
 type Role = "user" | "assistant" | "system";
 type ChatMessage = { role: Role; content: string };
