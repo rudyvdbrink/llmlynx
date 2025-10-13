@@ -3,12 +3,29 @@
 import { useEffect, useRef, useState } from "react";
 import MarkdownMessage from "../../components/MarkdownMessage";
 import styles from "./Chat.module.css";
-import Sidebar from "./Sidebar";
+import Sidebar from "./sidebar/Sidebar";
 
-type Role = "user" | "assistant";
+type Role = "user" | "assistant" | "system";
 type ChatMessage = { role: Role; content: string };
 type UiMessage = { sender: "user" | "bot"; text: string };
 type User = { id: string; email: string } | null;
+
+type ConversationSummary = {
+  id: string;
+  title: string | null;
+  model: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ConversationWithMessages = {
+  id: string;
+  title: string | null;
+  model: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messages: { id: string; role: Role; content: string; createdAt: string }[];
+};
 
 export default function ChatPage() {
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
@@ -23,6 +40,9 @@ export default function ChatPage() {
   const [collapsed, setCollapsed] = useState<boolean>(false);
   const [user, setUser] = useState<User>(null);
 
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+
   useEffect(() => {
     if (typeof window !== "undefined" && window.innerWidth < 760) {
       setCollapsed(true);
@@ -32,11 +52,36 @@ export default function ChatPage() {
   useEffect(() => {
     let active = true;
     fetch("/api/auth/me")
-      .then(r => r.json().catch(() => ({ user: null })))
-      .then(data => { if (active) setUser(data.user ?? null); })
-      .catch(() => { if (active) setUser(null); });
-    return () => { active = false; };
+      .then((r) => r.json().catch(() => ({ user: null })))
+      .then((data) => {
+        if (active) setUser(data.user ?? null);
+      })
+      .catch(() => {
+        if (active) setUser(null);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
+
+  function refreshConversations() {
+    if (!user) {
+      setConversations([]);
+      return;
+    }
+    fetch("/api/conversations")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data) => setConversations(data.conversations ?? []))
+      .catch(() => setConversations([]));
+  }
+
+  useEffect(() => {
+    refreshConversations();
+    // Reset active conversation when logging out
+    if (!user) {
+      setActiveConversationId(null);
+    }
+  }, [user]);
 
   useEffect(() => {
     const ta = textAreaRef.current;
@@ -49,13 +94,29 @@ export default function ChatPage() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [uiMessages]);
 
+  async function ensureConversation(): Promise<string | null> {
+    if (!user) return null; // guest mode: no conversation
+    if (activeConversationId) return activeConversationId;
+    const res = await fetch("/api/conversations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+    if (!res.ok) throw new Error("Failed to create conversation");
+    const data = await res.json();
+    const id = data.conversation.id as string;
+    setActiveConversationId(id);
+    refreshConversations();
+    return id;
+  }
+
   async function handleSend() {
     const trimmed = input.trim();
     if (!trimmed || isStreaming) return;
 
     const userMsg: ChatMessage = { role: "user", content: trimmed };
-    setConversation(prev => [...prev, userMsg]);
-    setUiMessages(prev => [...prev, { sender: "user", text: trimmed }]);
+    setConversation((prev) => [...prev, userMsg]);
+    setUiMessages((prev) => [...prev, { sender: "user", text: trimmed }]);
     setInput("");
     setIsStreaming(true);
 
@@ -63,15 +124,21 @@ export default function ChatPage() {
     abortRef.current = controller;
 
     const botIndex = uiMessages.length + 1;
-    setUiMessages(prev => [...prev, { sender: "bot", text: "" }]);
+    setUiMessages((prev) => [...prev, { sender: "bot", text: "" }]);
 
     try {
+      const convId = await ensureConversation(); // null in guest mode
+
+      const body: any = {
+        model,
+        messages: [...conversation, userMsg],
+      };
+      if (convId) body.conversationId = convId;
+
       const res = await fetch("/api/chat", {
         method: "POST",
-        body: JSON.stringify({
-          model,
-          messages: [...conversation, userMsg],
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
 
@@ -86,34 +153,41 @@ export default function ChatPage() {
         if (done) break;
         const chunk = decoder.decode(value, { stream: true });
 
-        const lines = chunk.split("\n").map(l => l.trim()).filter(Boolean);
+        const lines = chunk
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean);
+
         for (const line of lines) {
           try {
             const obj = JSON.parse(line);
             if (obj.message?.content) {
               botAccum += obj.message.content;
-              setUiMessages(prev => {
+              setUiMessages((prev) => {
                 const copy = [...prev];
                 copy[botIndex] = { sender: "bot", text: botAccum };
                 return copy;
               });
             }
             if (obj.done) {
-              setConversation(prev => [...prev, { role: "assistant", content: botAccum }]);
+              setConversation((prev) => [...prev, { role: "assistant", content: botAccum }]);
             }
           } catch {
-            /* ignore partial JSON */
+            // ignore partial JSON
           }
         }
       }
+
+      // Refresh list so updatedAt bumps to top (only if authenticated)
+      if (user) refreshConversations();
     } catch (err: any) {
       if (err.name !== "AbortError") {
-        setUiMessages(prev => {
+        setUiMessages((prev) => {
           const copy = [...prev];
-            copy[botIndex] = {
-              sender: "bot",
-              text: (copy[botIndex]?.text || "") + "\n\n*(Stream error)*",
-            };
+          copy[botIndex] = {
+            sender: "bot",
+            text: (copy[botIndex]?.text || "") + "\n\n*(Stream error)*",
+          };
           return copy;
         });
       }
@@ -140,15 +214,85 @@ export default function ChatPage() {
     abortRef.current?.abort();
   }
 
+  async function onOpenConversation(id: string) {
+    if (isStreaming || !user) return; // guests cannot open saved convos
+    try {
+      const res = await fetch(`/api/conversations/${id}`);
+      if (!res.ok) throw new Error();
+      const data = (await res.json()) as { conversation: ConversationWithMessages };
+      const convo = data.conversation;
+
+      // Map DB messages to UI and chat state
+      const msgs: ChatMessage[] = convo.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const ui: UiMessage[] = convo.messages.map((m) => ({
+        sender: m.role === "user" ? "user" : "bot",
+        text: m.content,
+      }));
+
+      setActiveConversationId(convo.id);
+      setConversation(msgs);
+      setUiMessages(ui);
+      if (convo.model) setModel(convo.model);
+    } catch {
+      // ignore
+    }
+  }
+
+  function onNewConversation() {
+    if (isStreaming) return;
+    setActiveConversationId(null);
+    setConversation([]);
+    setUiMessages([]);
+  }
+
+  // Rename conversation
+  async function onRenameConversation(id: string, newTitle: string) {
+    if (!user) return;
+    await fetch(`/api/conversations/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: newTitle }),
+    }).then((r) => {
+      if (!r.ok) throw new Error("Rename failed");
+    }).catch(() => {});
+    refreshConversations();
+  }
+
+  // Delete conversation
+  async function onDeleteConversation(id: string) {
+    if (!user) return;
+    await fetch(`/api/conversations/${id}`, { method: "DELETE" })
+      .then((r) => {
+        if (!r.ok && r.status !== 204) throw new Error("Delete failed");
+      })
+      .catch(() => {});
+    if (id === activeConversationId) {
+      setActiveConversationId(null);
+      setConversation([]);
+      setUiMessages([]);
+    }
+    refreshConversations();
+  }
+
   return (
     <main className={styles.page}>
       <Sidebar
         collapsed={collapsed}
-        onToggle={() => setCollapsed(c => !c)}
+        onToggle={() => setCollapsed((c) => !c)}
         user={user}
         model={model}
         onChangeModel={setModel}
         modelDisabled={isStreaming}
+        conversations={conversations}
+        activeConversationId={activeConversationId}
+        onNewConversation={onNewConversation}
+        onOpenConversation={onOpenConversation}
+        onRenameConversation={onRenameConversation}
+        onDeleteConversation={onDeleteConversation}
       />
 
       <div className={styles.chatArea}>

@@ -7,197 +7,7 @@
   gap: 0;
 }
 
-/* Overlay Sidebar */
-.sidebar {
-  --collapsed-width: 32px; /* desktop collapsed grip */
-  position: fixed;
-  top: 0;
-  left: 0;
-  height: 100dvh;
-  width: 240px;
-  background: var(--panel);
-  border-right: 1px solid var(--border);
-  padding: 16px 16px 20px 16px;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  z-index: 50;
-  transform: translateX(0);
-  transition:
-    transform 0.38s cubic-bezier(.4,0,.2,1),
-    box-shadow 0.28s ease,
-    background 0.25s ease,
-    border-color 0.25s ease;
-  will-change: transform;
-  box-shadow: 0 0 0 rgba(0,0,0,0);
-}
-
-.sidebar:not(.collapsed) {
-  box-shadow: 0 8px 28px -4px rgba(0,0,0,0.55);
-}
-
-.sidebar.collapsed {
-  transform: translateX(calc(-100% + var(--collapsed-width)));
-  box-shadow: none;
-}
-
-.sidebarContent {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  overflow-y: auto;
-  opacity: 1;
-  transform: translateX(0);
-  transition:
-    opacity 0.22s ease 0.08s,
-    transform 0.38s cubic-bezier(.4,0,.2,1);
-  will-change: opacity, transform;
-}
-
-.sidebar.collapsed .sidebarContent {
-  opacity: 0;
-  transform: translateX(-12px);
-  transition:
-    opacity 0.12s ease,
-    transform 0.32s cubic-bezier(.4,0,.2,1);
-  pointer-events: none;
-}
-
-.sidebarTitle {
-  font-size: 13px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted);
-  margin: 0 0 6px 0;
-}
-
-.userEmail {
-  font-size: 13px;
-  line-height: 1.35;
-  margin: 0;
-  color: var(--text);
-  word-break: break-all;
-}
-
-.userEmail span { color: var(--accent); }
-
-.loginLink {
-  display: inline-block;
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--accent);
-  text-decoration: none;
-  transition: color 0.15s ease;
-}
-.loginLink:hover,
-.loginLink:focus-visible {
-  color: #60a5fa;
-  text-decoration: underline;
-}
-
-/* Divider */
-.divider {
-  height: 1px;
-  background: linear-gradient(
-    to right,
-    transparent 0%,
-    rgba(255,255,255,0.08) 10%,
-    rgba(255,255,255,0.10) 50%,
-    rgba(255,255,255,0.08) 90%,
-    transparent 100%
-  );
-  margin: 4px 4px 10px 4px;
-  border-radius: 1px;
-}
-
-.modelBlock { display: flex; flex-direction: column; gap: 6px; }
-.modelLabel {
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  text-transform: uppercase;
-  margin: 0;
-}
-.modelSelect {
-  background: #0b1220;
-  color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 13px;
-  outline: none;
-}
-.modelSelect:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-
-/* Toggle button */
-.sidebarToggle {
-  position: absolute;
-  top: 14px;
-  right: 6px;
-  background: transparent;
-  border: none;
-  padding: 4px;
-  cursor: pointer;
-  line-height: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  transition: color 0.18s ease, transform 0.38s cubic-bezier(.4,0,.2,1);
-  z-index: 2;
-}
-.sidebarToggle:hover { color: var(--text); }
-.sidebarToggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-.sidebarToggleIcon {
-  width: 18px;
-  height: 18px;
-  transition: transform 0.38s cubic-bezier(.4,0,.2,1);
-}
-.sidebar.collapsed .sidebarToggleIcon {
-  transform: rotate(180deg);
-}
-
-/* COLLAPSED VISUAL HIDING FOR MOBILE + TABLET (<= 860px) */
-@media (max-width: 860px) {
-  .sidebar {
-    --collapsed-width: 44px; 
-  }
-  .sidebar.collapsed {
-    transform: translateX(calc(-100% + var(--collapsed-width)));
-    background: transparent;
-    border-right: none;
-    box-shadow: none;
-  }
-  .sidebar.collapsed .sidebarContent {
-    opacity: 0;
-  }
-  .sidebar.collapsed .divider,
-  .sidebar.collapsed .modelBlock,
-  .sidebar.collapsed .sidebarTitle,
-  .sidebar.collapsed .userEmail {
-    display: none;
-  }
-  .sidebarToggle {
-    right: 8px;
-    top: 10px;
-    padding: 2px;
-  }
-  .sidebarToggleIcon {
-    width: 16px;
-    height: 16px;
-  }
-}
-
-/* Chat area */
+/* Chat area (sidebar styles moved to Sidebar.module.css) */
 .chatArea {
   position: relative;
   display: flex;
@@ -320,7 +130,7 @@
 .composer button:hover { background: #0e1628; }
 .composer button:active { transform: translateY(1px); }
 
-/* Reuse base composer button style: create an explicit iconButton class (optional clarity) */
+/* Reuse base composer button style: explicit iconButton class */
 .iconButton {
   width: 36px;
   height: 36px;
@@ -353,6 +163,7 @@
   outline-offset: 2px;
 }
 
+/* Scrollbars */
 .messages { scrollbar-width: thin; scrollbar-color: #2a3446 transparent; }
 .messages::-webkit-scrollbar { width: 6px; }
 .messages::-webkit-scrollbar-thumb { background: #2a3446; border-radius: 999px; }

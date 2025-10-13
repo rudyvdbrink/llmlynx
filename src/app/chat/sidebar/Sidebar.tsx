@@ -1,8 +1,18 @@
 "use client";
 
-import styles from "./Chat.module.css";
+import styles from "./Sidebar.module.css";
+import AccountSection from "./AccountSection";
+import ModelSection from "./ModelSection";
+import ConversationsPanel from "./ConversationsPanel";
 
 type User = { id: string; email: string } | null;
+
+type ConversationItem = {
+  id: string;
+  title: string | null;
+  updatedAt: string;
+  model: string | null;
+};
 
 interface SidebarProps {
   collapsed: boolean;
@@ -11,6 +21,14 @@ interface SidebarProps {
   model: string;
   onChangeModel: (value: string) => void;
   modelDisabled?: boolean;
+
+  conversations: ConversationItem[];
+  activeConversationId?: string | null;
+  onNewConversation: () => void;
+  onOpenConversation: (id: string) => void;
+
+  onRenameConversation?: (id: string, newTitle: string) => Promise<void> | void;
+  onDeleteConversation?: (id: string) => Promise<void> | void;
 }
 
 export default function Sidebar({
@@ -19,7 +37,13 @@ export default function Sidebar({
   user,
   model,
   onChangeModel,
-  modelDisabled
+  modelDisabled,
+  conversations,
+  activeConversationId,
+  onNewConversation,
+  onOpenConversation,
+  onRenameConversation,
+  onDeleteConversation,
 }: SidebarProps) {
   return (
     <aside
@@ -48,46 +72,27 @@ export default function Sidebar({
       </button>
 
       <div className={styles.sidebarContent}>
-        {/* Account */}
-        <div>
-          <p className={styles.sidebarTitle}>Account</p>
-          {user ? (
-            <p className={styles.userEmail}>
-              Logged in as: <span>{user.email}</span>
-            </p>
-          ) : (
-            <p className={styles.userEmail}>
-              Not logged in
-              <br />
-              <a href="/login" className={styles.loginLink}>
-                Sign in
-              </a>
-            </p>
-          )}
-        </div>
+        <AccountSection user={user} />
 
         <div className={styles.divider} role="separator" aria-orientation="horizontal" />
 
-        {/* Model Selection */}
-        <div className={styles.modelBlock}>
-            <p className={styles.modelLabel} id="model-select-label">Model</p>
-            <select
-              aria-labelledby="model-select-label"
-              className={styles.modelSelect}
-              value={model}
-              onChange={(e) => onChangeModel(e.target.value)}
-              disabled={modelDisabled}
-            >
-              <option value="gpt-oss:20b">gpt-oss:20b</option>
-              <option value="gemma3:1b">gemma3:1b</option>
-              <option value="gemma3:12b">gemma3:12b</option>
-              <option value="mistral">mistral</option>
-            </select>
-        </div>
+        <ModelSection
+          model={model}
+          onChangeModel={onChangeModel}
+          disabled={modelDisabled}
+        />
 
         <div className={styles.divider} role="separator" aria-orientation="horizontal" />
 
-        {/* Chat history goes here (tbd) */}
+        <ConversationsPanel
+          collapsed={collapsed}
+          conversations={conversations}
+          activeConversationId={activeConversationId ?? null}
+          onNewConversation={onNewConversation}
+          onOpenConversation={onOpenConversation}
+          onRenameConversation={onRenameConversation}
+          onDeleteConversation={onDeleteConversation}
+        />
       </div>
     </aside>
   );
