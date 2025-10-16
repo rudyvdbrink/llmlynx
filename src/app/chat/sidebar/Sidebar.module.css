@@ -1,344 +1,375 @@
 /* Sidebar container */
 .sidebar {
-    --collapsed-width: 32px; /* desktop collapsed grip */
-    position: fixed;
-    top: 0;
-    left: 0;
-    height: 100dvh;
-    width: 240px;
-    background: var(--panel);
-    border-right: 1px solid var(--border);
-    padding: 16px 16px 20px 16px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;              /* hide any accidental horizontal overflow */
-    z-index: 50;
-    transform: translateX(0);
-    transition:
-      transform 0.38s cubic-bezier(.4,0,.2,1),
-      box-shadow 0.28s ease,
-      background 0.25s ease,
-      border-color 0.25s ease;
-    will-change: transform;
-    box-shadow: 0 0 0 rgba(0,0,0,0);
-  }
-  
-  .sidebar:not(.collapsed) {
-    box-shadow: 0 8px 28px -4px rgba(0,0,0,0.55);
-  }
-  
-  .sidebar.collapsed {
-    transform: translateX(calc(-100% + var(--collapsed-width)));
-    box-shadow: none;
-  }
-  
-  /* Sidebar content area */
-  .sidebarContent {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    overflow-y: auto;
-    overflow-x: hidden;            /* prevent horizontal scrollbar in sidebar */
-    opacity: 1;
-    transform: translateX(0);
-    transition:
-      opacity 0.22s ease 0.08s,
-      transform 0.38s cubic-bezier(.4,0,.2,1);
-    will-change: opacity, transform;
-  }
-  
-  .sidebar.collapsed .sidebarContent {
-    opacity: 0;
-    transform: translateX(-12px);
-    transition:
-      opacity 0.12s ease,
-      transform 0.32s cubic-bezier(.4,0,.2,1);
-    pointer-events: none;
-  }
-  
-  /* Section titles */
-  .sidebarTitle {
-    font-size: 13px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    margin: 0 0 6px 0;
-  }
-  
-  /* Title row for + New button */
-  .sidebarTitleRow {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
+  --collapsed-width: 32px; /* desktop collapsed grip */
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 100dvh;
+  width: 240px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 16px 16px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;              /* hide any accidental horizontal overflow */
+  z-index: 50;
+  transform: translateX(0);
+  transition:
+    transform 0.38s cubic-bezier(.4,0,.2,1),
+    box-shadow 0.28s ease,
+    background 0.25s ease,
+    border-color 0.25s ease;
+  will-change: transform;
+  box-shadow: 0 0 0 rgba(0,0,0,0);
+}
+
+.sidebar:not(.collapsed) {
+  box-shadow: 0 8px 28px -4px rgba(0,0,0,0.55);
+}
+
+.sidebar.collapsed {
+  transform: translateX(calc(-100% + var(--collapsed-width)));
+  box-shadow: none;
+}
+
+/* Sidebar content area */
+.sidebarContent {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  overflow-x: hidden;            /* prevent horizontal scrollbar in sidebar */
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    opacity 0.22s ease 0.08s,
+    transform 0.38s cubic-bezier(.4,0,.2,1);
+  will-change: opacity, transform;
+}
+
+.sidebar.collapsed .sidebarContent {
+  opacity: 0;
+  transform: translateX(-12px);
+  transition:
+    opacity 0.12s ease,
+    transform 0.32s cubic-bezier(.4,0,.2,1);
+  pointer-events: none;
+}
+
+/* Section titles */
+.sidebarTitle {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin: 0 0 6px 0;
+}
+
+/* Title row for + New button */
+.sidebarTitleRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Account block */
+.userEmail {
+  font-size: 13px;
+  line-height: 1.35;
+  margin: 0;
+  color: var(--text);
+  word-break: break-all;
+}
+.userEmail span { color: var(--accent); }
+
+.loginLink {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.loginLink:hover,
+.loginLink:focus-visible {
+  color: #60a5fa;
+  text-decoration: underline;
+}
+
+/* Small inline action button (e.g., + New) */
+.inlineLink {
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+}
+.inlineLink:hover,
+.inlineLink:focus-visible {
+  color: #60a5fa;
+  text-decoration: underline;
+}
+
+/* Divider */
+.divider {
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent 0%,
+    rgba(255,255,255,0.08) 10%,
+    rgba(255,255,255,0.10) 50%,
+    rgba(255,255,255,0.08) 90%,
+    transparent 100%
+  );
+  margin: 4px 4px 10px 4px;
+  border-radius: 1px;
+}
+
+/* Model select block */
+.modelBlock { display: flex; flex-direction: column; gap: 6px; }
+/* Model label now uses .sidebarTitle in Sidebar.tsx for consistency */
+
+/* Keep the select visuals aligned with conversation items */
+.modelSelect {
+  background: #0b1220;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+  width: 100%;
+}
+.modelSelect:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Sidebar toggle button */
+.sidebarToggle {
+  position: absolute;
+  top: 14px;
+  right: 6px;
+  background: transparent;
+  border: none;
+  padding: 4px;
+  cursor: pointer;
+  line-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  transition: color 0.18s ease, transform 0.38s cubic-bezier(.4,0,.2,1);
+  z-index: 2;
+}
+.sidebarToggle:hover { color: var(--text); }
+.sidebarToggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.sidebarToggleIcon {
+  width: 18px;
+  height: 18px;
+  transition: transform 0.38s cubic-bezier(.4,0,.2,1);
+}
+.sidebar.collapsed .sidebarToggleIcon {
+  transform: rotate(180deg);
+}
+
+/* Conversations list (no bullets, option-like items) */
+.conversationList {
+  list-style: none;
+  padding: 0;
+  margin: 6px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px; /* mobile default spacing */
+  overflow-x: hidden;            /* ensure no horizontal scroll appears */
+}
+/* Desktop/tablet: a tiny bit more spacing */
+@media (min-width: 761px) {
+  .conversationList {
     gap: 8px;
   }
-  
-  /* Account block */
-  .userEmail {
-    font-size: 13px;
-    line-height: 1.35;
-    margin: 0;
-    color: var(--text);
-    word-break: break-all;
+}
+
+/* Conversation container with border/background */
+.conversationItem {
+  position: relative;
+  width: 100%;
+  background: #0b1220;          /* align with .modelSelect */
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-sizing: border-box;        /* prevent border overflow */
+  display: grid;
+  grid-template-columns: 1fr auto; /* title area + kebab area */
+  align-items: center;
+  font-size: 13px;               /* keep the previous font size */
+}
+.conversationItem:hover,
+.conversationItem:focus-within {
+  border-color: var(--accent);   /* outline effect without glow to avoid clip */
+  background: #0d1424;
+}
+.conversationItem.active {
+  border-color: var(--accent);
+}
+
+/* Inner main button (title area) */
+.conversationMainBtn {
+  grid-column: 1 / 2;
+  min-width: 0;                  /* allow inner text to actually overflow */
+  text-align: left;
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  letter-spacing: 0.01em;        /* slightly increased char spacing */
+}
+
+/* Kebab (ellipsis) button — always visible on the right */
+.kebabBtn {
+  grid-column: 2 / 3;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.kebabBtn:hover,
+.kebabBtn:focus-visible {
+  color: var(--text);
+  outline: 1px solid var(--border);
+  outline-offset: 0;
+}
+
+/* Context menu: fixed to viewport with very high z-index */
+.menu {
+  position: fixed;               /* detach from scrolling/overflow containers */
+  min-width: 180px;
+  background: #0b1220;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 10000;                /* ensure always on top */
+  box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+}
+.menuItem {
+  background: transparent;
+  border: none;
+  text-align: left;
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.menuItem:hover,
+.menuItem:focus-visible {
+  background: #0e1628;
+}
+.menuDanger {
+  color: #f87171;
+}
+.menuDanger:hover,
+.menuDanger:focus-visible {
+  background: #2a0f14;
+}
+
+/* Title: single line; fade only when overflowing (toggle via extra class) */
+.conversationTitle {
+  display: block;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;              /* no wrapping */
+  text-overflow: clip;           /* base behavior without fade */
+}
+/* Applied only when text actually overflows (Sidebar.tsx toggles this class) */
+.conversationTitleFade {
+  -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
+          mask-image: linear-gradient(to right, black 85%, transparent 100%);
+}
+
+/* Empty state */
+.emptyNote {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 2px;
+}
+
+/* Footer nav button at the bottom */
+.sidebarFooter {
+  padding-top: 10px;
+}
+.footerButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: #0b1220;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+  text-decoration: none;
+  justify-content: center;
+}
+.footerButton:hover,
+.footerButton:focus-visible {
+  background: #0e1628;
+  outline: none;
+}
+.footerButtonIcon {
+  display: inline-flex;
+}
+.footerButtonLabel {
+  line-height: 1;
+}
+
+/* Collapsed tweaks */
+@media (max-width: 860px) {
+  .sidebar {
+    --collapsed-width: 44px; 
   }
-  .userEmail span { color: var(--accent); }
-  
-  .loginLink {
-    display: inline-block;
-    margin-top: 4px;
-    font-size: 13px;
-    color: var(--accent);
-    text-decoration: none;
-    transition: color 0.15s ease;
-  }
-  .loginLink:hover,
-  .loginLink:focus-visible {
-    color: #60a5fa;
-    text-decoration: underline;
-  }
-  
-  /* Small inline action button (e.g., + New) */
-  .inlineLink {
+  .sidebar.collapsed {
+    transform: translateX(calc(-100% + var(--collapsed-width)));
     background: transparent;
-    border: none;
-    padding: 0;
-    margin: 0;
-    font-size: 13px;
-    color: var(--accent);
-    text-decoration: none;
-    cursor: pointer;
+    border-right: none;          /* remove faint gray edge on mobile when collapsed */
+    box-shadow: none;
   }
-  .inlineLink:hover,
-  .inlineLink:focus-visible {
-    color: #60a5fa;
-    text-decoration: underline;
+  .sidebar.collapsed .sidebarContent {
+    opacity: 0;
   }
-  
-  /* Divider */
-  .divider {
-    height: 1px;
-    background: linear-gradient(
-      to right,
-      transparent 0%,
-      rgba(255,255,255,0.08) 10%,
-      rgba(255,255,255,0.10) 50%,
-      rgba(255,255,255,0.08) 90%,
-      transparent 100%
-    );
-    margin: 4px 4px 10px 4px;
-    border-radius: 1px;
+  .sidebar.collapsed .divider,
+  .sidebar.collapsed .modelBlock,
+  .sidebar.collapsed .sidebarTitle,
+  .sidebar.collapsed .userEmail,
+  .sidebar.collapsed .sidebarFooter {
+    display: none;
   }
-  
-  /* Model select block */
-  .modelBlock { display: flex; flex-direction: column; gap: 6px; }
-  /* Model label now uses .sidebarTitle in Sidebar.tsx for consistency */
-  
-  /* Keep the select visuals aligned with conversation items */
-  .modelSelect {
-    background: #0b1220;
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 6px 10px;
-    font-size: 13px;
-    outline: none;
-    width: 100%;
-  }
-  .modelSelect:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 1px var(--accent);
-  }
-  
-  /* Sidebar toggle button */
   .sidebarToggle {
-    position: absolute;
-    top: 14px;
-    right: 6px;
-    background: transparent;
-    border: none;
-    padding: 4px;
-    cursor: pointer;
-    line-height: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--muted);
-    transition: color 0.18s ease, transform 0.38s cubic-bezier(.4,0,.2,1);
-    z-index: 2;
-  }
-  .sidebarToggle:hover { color: var(--text); }
-  .sidebarToggle:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+    right: 8px;
+    top: 10px;
+    padding: 2px;
   }
   .sidebarToggleIcon {
-    width: 18px;
-    height: 18px;
-    transition: transform 0.38s cubic-bezier(.4,0,.2,1);
+    width: 16px;
+    height: 16px;
   }
-  .sidebar.collapsed .sidebarToggleIcon {
-    transform: rotate(180deg);
-  }
-  
-  /* Conversations list (no bullets, option-like items) */
-  .conversationList {
-    list-style: none;
-    padding: 0;
-    margin: 6px 0 0 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px; /* mobile default spacing */
-    overflow-x: hidden;            /* ensure no horizontal scroll appears */
-  }
-  /* Desktop/tablet: a tiny bit more spacing */
-  @media (min-width: 761px) {
-    .conversationList {
-      gap: 8px;
-    }
-  }
-  
-  /* Conversation container with border/background */
-  .conversationItem {
-    position: relative;
-    width: 100%;
-    background: #0b1220;          /* align with .modelSelect */
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    box-sizing: border-box;        /* prevent border overflow */
-    display: grid;
-    grid-template-columns: 1fr auto; /* title area + kebab area */
-    align-items: center;
-    font-size: 13px;               /* keep the previous font size */
-  }
-  .conversationItem:hover,
-  .conversationItem:focus-within {
-    border-color: var(--accent);   /* outline effect without glow to avoid clip */
-    background: #0d1424;
-  }
-  .conversationItem.active {
-    border-color: var(--accent);
-  }
-  
-  /* Inner main button (title area) */
-  .conversationMainBtn {
-    grid-column: 1 / 2;
-    min-width: 0;                  /* allow inner text to actually overflow */
-    text-align: left;
-    background: transparent;
-    border: none;
-    padding: 6px 10px;
-    color: inherit;
-    font: inherit;
-    cursor: pointer;
-    letter-spacing: 0.01em;        /* slightly increased char spacing */
-  }
-  
-  /* Kebab (ellipsis) button — always visible on the right */
-  .kebabBtn {
-    grid-column: 2 / 3;
-    background: transparent;
-    border: none;
-    color: var(--muted);
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    cursor: pointer;
-    margin-right: 6px;
-  }
-  .kebabBtn:hover,
-  .kebabBtn:focus-visible {
-    color: var(--text);
-    outline: 1px solid var(--border);
-    outline-offset: 0;
-  }
-  
-  /* Context menu: fixed to viewport with very high z-index */
-  .menu {
-    position: fixed;               /* detach from scrolling/overflow containers */
-    min-width: 180px;
-    background: #0b1220;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    z-index: 10000;                /* ensure always on top */
-    box-shadow: 0 8px 20px rgba(0,0,0,0.35);
-  }
-  .menuItem {
-    background: transparent;
-    border: none;
-    text-align: left;
-    color: var(--text);
-    padding: 6px 8px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 13px;
-  }
-  .menuItem:hover,
-  .menuItem:focus-visible {
-    background: #0e1628;
-  }
-  .menuDanger {
-    color: #f87171;
-  }
-  .menuDanger:hover,
-  .menuDanger:focus-visible {
-    background: #2a0f14;
-  }
-  
-  /* Title: single line; fade only when overflowing (toggle via extra class) */
-  .conversationTitle {
-    display: block;
-    width: 100%;
-    white-space: nowrap;
-    overflow: hidden;              /* no wrapping */
-    text-overflow: clip;           /* base behavior without fade */
-  }
-  /* Applied only when text actually overflows (Sidebar.tsx toggles this class) */
-  .conversationTitleFade {
-    -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
-            mask-image: linear-gradient(to right, black 85%, transparent 100%);
-  }
-  
-  /* Empty state */
-  .emptyNote {
-    font-size: 12px;
-    color: var(--muted);
-    padding: 4px 2px;
-  }
-  
-  /* Collapsed tweaks */
-  @media (max-width: 860px) {
-    .sidebar {
-      --collapsed-width: 44px; 
-    }
-    .sidebar.collapsed {
-      transform: translateX(calc(-100% + var(--collapsed-width)));
-      background: transparent;
-      border-right: none;          /* remove faint gray edge on mobile when collapsed */
-      box-shadow: none;
-    }
-    .sidebar.collapsed .sidebarContent {
-      opacity: 0;
-    }
-    .sidebar.collapsed .divider,
-    .sidebar.collapsed .modelBlock,
-    .sidebar.collapsed .sidebarTitle,
-    .sidebar.collapsed .userEmail {
-      display: none;
-    }
-    .sidebarToggle {
-      right: 8px;
-      top: 10px;
-      padding: 2px;
-    }
-    .sidebarToggleIcon {
-      width: 16px;
-      height: 16px;
-    }
-  }
+}

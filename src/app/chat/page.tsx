@@ -219,16 +219,16 @@ export default function ChatPage() {
     try {
       const res = await fetch(`/api/conversations/${id}`);
       if (!res.ok) throw new Error();
-      const data = (await res.json()) as { conversation: ConversationWithMessages };
+      const data = await res.json();
       const convo = data.conversation;
 
       // Map DB messages to UI and chat state
-      const msgs: ChatMessage[] = convo.messages.map((m) => ({
+      const msgs: ChatMessage[] = convo.messages.map((m: any) => ({
         role: m.role,
         content: m.content,
       }));
 
-      const ui: UiMessage[] = convo.messages.map((m) => ({
+      const ui: UiMessage[] = convo.messages.map((m: any) => ({
         sender: m.role === "user" ? "user" : "bot",
         text: m.content,
       }));
@@ -293,6 +293,8 @@ export default function ChatPage() {
         onOpenConversation={onOpenConversation}
         onRenameConversation={onRenameConversation}
         onDeleteConversation={onDeleteConversation}
+        footerNavLabel="Agents"
+        footerNavHref="/agents"
       />
 
       <div className={styles.chatArea}>
