@@ -26,6 +26,7 @@ export default function ModelSection({
         <option value="gpt-oss:20b">gpt-oss:20b</option>
         <option value="gemma3:1b">gemma3:1b</option>
         <option value="gemma3:12b">gemma3:12b</option>
+        <option value="llama3.2:3b">llama3.2:3b</option>
         <option value="mistral">mistral</option>
       </select>
     </div>
