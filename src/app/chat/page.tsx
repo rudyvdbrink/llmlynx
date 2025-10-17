@@ -321,8 +321,9 @@ export default function ChatPage() {
         onOpenConversation={onOpenConversation}
         onRenameConversation={onRenameConversation}
         onDeleteConversation={onDeleteConversation}
-        footerNavLabel="Agents"
-        footerNavHref="/agents"
+        // Show agents navigation only when authenticated
+        footerNavLabel={user ? "Agents" : undefined}
+        footerNavHref={user ? "/agents" : undefined}
       />
 
       <div className={styles.chatArea}>
