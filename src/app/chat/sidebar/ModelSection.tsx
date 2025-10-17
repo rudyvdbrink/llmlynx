@@ -1,16 +1,82 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import styles from "./Sidebar.module.css";
+
+type AgentSummary = {
+  id: string;
+  name: string;
+  baseModel: string;
+  systemPrompt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 
 export default function ModelSection({
   model,
   onChangeModel,
   disabled,
 }: {
+  // model is a selection string like "model:mistral" or "agent:<id>".
+  // For backward compatibility, plain model names are also accepted.
   model: string;
   onChangeModel: (v: string) => void;
   disabled?: boolean;
 }) {
+  const [baseModels, setBaseModels] = useState<string[]>([]);
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
+
+  // Normalize incoming value to ensure the select has a matching option
+  const normalizedValue = model.startsWith("agent:") || model.startsWith("model:")
+    ? model
+    : `model:${model}`;
+
+  // Load local models from Ollama proxy
+  useEffect(() => {
+    let active = true;
+    fetch("/api/models")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data) => {
+        if (!active) return;
+        const names: string[] =
+          data?.models?.map((m: any) => m.name).filter(Boolean) ??
+          data?.models?.filter((m: any) => typeof m === "string") ??
+          [];
+        setBaseModels(names);
+      })
+      .catch(() => {
+        // Fallback to a small static set
+        setBaseModels(["gpt-oss:20b", "gemma3:1b", "gemma3:12b", "mistral"]);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Load user's saved agents (ignore 401 Unauthorized by treating as empty)
+  useEffect(() => {
+    let active = true;
+    fetch("/api/agents")
+      .then(async (r) => {
+        if (!r.ok) {
+          if (r.status === 401) return { agents: [] };
+          throw new Error("failed");
+        }
+        return r.json();
+      })
+      .then((data) => {
+        if (!active) return;
+        const list: AgentSummary[] = Array.isArray(data?.agents) ? data.agents : [];
+        setAgents(list);
+      })
+      .catch(() => setAgents([]));
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const hasAgents = agents.length > 0;
+
   return (
     <div className={styles.modelBlock}>
       <p className={styles.sidebarTitle} id="model-select-label">
@@ -19,14 +85,32 @@ export default function ModelSection({
       <select
         aria-labelledby="model-select-label"
         className={styles.modelSelect}
-        value={model}
+        value={normalizedValue}
         onChange={(e) => onChangeModel(e.target.value)}
         disabled={disabled}
       >
-        <option value="gpt-oss:20b">gpt-oss:20b</option>
-        <option value="gemma3:1b">gemma3:1b</option>
-        <option value="gemma3:12b">gemma3:12b</option>
-        <option value="mistral">mistral</option>
+        {hasAgents && (
+          <optgroup label="Agents">
+            {agents.map((a) => (
+              <option key={`agent:${a.id}`} value={`agent:${a.id}`}>
+                {a.name} {a.baseModel ? `(${a.baseModel})` : ""}
+              </option>
+            ))}
+          </optgroup>
+        )}
+
+        <optgroup label="Base models">
+          {baseModels.map((m) => (
+            <option key={`model:${m}`} value={`model:${m}`}>
+              {m}
+            </option>
+          ))}
+        </optgroup>
+
+        {/* Safety net: if current value isn't in lists yet, keep it selectable */}
+        {!hasAgents &&
+          baseModels.length === 0 &&
+          normalizedValue && <option value={normalizedValue}>{normalizedValue}</option>}
       </select>
     </div>
   );

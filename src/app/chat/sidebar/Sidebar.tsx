@@ -29,6 +29,10 @@ interface SidebarProps {
 
   onRenameConversation?: (id: string, newTitle: string) => Promise<void> | void;
   onDeleteConversation?: (id: string) => Promise<void> | void;
+
+  // New footer navigation button (e.g., to /agents or /chat)
+  footerNavLabel?: string;
+  footerNavHref?: string;
 }
 
 export default function Sidebar({
@@ -44,6 +48,8 @@ export default function Sidebar({
   onOpenConversation,
   onRenameConversation,
   onDeleteConversation,
+  footerNavLabel,
+  footerNavHref,
 }: SidebarProps) {
   return (
     <aside
@@ -94,6 +100,20 @@ export default function Sidebar({
           onDeleteConversation={onDeleteConversation}
         />
       </div>
+
+      {footerNavHref && footerNavLabel && (
+        <div className={styles.sidebarFooter}>
+          <a href={footerNavHref} className={styles.footerButton}>
+            <span className={styles.footerButtonIcon} aria-hidden="true">
+              {/* Simple arrows icon that flips based on context can be added later */}
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5l8 7-8 7V5z" />
+              </svg>
+            </span>
+            <span className={styles.footerButtonLabel}>{footerNavLabel}</span>
+          </a>
+        </div>
+      )}
     </aside>
   );
 }

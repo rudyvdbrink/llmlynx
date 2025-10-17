@@ -1,0 +1,240 @@
+.headerRow {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr auto;
+    gap: 12px;
+    align-items: end;
+  }
+  
+  @media (max-width: 840px) {
+    .headerRow {
+      grid-template-columns: 1fr;
+      align-items: stretch;
+    }
+  }
+  
+  .fieldGroup {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  
+  .section {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .sectionTitle {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  
+  .textInput, .select {
+    width: 100%;
+    background: #0b1220;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+    outline: none;
+  }
+  .textInput:focus, .select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  
+  .actionsBlock {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    align-self: end;
+  }
+  .primaryBtn, .secondaryBtn, .helpBtn, .closeBtn, .resetBtn {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #0b1220;
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .primaryBtn {
+    background: #1d2a44;
+    border-color: var(--border);
+  }
+  .primaryBtn:hover { background: #223152; }
+  .secondaryBtn:hover { background: #0e1628; }
+  .resetBtn {
+    background: #1f2937;
+  }
+  .resetBtn:hover { background: #273244; }
+  
+  .promptArea {
+    width: 100%;
+    min-height: 180px;
+    resize: vertical;
+    background: #0b1220;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 14px;
+    outline: none;
+  }
+  .promptArea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+  }
+  
+  /* Options grid: two columns */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 24px 48px; 
+  }
+  
+  @media (max-width: 900px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  
+  /* Each option stacks: label on top, controls below */
+  .optionRow {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;            
+    padding-block: 4px;
+  }
+  
+  .optionLabel {
+    font-size: 14px;
+    color: var(--muted);
+  }
+  
+  /* Controls row: slider/select left, number on the right */
+  .optionControls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 110px; /* wide, consistent slider track + compact number */
+    gap: 10px;
+    align-items: center;
+  }
+  
+  /* Single control rows expand to full width cleanly */
+  .optionControls:has(> :only-child) {
+    grid-template-columns: 1fr;
+  }
+  
+  /* Placeholder keeps numeric-only rows (e.g., Random number seed) right-aligned */
+  .controlPlaceholder {
+    display: block;
+    height: 0;
+  }
+  
+  /* Sliders: full width of their track so all appear identical */
+  .optionControls input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+  }
+  
+  /* Numeric boxes: fixed width, consistent across rows */
+  .optionControls input[type="number"] {
+    width: 100%;
+    max-width: 110px;
+    background: #0b1220;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 14px;
+  }
+  
+  /* Random number seed: fill the numeric sub-column entirely (no local max cap) */
+  .seedNumber {
+    max-width: 100%;
+  }
+  
+  /* Dropdowns: fill available width; no overlap into numeric column */
+  .optionControls input[type="text"],
+  .inlineSelect {
+    width: 100%;
+    max-width: 100%;
+    background: #0b1220;
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 14px;
+  }
+  
+  /* Footer actions */
+  .footerActions {
+    margin-top: 16px;
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+   
+  @media (min-width: 1024px) {
+    .agentsArea {
+      padding-top: 56px; 
+      padding-bottom: 56px;
+    }
+  }
+  
+  @media (max-width: 860px) {
+    .agentsArea {
+      margin-top: 28px;
+    }
+  }
+  
+  /* Help dialog */
+  .helpDialog {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 0;
+    background: var(--panel);
+    color: var(--text);
+    max-width: 640px;
+    width: calc(100% - 24px);
+  }
+  .helpContent {
+    display: flex;
+    flex-direction: column;
+  }
+  .helpHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .helpBody {
+    padding: 12px;
+  }
+  .helpList {
+    margin: 0;
+  }
+  .helpList dt {
+    font-weight: 600;
+    margin-top: 10px;
+  }
+  .helpList dd {
+    margin: 4px 0 0 0;
+    color: var(--muted);
+  }
+  .closeBtn {
+    background: transparent;
+    border-color: transparent;
+    font-size: 20px;
+    line-height: 1;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .closeBtn:hover { background: #0e1628; }

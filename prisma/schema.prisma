@@ -8,13 +8,14 @@ datasource db {
 }
 
 model User {
-  id           String       @id @default(uuid())
-  email        String       @unique
-  passwordHash String
-  recoveryCode String?      @unique
-  createdAt    DateTime     @default(now())
-  sessions     Session[]
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  recoveryCode  String?        @unique
+  createdAt     DateTime       @default(now())
+  sessions      Session[]
   conversations Conversation[]
+  agents        Agent[]        // NEW: user-created agents
 }
 
 model Session {
@@ -23,7 +24,7 @@ model Session {
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
-  createdAt DateTime  @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId])
   @@index([token])
@@ -51,10 +52,49 @@ model Conversation {
 model Message {
   id             String        @id @default(uuid())
   conversationId String
-  conversation   Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   role           MessageRole
   content        String
-  createdAt      DateTime       @default(now())
+  createdAt      DateTime      @default(now())
 
   @@index([conversationId, createdAt])
+}
+
+// NEW: Agent model to store custom agent configurations
+model Agent {
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Display name shown in UI; unique per user
+  name         String
+
+  // Base model name (e.g., "gemma3:1b", "mistral")
+  baseModel    String
+
+  // Optional custom system prompt
+  systemPrompt String?
+
+  // Generation settings as JSON for flexibility
+  // {
+  //   "mirostat": 0|1|2,
+  //   "mirostat_eta": number,
+  //   "mirostat_tau": number,
+  //   "num_ctx": number,
+  //   "repeat_last_n": number,
+  //   "repeat_penalty": number,
+  //   "temperature": number,
+  //   "seed": number,
+  //   "num_predict": number,
+  //   "top_k": number,
+  //   "top_p": number,
+  //   "min_p": number
+  // }
+  settings     Json
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([userId, updatedAt])
+  @@unique([userId, name]) // prevent duplicate names per user
 }

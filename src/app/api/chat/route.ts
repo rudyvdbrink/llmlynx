@@ -11,9 +11,8 @@ type ChatMessage = {
   content: string;
 };
 
-function getSystemPrompt(): string {
+function getDefaultSystemPrompt(): string {
   const raw = process.env.SYSTEM_PROMPT || "You are the llynx, a helpful assistant.";
-  // Allow escaped \n sequences in .env to become real newlines
   return raw.replace(/\\n/g, "\n").trim();
 }
 
@@ -26,7 +25,12 @@ function makeTitleFrom(content: string, maxWords = 8, maxChars = 80) {
 }
 
 export async function POST(req: NextRequest) {
-  let body: { messages: ChatMessage[]; model?: string; conversationId?: string } | null = null;
+  let body: {
+    messages: ChatMessage[];
+    model?: string;           // raw model tag when not using agents
+    agentId?: string;         // selected agent id
+    conversationId?: string;
+  } | null = null;
 
   try {
     body = await req.json();
@@ -41,8 +45,29 @@ export async function POST(req: NextRequest) {
   const user = await getCurrentUser().catch(() => null);
   const isAuthed = !!user;
 
-  const model = body.model || "gemma3:1b";
-  const systemPrompt = getSystemPrompt();
+  // Resolve agent if provided
+  let upstreamModel = body.model || "gemma3:1b";
+  let systemPrompt = getDefaultSystemPrompt();
+  let modelIdent: string | null = null;
+  let options: Record<string, any> | undefined = undefined;
+
+  if (body.agentId) {
+    // Must be authenticated to use an agent (since we need to load it from DB)
+    if (!isAuthed) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+    const agent = await prisma.agent.findUnique({ where: { id: body.agentId } });
+    if (!agent || agent.userId !== user!.id) {
+      return new Response("Agent not found", { status: 404 });
+    }
+    upstreamModel = agent.baseModel || upstreamModel;
+    systemPrompt = (agent.systemPrompt?.trim() || systemPrompt);
+    options = agent.settings as any;
+    modelIdent = `agent:${agent.id}`;
+  } else {
+    // If client is sending a prefixed value via conversations API, unify storage key
+    modelIdent = body.model ? (body.model.startsWith("model:") || body.model.startsWith("agent:") ? body.model : `model:${body.model}`) : "model:gemma3:1b";
+  }
 
   // Always inject system prompt at the front unless one already exists
   const hasSystem = body.messages.some((m) => m.role === "system");
@@ -65,7 +90,7 @@ export async function POST(req: NextRequest) {
       }
     } else {
       const convo = await prisma.conversation.create({
-        data: { userId: user!.id, model },
+        data: { userId: user!.id, model: modelIdent },
         select: { id: true },
       });
       conversationId = convo.id;
@@ -74,7 +99,6 @@ export async function POST(req: NextRequest) {
     // Save the just-submitted user message (the last "user" message)
     const last = [...body.messages].reverse().find((m) => m.role === "user");
     if (last) {
-      // If conversation has no title yet, set it from the first user message
       const hasAnyMessage = await prisma.message.findFirst({
         where: { conversationId: conversationId! },
         select: { id: true },
@@ -94,25 +118,24 @@ export async function POST(req: NextRequest) {
             content: last.content,
           },
         });
-        // Touch updatedAt
         await tx.conversation.update({
           where: { id: conversationId! },
-          data: { updatedAt: new Date() },
+          data: { updatedAt: new Date(), model: modelIdent },
         });
       });
     }
   }
-  // If not authenticated: guest mode — we do NOT create or write any DB records.
-  // We still call the model and stream back the response.
+  // Guest mode: no DB writes; still call model.
 
   // Call upstream model and stream back, while accumulating assistant content to save at the end (only if authed)
   const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model,
+      model: upstreamModel,
       messages: finalMessages,
       stream: true,
+      ...(options ? { options } : {}),
     }),
   });
 
@@ -124,7 +147,6 @@ export async function POST(req: NextRequest) {
   let assistantAccum = "";
   let saved = false;
 
-  // Stream passthrough (newline-delimited JSON objects)
   const stream = new ReadableStream({
     start(controller) {
       const reader = upstream.body!.getReader();
@@ -147,18 +169,17 @@ export async function POST(req: NextRequest) {
               });
               await tx.conversation.update({
                 where: { id: conversationId! },
-                data: { updatedAt: new Date(), model },
+                data: { updatedAt: new Date(), model: modelIdent },
               });
             });
           } else {
-            // Even if empty, still touch conversation model field if not set
             await prisma.conversation.update({
               where: { id: conversationId! },
-              data: { model },
+              data: { model: modelIdent },
             });
           }
         } catch {
-          // Swallow DB errors here to not break the client stream
+          // swallow
         }
       };
 
@@ -179,18 +200,16 @@ export async function POST(req: NextRequest) {
               const trimmed = line.trim();
               if (!trimmed) continue;
 
-              // Try to parse so we can accumulate assistant tokens, but always forward unchanged
               try {
                 const obj = JSON.parse(trimmed);
                 if (obj?.message?.content) {
                   assistantAccum += obj.message.content;
                 }
                 if (obj?.done) {
-                  // Save assistant once the model is done
                   await persistAssistant();
                 }
               } catch {
-                // ignore parse errors (forwarding anyway)
+                // ignore
               }
 
               controller.enqueue(encoder.encode(trimmed + "\n"));
