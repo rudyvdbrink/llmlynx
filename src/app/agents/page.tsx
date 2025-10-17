@@ -29,6 +29,15 @@ type AgentOptions = {
   min_p: number;
 };
 
+type AgentSummary = {
+  id: string;
+  name: string;
+  baseModel: string;
+  systemPrompt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 const DEFAULT_OPTS: AgentOptions = {
   mirostat: 0,
   mirostat_eta: 0.1,
@@ -44,7 +53,13 @@ const DEFAULT_OPTS: AgentOptions = {
   min_p: 0.0,
 };
 
+// Selection for the dropdown: either a raw model or an agent
+type Selection =
+  | { kind: "model"; value: string }  // value = model name
+  | { kind: "agent"; value: string }; // value = agent id
+
 export default function AgentsPage() {
+  // Sidebar state
   const [collapsed, setCollapsed] = useState<boolean>(false);
   const [user, setUser] = useState<User>(null);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -95,13 +110,24 @@ export default function AgentsPage() {
     window.location.href = "/chat";
   }
 
+  // Agent form state (UI)
   const [agentName, setAgentName] = useState("");
-  const [baseModel, setBaseModel] = useState<string>("gpt-oss:20b");
+  const [baseModel, setBaseModel] = useState<string>("gpt-oss:20b"); // underlying model tag
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [systemPrompt, setSystemPrompt] = useState<string>("");
+  const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [selection, setSelection] = useState<Selection>({ kind: "model", value: "gpt-oss:20b" });
 
+  const [systemPrompt, setSystemPrompt] = useState<string>("");
   const [opts, setOpts] = useState<AgentOptions>(DEFAULT_OPTS);
 
+  // Current agent id when editing an existing one (selection.kind === "agent")
+  const [agentId, setAgentId] = useState<string | null>(null);
+
+  // UI feedback
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ kind: "success" | "error"; msg: string } | null>(null);
+
+  // Load local Ollama models
   useEffect(() => {
     let active = true;
     fetch("/api/models")
@@ -114,7 +140,13 @@ export default function AgentsPage() {
           [];
         if (names.length) {
           setAvailableModels(names);
-          setBaseModel(names[0]);
+          // If current selection is a model, keep it if it's still present; otherwise pick the first
+          setSelection((prev) =>
+            prev.kind === "model"
+              ? { kind: "model", value: names.includes(prev.value) ? prev.value : names[0] }
+              : prev
+          );
+          setBaseModel((prev) => (names.includes(prev) ? prev : names[0]));
         } else {
           throw new Error("no models");
         }
@@ -122,6 +154,11 @@ export default function AgentsPage() {
       .catch(() => {
         const fallback = ["gpt-oss:20b", "gemma3:1b", "gemma3:12b", "mistral"];
         setAvailableModels(fallback);
+        setSelection((prev) =>
+          prev.kind === "model"
+            ? { kind: "model", value: fallback.includes(prev.value) ? prev.value : fallback[0] }
+            : prev
+        );
         setBaseModel((prev) => (fallback.includes(prev) ? prev : fallback[0]));
       });
     return () => {
@@ -129,18 +166,31 @@ export default function AgentsPage() {
     };
   }, []);
 
-  const helpOpenRef = useRef<HTMLDialogElement | null>(null);
-  function openHelp() {
-    helpOpenRef.current?.showModal?.();
-  }
-  function closeHelp() {
-    helpOpenRef.current?.close?.();
-  }
+  // Load user agents
+  useEffect(() => {
+    if (!user) {
+      setAgents([]);
+      return;
+    }
+    let active = true;
+    fetch("/api/agents")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data) => {
+        if (!active) return;
+        const list: AgentSummary[] = Array.isArray(data?.agents) ? data.agents : [];
+        setAgents(list);
+      })
+      .catch(() => setAgents([]));
+    return () => {
+      active = false;
+    };
+  }, [user]);
 
   function setOpt<K extends keyof AgentOptions>(key: K, value: AgentOptions[K]) {
     setOpts((prev) => ({ ...prev, [key]: value }));
   }
 
+  // Include `saving` in deps so we can pass disabled={saving} into inputs
   const optRows = useMemo(
     () => [
       {
@@ -151,6 +201,7 @@ export default function AgentsPage() {
             className={styles.inlineSelect}
             value={opts.mirostat}
             onChange={(e) => setOpt("mirostat", parseInt(e.target.value, 10))}
+            disabled={saving}
           >
             <option value={0}>Off</option>
             <option value={1}>Mirostat</option>
@@ -170,6 +221,7 @@ export default function AgentsPage() {
             step={0.01}
             value={opts.mirostat_eta}
             onChange={(e) => setOpt("mirostat_eta", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -180,6 +232,7 @@ export default function AgentsPage() {
             step={0.01}
             value={opts.mirostat_eta}
             onChange={(e) => setOpt("mirostat_eta", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
       },
@@ -194,6 +247,7 @@ export default function AgentsPage() {
             step={0.1}
             value={opts.mirostat_tau}
             onChange={(e) => setOpt("mirostat_tau", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -204,6 +258,7 @@ export default function AgentsPage() {
             step={0.1}
             value={opts.mirostat_tau}
             onChange={(e) => setOpt("mirostat_tau", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
       },
@@ -218,6 +273,7 @@ export default function AgentsPage() {
             step={256}
             value={opts.num_ctx}
             onChange={(e) => setOpt("num_ctx", parseInt(e.target.value, 10))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -227,6 +283,7 @@ export default function AgentsPage() {
             step={1}
             value={opts.num_ctx}
             onChange={(e) => setOpt("num_ctx", parseInt(e.target.value, 10) || 0)}
+            disabled={saving}
           />
         ),
       },
@@ -241,6 +298,7 @@ export default function AgentsPage() {
             step={1}
             value={opts.repeat_last_n}
             onChange={(e) => setOpt("repeat_last_n", parseInt(e.target.value, 10))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -250,6 +308,7 @@ export default function AgentsPage() {
             step={1}
             value={opts.repeat_last_n}
             onChange={(e) => setOpt("repeat_last_n", parseInt(e.target.value, 10))}
+            disabled={saving}
           />
         ),
       },
@@ -264,6 +323,7 @@ export default function AgentsPage() {
             step={0.05}
             value={opts.repeat_penalty}
             onChange={(e) => setOpt("repeat_penalty", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -274,6 +334,7 @@ export default function AgentsPage() {
             step={0.05}
             value={opts.repeat_penalty}
             onChange={(e) => setOpt("repeat_penalty", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
       },
@@ -288,6 +349,7 @@ export default function AgentsPage() {
             step={0.05}
             value={opts.temperature}
             onChange={(e) => setOpt("temperature", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -298,6 +360,7 @@ export default function AgentsPage() {
             step={0.05}
             value={opts.temperature}
             onChange={(e) => setOpt("temperature", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
       },
@@ -312,6 +375,7 @@ export default function AgentsPage() {
             step={1}
             value={opts.seed}
             onChange={(e) => setOpt("seed", parseInt(e.target.value, 10) || 0)}
+            disabled={saving}
           />
         ),
       },
@@ -326,6 +390,7 @@ export default function AgentsPage() {
             step={1}
             value={opts.num_predict}
             onChange={(e) => setOpt("num_predict", parseInt(e.target.value, 10))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -334,6 +399,7 @@ export default function AgentsPage() {
             step={1}
             value={opts.num_predict}
             onChange={(e) => setOpt("num_predict", parseInt(e.target.value, 10))}
+            disabled={saving}
           />
         ),
       },
@@ -348,6 +414,7 @@ export default function AgentsPage() {
             step={1}
             value={opts.top_k}
             onChange={(e) => setOpt("top_k", parseInt(e.target.value, 10))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -357,6 +424,7 @@ export default function AgentsPage() {
             step={1}
             value={opts.top_k}
             onChange={(e) => setOpt("top_k", parseInt(e.target.value, 10))}
+            disabled={saving}
           />
         ),
       },
@@ -371,6 +439,7 @@ export default function AgentsPage() {
             step={0.01}
             value={opts.top_p}
             onChange={(e) => setOpt("top_p", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -381,6 +450,7 @@ export default function AgentsPage() {
             step={0.01}
             value={opts.top_p}
             onChange={(e) => setOpt("top_p", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
       },
@@ -395,6 +465,7 @@ export default function AgentsPage() {
             step={0.01}
             value={opts.min_p}
             onChange={(e) => setOpt("min_p", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
         numeric: (
@@ -405,15 +476,150 @@ export default function AgentsPage() {
             step={0.01}
             value={opts.min_p}
             onChange={(e) => setOpt("min_p", parseFloat(e.target.value))}
+            disabled={saving}
           />
         ),
       },
     ],
-    [opts]
+    [opts, saving]
   );
 
-  function resetToDefaults() {
-    setOpts(DEFAULT_OPTS);
+  // Compose select value string
+  const selectValue = selection.kind === "agent" ? `agent:${selection.value}` : `model:${selection.value}`;
+
+  // Handle selection changes
+  async function onChangeSelection(e: React.ChangeEvent<HTMLSelectElement>) {
+    const raw = e.target.value || "";
+    if (raw.startsWith("agent:")) {
+      const id = raw.slice("agent:".length);
+      // Load the agent and prefill
+      try {
+        setStatus(null);
+        const res = await fetch(`/api/agents/${id}`);
+        if (!res.ok) throw new Error("Failed to load agent");
+        const data = await res.json();
+        const a = data?.agent;
+        if (!a) throw new Error("Invalid agent payload");
+        setSelection({ kind: "agent", value: id });
+        setAgentId(id);
+        setAgentName(a.name ?? "");
+        setBaseModel(a.baseModel ?? baseModel); // keep old baseModel if missing
+        setSystemPrompt(a.systemPrompt ?? "");
+        // Apply settings with sane fallback to defaults
+        const s = a.settings || {};
+        setOpts({
+          ...DEFAULT_OPTS,
+          ...(s as Partial<AgentOptions>),
+        });
+      } catch (err: any) {
+        setStatus({ kind: "error", msg: err?.message || "Failed to load agent" });
+        // Fallback to model selection
+        setSelection({ kind: "model", value: baseModel });
+        setAgentId(null);
+      }
+    } else if (raw.startsWith("model:")) {
+      const modelName = raw.slice("model:".length);
+      setSelection({ kind: "model", value: modelName });
+      setBaseModel(modelName);
+      setAgentId(null); // new agent (Save)
+      // Optional: keep user-entered name/prompt/options as-is so they can save quickly
+    } else {
+      // Unknown value, ignore
+    }
+  }
+
+  function buildPayload() {
+    return {
+      name: agentName.trim(),
+      baseModel: baseModel.trim(),
+      systemPrompt: systemPrompt,
+      settings: { ...opts },
+    };
+  }
+
+  const isEditingExisting = selection.kind === "agent" && !!agentId;
+
+  async function onSave() {
+    setStatus(null);
+    if (!agentName.trim()) {
+      setStatus({ kind: "error", msg: "Please enter an agent name." });
+      return;
+    }
+    if (!baseModel.trim()) {
+      setStatus({ kind: "error", msg: "Please select a base model." });
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload()),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || `Save failed (${res.status})`);
+      }
+      const created = data?.agent as AgentSummary & { settings?: AgentOptions };
+      if (created?.id) {
+        // Add to agents list (make it available in dropdown)
+        setAgents((prev) => {
+          const exists = prev.some((a) => a.id === created.id);
+          return exists ? prev : [{ id: created.id, name: created.name, baseModel: created.baseModel, systemPrompt: created.systemPrompt, createdAt: created.createdAt, updatedAt: created.updatedAt }, ...prev];
+        });
+        // Flip to "Update" by selecting this agent
+        setAgentId(created.id);
+        setSelection({ kind: "agent", value: created.id });
+        setStatus({ kind: "success", msg: "Agent saved." });
+      } else {
+        setStatus({ kind: "success", msg: "Agent saved." });
+      }
+    } catch (e: any) {
+      setStatus({ kind: "error", msg: e?.message || "Save failed." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function onUpdate() {
+    if (!agentId) return;
+    setStatus(null);
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/agents/${agentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildPayload()),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data?.message || `Update failed (${res.status})`);
+      }
+      // Update the local agents list metadata (name, updatedAt) if changed
+      setAgents((prev) =>
+        prev.map((a) =>
+          a.id === agentId
+            ? {
+                ...a,
+                name: agentName.trim() || a.name,
+                baseModel: baseModel.trim() || a.baseModel,
+                updatedAt: new Date().toISOString(),
+              }
+            : a
+        )
+      );
+      setStatus({ kind: "success", msg: "Agent updated." });
+    } catch (e: any) {
+      setStatus({ kind: "error", msg: e?.message || "Update failed." });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function handlePrimaryAction() {
+    if (isEditingExisting) onUpdate();
+    else onSave();
   }
 
   return (
@@ -434,6 +640,25 @@ export default function AgentsPage() {
       />
 
       <div className={`${chatStyles.chatArea} ${styles.agentsArea}`}>
+        {/* Feedback banner */}
+        {status && (
+          <div
+            role="status"
+            aria-live="polite"
+            style={{
+              marginBottom: 8,
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "1px solid var(--border)",
+              background: status.kind === "success" ? "#0f1e2f" : "#2a1212",
+              color: "var(--text)",
+            }}
+          >
+            {status.msg}
+          </div>
+        )}
+
+        {/* Header inputs with section-sized titles */}
         <section className={styles.headerRow}>
           <div className={styles.fieldGroup}>
             <h2 className={styles.sectionTitle}>Agent name</h2>
@@ -443,6 +668,7 @@ export default function AgentsPage() {
               placeholder="e.g. Research Copilot"
               value={agentName}
               onChange={(e) => setAgentName(e.target.value)}
+              disabled={saving}
             />
           </div>
 
@@ -450,23 +676,38 @@ export default function AgentsPage() {
             <h2 className={styles.sectionTitle}>Base model</h2>
             <select
               className={styles.select}
-              value={baseModel}
-              onChange={(e) => setBaseModel(e.target.value)}
+              value={selectValue}
+              onChange={onChangeSelection}
+              disabled={saving}
             >
-              {availableModels.map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+              {agents.length > 0 && (
+                <optgroup label="Agents">
+                  {agents.map((a) => (
+                    <option key={a.id} value={`agent:${a.id}`}>
+                      {a.name} {a.baseModel ? `(${a.baseModel})` : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label="Base models">
+                {availableModels.map((m) => (
+                  <option key={m} value={`model:${m}`}>
+                    {m}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </div>
 
           <div className={styles.actionsBlock}>
-            <button type="button" className={styles.primaryBtn} onClick={() => { /* TODO: save */ }}>
-              Save agent
-            </button>
-            <button type="button" className={styles.secondaryBtn} onClick={() => { /* TODO: update */ }}>
-              Update
+            <button
+              type="button"
+              className={styles.primaryBtn}
+              onClick={handlePrimaryAction}
+              disabled={saving}
+              title={isEditingExisting ? "Update this agent" : "Create a new agent"}
+            >
+              {saving ? (isEditingExisting ? "Updating..." : "Saving...") : isEditingExisting ? "Update" : "Save agent"}
             </button>
           </div>
         </section>
@@ -479,6 +720,7 @@ export default function AgentsPage() {
             placeholder="Describe how this agent should behave..."
             value={systemPrompt}
             onChange={(e) => setSystemPrompt(e.target.value)}
+            disabled={saving}
           />
         </section>
 
@@ -498,20 +740,41 @@ export default function AgentsPage() {
         </section>
 
         <section className={styles.footerActions}>
-          <button type="button" className={styles.secondaryBtn} onClick={openHelp}>
+          <button
+            type="button"
+            className={styles.secondaryBtn}
+            onClick={() => {
+              const dlg = document.querySelector<HTMLDialogElement>("dialog." + styles.helpDialog);
+              dlg?.showModal?.();
+            }}
+            disabled={saving}
+          >
             Help
           </button>
-          <button type="button" className={styles.resetBtn} onClick={resetToDefaults}>
+          <button
+            type="button"
+            className={styles.resetBtn}
+            onClick={() => {
+              setOpts(DEFAULT_OPTS);
+              setStatus(null);
+            }}
+            disabled={saving}
+          >
             Reset to defaults
           </button>
         </section>
       </div>
 
-      <dialog ref={helpOpenRef} className={styles.helpDialog}>
+      <dialog className={styles.helpDialog}>
         <div className={styles.helpContent}>
           <div className={styles.helpHeader}>
             <h3>Agent options</h3>
-            <button type="button" className={styles.closeBtn} onClick={closeHelp} aria-label="Close">
+            <button
+              type="button"
+              className={styles.closeBtn}
+              onClick={(e) => (e.currentTarget.closest("dialog") as HTMLDialogElement | null)?.close()}
+              aria-label="Close"
+            >
               ×
             </button>
           </div>

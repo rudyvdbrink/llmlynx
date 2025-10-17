@@ -13,7 +13,7 @@ type User = { id: string; email: string } | null;
 type ConversationSummary = {
   id: string;
   title: string | null;
-  model: string | null;
+  model: string | null; // stores "agent:<id>" or "model:<name>" (legacy plain still supported)
   createdAt: string;
   updatedAt: string;
 };
@@ -27,12 +27,28 @@ type ConversationWithMessages = {
   messages: { id: string; role: Role; content: string; createdAt: string }[];
 };
 
+function isAgentSelection(sel: string | null | undefined): sel is string {
+  return !!sel && sel.startsWith("agent:");
+}
+function isModelSelection(sel: string | null | undefined): sel is string {
+  return !!sel && sel.startsWith("model:");
+}
+function normalizeSelection(sel: string | null | undefined, fallback = "model:gemma3:1b") {
+  if (!sel) return fallback;
+  if (isAgentSelection(sel) || isModelSelection(sel)) return sel;
+  // legacy plain value -> wrap as model:<name>
+  return `model:${sel}`;
+}
+
 export default function ChatPage() {
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
   const [uiMessages, setUiMessages] = useState<UiMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [model, setModel] = useState("gpt-oss:20b");
+
+  // Selection can be "model:<name>" or "agent:<id>"
+  const [selection, setSelection] = useState<string>("model:gpt-oss:20b");
+
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -100,7 +116,8 @@ export default function ChatPage() {
     const res = await fetch("/api/conversations", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model }),
+      // Store the selection identifier so reopening knows whether it was an agent or model
+      body: JSON.stringify({ model: selection }),
     });
     if (!res.ok) throw new Error("Failed to create conversation");
     const data = await res.json();
@@ -130,10 +147,18 @@ export default function ChatPage() {
       const convId = await ensureConversation(); // null in guest mode
 
       const body: any = {
-        model,
         messages: [...conversation, userMsg],
       };
       if (convId) body.conversationId = convId;
+
+      if (selection.startsWith("agent:")) {
+        body.agentId = selection.slice("agent:".length);
+      } else if (selection.startsWith("model:")) {
+        body.model = selection.slice("model:".length);
+      } else {
+        // Fallback for legacy plain selection
+        body.model = selection;
+      }
 
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -219,16 +244,16 @@ export default function ChatPage() {
     try {
       const res = await fetch(`/api/conversations/${id}`);
       if (!res.ok) throw new Error();
-      const data = await res.json();
+      const data = (await res.json()) as { conversation: ConversationWithMessages };
       const convo = data.conversation;
 
       // Map DB messages to UI and chat state
-      const msgs: ChatMessage[] = convo.messages.map((m: any) => ({
+      const msgs: ChatMessage[] = convo.messages.map((m) => ({
         role: m.role,
         content: m.content,
       }));
 
-      const ui: UiMessage[] = convo.messages.map((m: any) => ({
+      const ui: UiMessage[] = convo.messages.map((m) => ({
         sender: m.role === "user" ? "user" : "bot",
         text: m.content,
       }));
@@ -236,7 +261,8 @@ export default function ChatPage() {
       setActiveConversationId(convo.id);
       setConversation(msgs);
       setUiMessages(ui);
-      if (convo.model) setModel(convo.model);
+      // Normalize stored model to our "selection" format
+      setSelection(normalizeSelection(convo.model, "model:gemma3:1b"));
     } catch {
       // ignore
     }
@@ -256,9 +282,11 @@ export default function ChatPage() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title: newTitle }),
-    }).then((r) => {
-      if (!r.ok) throw new Error("Rename failed");
-    }).catch(() => {});
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("Rename failed");
+      })
+      .catch(() => {});
     refreshConversations();
   }
 
@@ -284,8 +312,8 @@ export default function ChatPage() {
         collapsed={collapsed}
         onToggle={() => setCollapsed((c) => !c)}
         user={user}
-        model={model}
-        onChangeModel={setModel}
+        model={selection}
+        onChangeModel={setSelection}
         modelDisabled={isStreaming}
         conversations={conversations}
         activeConversationId={activeConversationId}
