@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { getCurrentUser } from "../../../lib/session";
+import { prisma } from "../../../server/db/prisma";
+import { getCurrentUser } from "../../../server/auth/session";
 
 export const runtime = "nodejs";
 

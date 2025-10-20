@@ -1,4 +1,4 @@
-import { prisma } from "./prisma";
+import { prisma } from "../db/prisma";
 import crypto from "crypto";
 import { cookies } from "next/headers";
 

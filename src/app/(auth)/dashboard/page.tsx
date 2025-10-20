@@ -1,5 +1,5 @@
 import styles from "../auth.module.css";
-import { getCurrentUser } from "../../../lib/session";
+import { getCurrentUser } from "../../../server/auth/session";
 
 export default async function DashboardPage() {
   const user = await getCurrentUser();
