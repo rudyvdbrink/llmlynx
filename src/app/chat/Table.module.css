@@ -1,0 +1,84 @@
+
+  .mdTableWrapper {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 8px 0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: #2a3446 transparent;
+  }
+  .mdTableWrapper::-webkit-scrollbar { height: 6px; }
+  .mdTableWrapper::-webkit-scrollbar-thumb { background: #2a3446; border-radius: 999px; }
+  .mdTableWrapper::-webkit-scrollbar-track { background: transparent; }
+  
+  .mdTableWrapper table {
+    border-collapse: collapse;
+    border-spacing: 0;
+    background: transparent;
+    /* Fit table to bubble width; let cell content wrap to reduce line length */
+    width: 100%;
+    table-layout: auto; /* enables consistent wrapping and widths */
+  }
+  
+  .mdTableWrapper th,
+  .mdTableWrapper td {
+    border: 1px solid var(--border);
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+    /* Allow wrapping so lines aren't overly wide */
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+  
+  .mdTableWrapper thead th {
+    background: #0e1628;
+    font-weight: 600;
+    color: var(--text);
+  }
+  
+  /* Allow multi-line content inside cells */
+  .mdTableWrapper td > p,
+  .mdTableWrapper td > ul,
+  .mdTableWrapper td > ol,
+  .mdTableWrapper td > pre {
+    white-space: normal;
+    margin: 0.25rem 0;
+  }
+  
+  .mdTableWrapper td code,
+  .mdTableWrapper th code {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  
+
+  /* Mobile/tablet: enforce a minimum column width and scroll inside wrapper without expanding page */
+  @media (max-width: 1024px) {
+  
+    /* Wrap the table in a scroller that does not affect page width */
+    .mdTableWrapper {
+      max-width: 100%;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      contain: inline-size; 
+    }
+  
+    /* Let the table size to its content so horizontal scrolling appears when needed */
+    .mdTableWrapper table {
+      width: 50%vpw;  
+      min-width: 100%;     
+      table-layout: auto;  
+    }
+  
+    .mdTableWrapper th,
+    .mdTableWrapper td {
+      min-width: 12ch;     
+      white-space: normal; 
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+  }
+  

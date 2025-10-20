@@ -211,3 +211,13 @@
 @media (max-width: 520px) {
   .bubble { max-width: 100%; }
 }
+
+@media (max-width: 1024px) {
+  /* Prevent horizontal growth of the page due to wide content */
+  .messages { overflow-x: hidden; }
+
+  /* Allow bubbles to shrink within the flex row */
+  .messageRow .bubble { min-width: 0; }
+  
+}
+
