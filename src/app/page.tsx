@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "../lib/session";
+import { getCurrentUser } from "../server/auth/session";
 
 export default async function Index() {
   const user = await getCurrentUser();

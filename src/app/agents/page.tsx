@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "../../lib/session";
+import { getCurrentUser } from "../../server/auth/session";
 import AgentsClient from "./AgentsClient";
 
 // Server component: protect the Agents page

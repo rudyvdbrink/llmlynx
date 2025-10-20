@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../../lib/prisma";
-import { hashPassword } from "../../../../lib/hash";
-import { createSession } from "../../../../lib/session";
-import { generateRecoveryCode } from "../../../../lib/recovery";
+import { prisma } from "../../../../server/db/prisma";
+import { hashPassword } from "../../../../server/auth/hash";
+import { createSession } from "../../../../server/auth/session";
+import { generateRecoveryCode } from "../../../../server/auth/recovery";
 
 export async function POST(req: Request) {
   try {

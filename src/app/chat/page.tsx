@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import MarkdownMessage from "../../components/MarkdownMessage";
+import MarkdownMessage from "./MarkdownMessage";
 import styles from "./Chat.module.css";
 import Sidebar from "./sidebar/Sidebar";
 

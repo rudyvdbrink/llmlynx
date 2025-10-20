@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../lib/prisma";
-import { getCurrentUser } from "../../../lib/session";
+import { prisma } from "../../../server/db/prisma";
+import { getCurrentUser } from "../../../server/auth/session";
 
 // GET /api/conversations -> list current user's conversations (most recent first)
 export async function GET() {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { destroySession } from "../../../lib/session";
+import { destroySession } from "../../../server/auth/session";
 
 export async function GET(request: Request) {
   // Destroy the session (cookie + db row)
