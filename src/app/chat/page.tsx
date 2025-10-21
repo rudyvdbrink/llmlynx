@@ -1,393 +1,84 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import MarkdownMessage from "./MarkdownMessage";
+import { useEffect, useState } from "react";
 import styles from "./Chat.module.css";
 import Sidebar from "./sidebar/Sidebar";
 
-type Role = "user" | "assistant" | "system";
-type ChatMessage = { role: Role; content: string };
-type UiMessage = { sender: "user" | "bot"; text: string };
-type User = { id: string; email: string } | null;
-
-type ConversationSummary = {
-  id: string;
-  title: string | null;
-  model: string | null; // stores "agent:<id>" or "model:<name>" (legacy plain still supported)
-  createdAt: string;
-  updatedAt: string;
-};
-
-type ConversationWithMessages = {
-  id: string;
-  title: string | null;
-  model: string | null;
-  createdAt: string;
-  updatedAt: string;
-  messages: { id: string; role: Role; content: string; createdAt: string }[];
-};
-
-function isAgentSelection(sel: string | null | undefined): sel is string {
-  return !!sel && sel.startsWith("agent:");
-}
-function isModelSelection(sel: string | null | undefined): sel is string {
-  return !!sel && sel.startsWith("model:");
-}
-function normalizeSelection(sel: string | null | undefined, fallback = "model:gemma3:1b") {
-  if (!sel) return fallback;
-  if (isAgentSelection(sel) || isModelSelection(sel)) return sel;
-  // legacy plain value -> wrap as model:<name>
-  return `model:${sel}`;
-}
-
-// Clipboard helper
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through
-  }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Small helper component for the per-message copy button with green check feedback
-function MessageCopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-
-  return (
-    <button
-      type="button"
-      className={styles.messageCopyBtn}
-      aria-label={copied ? "Copied!" : "Copy response"}
-      title={copied ? "Copied!" : "Copy"}
-      onClick={async () => {
-        const ok = await copyTextToClipboard(text);
-        if (ok) {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 1200);
-        }
-      }}
-    >
-      {copied ? (
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="#22c55e"
-          aria-hidden="true"
-        >
-          <path d="M9 16.2l-3.5-3.5L4 14.2 9 19l11-11-1.5-1.5z" />
-        </svg>
-      ) : (
-        <img src="/copy.svg" alt="" aria-hidden="true" />
-      )}
-    </button>
-  );
-}
+import { useAuth } from "./hooks/useAuth";
+import { useConversations } from "./hooks/useConversations";
+import { useChat } from "./hooks/useChat";
+import MessageList from "./components/MessageList";
+import Composer from "./components/Composer";
 
 export default function ChatPage() {
-  const [conversation, setConversation] = useState<ChatMessage[]>([]);
-  const [uiMessages, setUiMessages] = useState<UiMessage[]>([]);
-  const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
-
-  // Selection can be "model:<name>" or "agent:<id>"
-  const [selection, setSelection] = useState<string>("model:gpt-oss:20b");
-
-  const abortRef = useRef<AbortController | null>(null);
-  const endRef = useRef<HTMLDivElement | null>(null);
-  const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
-
+  // Collapsible sidebar behavior
   const [collapsed, setCollapsed] = useState<boolean>(false);
-  const [user, setUser] = useState<User>(null);
-
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
-
-  // Focus textarea automatically after a streaming response completes (desktop)
-  const prevStreamingRef = useRef(isStreaming);
-  useEffect(() => {
-    const prev = prevStreamingRef.current;
-    if (prev && !isStreaming) {
-      // streaming transitioned true -> false
-      if (typeof window !== "undefined" && window.innerWidth >= 760) {
-        const ta = textAreaRef.current;
-        if (ta) {
-          ta.focus();
-          // place caret at end
-          const len = ta.value.length;
-          try {
-            ta.setSelectionRange(len, len);
-          } catch {
-            // ignore if not supported
-          }
-        }
-      }
-    }
-    prevStreamingRef.current = isStreaming;
-  }, [isStreaming]);
-
   useEffect(() => {
     if (typeof window !== "undefined" && window.innerWidth < 760) {
       setCollapsed(true);
     }
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    fetch("/api/auth/me")
-      .then((r) => r.json().catch(() => ({ user: null })))
-      .then((data) => {
-        if (active) setUser(data.user ?? null);
-      })
-      .catch(() => {
-        if (active) setUser(null);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+  // Auth
+  const { user } = useAuth();
 
-  function refreshConversations() {
-    if (!user) {
-      setConversations([]);
-      return;
-    }
-    fetch("/api/conversations")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data) => setConversations(data.conversations ?? []))
-      .catch(() => setConversations([]));
-  }
+  // Selection can be "model:<name>" or "agent:<id>"
+  const [selection, setSelection] = useState<string>("model:gpt-oss:20b");
 
-  useEffect(() => {
-    refreshConversations();
-    // Reset active conversation when logging out
-    if (!user) {
-      setActiveConversationId(null);
-    }
-  }, [user]);
+  // Conversations (list + active + CRUD)
+  const {
+    conversations,
+    activeConversationId,
+    setActiveConversationId,
+    refreshConversations,
+    ensureConversation,
+    openConversation,
+    renameConversation,
+    deleteConversation,
+    newConversation,
+  } = useConversations(user, selection, setSelection);
 
-  useEffect(() => {
-    const ta = textAreaRef.current;
-    if (!ta) return;
-    ta.style.height = "0px";
-    ta.style.height = Math.min(200, ta.scrollHeight) + "px";
-  }, [input]);
+  // Chat state (messages + composer + streaming)
+  const {
+    uiMessages,
+    input,
+    isStreaming,
+    setInput,
+    loadHistory,
+    reset,
+    onSubmit,
+    onKeyDown,
+    onCancel,
+  } = useChat({
+    user,
+    selection,
+    ensureConversation,
+    refreshConversations,
+  });
 
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [uiMessages]);
-
-  async function ensureConversation(): Promise<string | null> {
-    if (!user) return null; // guest mode: no conversation
-    if (activeConversationId) return activeConversationId;
-    const res = await fetch("/api/conversations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // Store the selection identifier so reopening knows whether it was an agent or model
-      body: JSON.stringify({ model: selection }),
-    });
-    if (!res.ok) throw new Error("Failed to create conversation");
-    const data = await res.json();
-    const id = data.conversation.id as string;
-    setActiveConversationId(id);
-    refreshConversations();
-    return id;
-  }
-
-  async function handleSend() {
-    const trimmed = input.trim();
-    if (!trimmed || isStreaming) return;
-
-    const userMsg: ChatMessage = { role: "user", content: trimmed };
-    setConversation((prev) => [...prev, userMsg]);
-    setUiMessages((prev) => [...prev, { sender: "user", text: trimmed }]);
-    setInput("");
-    setIsStreaming(true);
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    const botIndex = uiMessages.length + 1;
-    setUiMessages((prev) => [...prev, { sender: "bot", text: "" }]);
-
+  // Handlers bridging conversations <> chat
+  async function handleOpenConversation(id: string) {
+    if (isStreaming || !user) return;
     try {
-      const convId = await ensureConversation(); // null in guest mode
-
-      const body: any = {
-        messages: [...conversation, userMsg],
-      };
-      if (convId) body.conversationId = convId;
-
-      if (selection.startsWith("agent:")) {
-        body.agentId = selection.slice("agent:".length);
-      } else if (selection.startsWith("model:")) {
-        body.model = selection.slice("model:".length);
-      } else {
-        // Fallback for legacy plain selection
-        body.model = selection;
-      }
-
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-
-      if (!res.ok || !res.body) throw new Error("Network/response error");
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let botAccum = "";
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-
-        const lines = chunk
-          .split("\n")
-          .map((l) => l.trim())
-          .filter(Boolean);
-
-        for (const line of lines) {
-          try {
-            const obj = JSON.parse(line);
-            if (obj.message?.content) {
-              botAccum += obj.message.content;
-              setUiMessages((prev) => {
-                const copy = [...prev];
-                copy[botIndex] = { sender: "bot", text: botAccum };
-                return copy;
-              });
-            }
-            if (obj.done) {
-              setConversation((prev) => [...prev, { role: "assistant", content: botAccum }]);
-            }
-          } catch {
-            // ignore partial JSON
-          }
-        }
-      }
-
-      // Refresh list so updatedAt bumps to top (only if authenticated)
-      if (user) refreshConversations();
-    } catch (err: any) {
-      if (err.name !== "AbortError") {
-        setUiMessages((prev) => {
-          const copy = [...prev];
-          copy[botIndex] = {
-            sender: "bot",
-            text: (copy[botIndex]?.text || "") + "\n\n*(Stream error)*",
-          };
-          return copy;
-        });
-      }
-    } finally {
-      setIsStreaming(false);
-      abortRef.current = null;
-    }
-  }
-
-  function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (isStreaming) return; // Prevent submit while streaming (stop button handles cancel)
-    handleSend();
-  }
-
-  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      if (!isStreaming) handleSend();
-    }
-  }
-
-  function handleCancel() {
-    abortRef.current?.abort();
-  }
-
-  async function onOpenConversation(id: string) {
-    if (isStreaming || !user) return; // guests cannot open saved convos
-    try {
-      const res = await fetch(`/api/conversations/${id}`);
-      if (!res.ok) throw new Error();
-      const data = (await res.json()) as { conversation: ConversationWithMessages };
-      const convo = data.conversation;
-
-      // Map DB messages to UI and chat state
-      const msgs: ChatMessage[] = convo.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-
-      const ui: UiMessage[] = convo.messages.map((m) => ({
-        sender: m.role === "user" ? "user" : "bot",
-        text: m.content,
-      }));
-
-      setActiveConversationId(convo.id);
-      setConversation(msgs);
-      setUiMessages(ui);
-      // Normalize stored model to our "selection" format
-      setSelection(normalizeSelection(convo.model, "model:gemma3:1b"));
+      const { messages } = await openConversation(id);
+      loadHistory(messages);
     } catch {
       // ignore
     }
   }
 
-  function onNewConversation() {
+  function handleNewConversation() {
     if (isStreaming) return;
-    setActiveConversationId(null);
-    setConversation([]);
-    setUiMessages([]);
+    newConversation();
+    reset();
   }
 
-  // Rename conversation
-  async function onRenameConversation(id: string, newTitle: string) {
+  async function handleDeleteConversation(id: string) {
     if (!user) return;
-    await fetch(`/api/conversations/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newTitle }),
-    })
-      .then((r) => {
-        if (!r.ok) throw new Error("Rename failed");
-      })
-      .catch(() => {});
-    refreshConversations();
-  }
-
-  // Delete conversation
-  async function onDeleteConversation(id: string) {
-    if (!user) return;
-    await fetch(`/api/conversations/${id}`, { method: "DELETE" })
-      .then((r) => {
-        if (!r.ok && r.status !== 204) throw new Error("Delete failed");
-      })
-      .catch(() => {});
-    if (id === activeConversationId) {
-      setActiveConversationId(null);
-      setConversation([]);
-      setUiMessages([]);
+    const deletedActive = await deleteConversation(id);
+    if (deletedActive) {
+      reset();
     }
-    refreshConversations();
   }
 
   return (
@@ -401,85 +92,25 @@ export default function ChatPage() {
         modelDisabled={isStreaming}
         conversations={conversations}
         activeConversationId={activeConversationId}
-        onNewConversation={onNewConversation}
-        onOpenConversation={onOpenConversation}
-        onRenameConversation={onRenameConversation}
-        onDeleteConversation={onDeleteConversation}
+        onNewConversation={handleNewConversation}
+        onOpenConversation={handleOpenConversation}
+        onRenameConversation={renameConversation}
+        onDeleteConversation={handleDeleteConversation}
         // Show agents navigation only when authenticated
         footerNavLabel={user ? "Agents" : undefined}
         footerNavHref={user ? "/agents" : undefined}
       />
 
       <div className={styles.chatArea}>
-        <section className={styles.messages} aria-live="polite" aria-label="Chat messages">
-          {uiMessages.map((msg, idx) => {
-            const showMessageCopy =
-              msg.sender === "bot" && (!isStreaming || idx !== uiMessages.length - 1);
-            return (
-              <div
-                key={idx}
-                className={`${styles.messageRow} ${
-                  msg.sender === "user" ? styles.user : styles.bot
-                }`}
-              >
-                <div className={styles.bubble}>
-                  <MarkdownMessage content={msg.text} />
-                  {showMessageCopy && <MessageCopyButton text={msg.text} />}
-                </div>
-              </div>
-            );
-          })}
-          <div ref={endRef} />
-        </section>
-
-        <form className={styles.composer} onSubmit={onSubmit}>
-          <textarea
-            ref={textAreaRef}
-            value={input}
-            disabled={isStreaming}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={isStreaming ? "Model is responding..." : "Ask the llynx..."}
-            aria-label="Message"
-            rows={1}
-          />
-          {isStreaming ? (
-            <button
-              type="button"
-              aria-label="Stop response"
-              className={`${styles.stopButton} ${styles.iconButton}`}
-              onClick={handleCancel}
-            >
-              {/* Stop square */}
-              <svg
-                width="24"
-                height="24"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <rect x="7" y="7" width="10" height="10" rx="1" />
-              </svg>
-            </button>
-          ) : (
-            <button
-              type="submit"
-              aria-label="Send"
-              disabled={!input.trim()}
-              className={styles.iconButton}
-            >
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <path d="M4 12L20 4L12 20L11 13L4 12Z" transform="translate(-0.5 0)" />
-              </svg>
-            </button>
-          )}
-        </form>
+        <MessageList uiMessages={uiMessages} isStreaming={isStreaming} />
+        <Composer
+          input={input}
+          setInput={setInput}
+          isStreaming={isStreaming}
+          onSubmit={onSubmit}
+          onKeyDown={onKeyDown}
+          onCancel={onCancel}
+        />
       </div>
     </main>
   );
