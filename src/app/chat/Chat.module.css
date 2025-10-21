@@ -84,6 +84,13 @@
   color: inherit;
 }
 
+/* Provide extra space for the message-level copy button and anchor it */
+.messageRow.bot .bubble {
+  position: relative;
+  padding-right: 34px;  /* space for bottom-right copy icon */
+  padding-bottom: 28px;
+}
+
 .composer {
   position: sticky;
   bottom: 0;
@@ -285,4 +292,76 @@
     font-size: 0.85em;
     white-space: pre;            /* preserve formatting and enable x-scroll */
   }
+}
+
+/* ===== Copy button for code blocks ===== */
+
+.codeBlockWrapper {
+  position: relative;
+}
+
+/* Make room so the button doesn't overlap code content in the bottom-right corner */
+.codeBlockWrapper pre {
+  padding-right: 32px;  /* space for the button on the right */
+  padding-bottom: 32px;
+}
+
+/* Position the copy icon in the lower-right of the code block, no circle/background */
+.copyCodeBtn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: auto;
+  height: auto;
+  cursor: pointer;
+  line-height: 0;
+  opacity: 0.60;
+  transition: opacity 0.12s ease;
+}
+
+.copyCodeBtn:hover,
+.copyCodeBtn:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+
+/* Shrink and invert the SVG to white */
+.copyCodeBtn img {
+  width: 14px;   /* slightly smaller */
+  height: 14px;
+  filter: invert(1);
+  display: block;
+}
+
+/* ===== Copy button for entire assistant message ===== */
+
+.messageCopyBtn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: auto;
+  height: auto;
+  cursor: pointer;
+  line-height: 0;
+  opacity: 0.7;
+  transition: opacity 0.12s ease;
+}
+
+.messageCopyBtn:hover,
+.messageCopyBtn:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+
+.messageCopyBtn img {
+  width: 14px;
+  height: 14px;
+  filter: invert(1);
+  display: block;
 }

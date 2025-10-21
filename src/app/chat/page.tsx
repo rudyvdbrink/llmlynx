@@ -40,6 +40,32 @@ function normalizeSelection(sel: string | null | undefined, fallback = "model:ge
   return `model:${sel}`;
 }
 
+// Clipboard helper
+async function copyTextToClipboard(text: string) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function ChatPage() {
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
   const [uiMessages, setUiMessages] = useState<UiMessage[]>([]);
@@ -337,6 +363,25 @@ export default function ChatPage() {
             >
               <div className={styles.bubble}>
                 <MarkdownMessage content={msg.text} />
+                {msg.sender === "bot" && (
+                  <button
+                    type="button"
+                    className={styles.messageCopyBtn}
+                    aria-label="Copy response"
+                    title="Copy"
+                    onClick={async (e) => {
+                      const btn = e.currentTarget as HTMLButtonElement; // capture before awaiting
+                      const ok = await copyTextToClipboard(msg.text);
+                      const prev = btn.title;
+                      btn.title = ok ? "Copied!" : "Copy failed";
+                      setTimeout(() => {
+                        btn.title = prev;
+                      }, 1200);
+                    }}
+                  >
+                    <img src="/copy.svg" alt="" aria-hidden="true" />
+                  </button>
+                )}
               </div>
             </div>
           ))}
