@@ -84,6 +84,13 @@
   color: inherit;
 }
 
+/* Provide extra space for the message-level copy button and anchor it */
+.messageRow.bot .bubble {
+  position: relative;
+  padding-right: 34px;  /* space for bottom-right copy icon */
+  padding-bottom: 28px;
+}
+
 .composer {
   position: sticky;
   bottom: 0;
@@ -285,4 +292,107 @@
     font-size: 0.85em;
     white-space: pre;            /* preserve formatting and enable x-scroll */
   }
+}
+
+/* ===== Code block header (language + copy) ===== */
+
+.codeBlockWrapper {
+  position: relative;
+}
+
+/* Header bar pinned to the top of the code block area */
+.codeHeader {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 12px 12px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  pointer-events: none; /* prevent blocking selection/scroll */
+}
+
+/* Make inner controls clickable while header itself doesn't block selection */
+.codeHeaderLeft,
+.codeHeaderRight {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.codeLanguage {
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+}
+
+.copyLabel {
+  color: var(--muted);
+}
+
+/* Provide space so the header doesn't overlap code content */
+.codeBlockWrapper pre {
+  padding-top: 32px;  /* room for the header row */
+}
+
+/* Copy icon button inside the header (no background/circle) */
+.copyCodeBtn {
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: auto;
+  height: auto;
+  cursor: pointer;
+  line-height: 0;
+  opacity: 0.8;
+  transition: opacity 0.12s ease;
+}
+
+.copyCodeBtn:hover,
+.copyCodeBtn:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+
+/* Shrink and invert the SVG to white */
+.copyCodeBtn img {
+  width: 14px;
+  height: 14px;
+  filter: invert(1);
+  display: block;
+}
+
+/* ===== Copy button for entire assistant message ===== */
+
+.messageCopyBtn {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  width: auto;
+  height: auto;
+  cursor: pointer;
+  line-height: 0;
+  opacity: 0.7;
+  transition: opacity 0.12s ease;
+}
+
+.messageCopyBtn:hover,
+.messageCopyBtn:focus-visible {
+  opacity: 1;
+  outline: none;
+}
+
+.messageCopyBtn img {
+  width: 14px;
+  height: 14px;
+  filter: invert(1);
+  display: block;
 }
