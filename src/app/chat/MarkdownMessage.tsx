@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useRef } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -76,33 +76,95 @@ async function copyTextToClipboard(text: string) {
   }
 }
 
+/**
+ * Try to read the language from:
+ * - a "data-lang" or "data-language" on the child element
+ * - a "language-xxx" class on the child element
+ * - a "language-xxx" class on the pre element
+ */
+function getLangFromChildren(children: React.ReactNode, preClassName?: string): string {
+  let lang = "";
+
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return;
+    const props: any = child.props || {};
+
+    const dataLang: string | undefined = props["data-lang"] || props["data-language"];
+    if (typeof dataLang === "string" && dataLang) {
+      lang = dataLang.toLowerCase();
+      return;
+    }
+
+    const cls: string = props.className || "";
+    const m = String(cls).match(/language-([a-z0-9+\-]+)/i);
+    if (m?.[1]) {
+      lang = m[1].toLowerCase();
+      return;
+    }
+  });
+
+  if (!lang && preClassName) {
+    const m2 = String(preClassName).match(/language-([a-z0-9+\-]+)/i);
+    if (m2?.[1]) lang = m2[1].toLowerCase();
+  }
+
+  return lang || "text";
+}
+
 export default function MarkdownMessage({ content }: { content: string }) {
   const normalized = useMemo(() => normalizeTeXDelimiters(content), [content]);
 
-  // Custom pre element to wrap code blocks with a copy button without breaking HTML semantics
+  // Custom <pre> element to add a top bar with language and copy action
   const PreWithCopy: React.FC<React.HTMLAttributes<HTMLPreElement>> = (props) => {
     const preRef = useRef<HTMLPreElement | null>(null);
+    const [copied, setCopied] = useState(false);
+
+    // Compute the label directly from the React element tree; no state/effect needed
+    const langLabel = useMemo(
+      () => getLangFromChildren(props.children, props.className as string | undefined),
+      [props.children, props.className]
+    );
 
     return (
       <div className={chatStyles.codeBlockWrapper}>
-        <button
-          type="button"
-          className={chatStyles.copyCodeBtn}
-          aria-label="Copy code"
-          title="Copy"
-          onClick={async (e) => {
-            const btn = e.currentTarget as HTMLButtonElement; // capture before awaiting
-            const text = preRef.current?.textContent ?? "";
-            const ok = await copyTextToClipboard(text);
-            const prev = btn.title;
-            btn.title = ok ? "Copied!" : "Copy failed";
-            setTimeout(() => {
-              btn.title = prev;
-            }, 1200);
-          }}
-        >
-          <img src="/copy.svg" alt="" aria-hidden="true" />
-        </button>
+        <div className={chatStyles.codeHeader}>
+          <div className={chatStyles.codeHeaderLeft}>
+            <span className={chatStyles.codeLanguage}>{langLabel}</span>
+          </div>
+          <div className={chatStyles.codeHeaderRight}>
+            <span className={chatStyles.copyLabel}>copy code</span>
+            <button
+              type="button"
+              className={chatStyles.copyCodeBtn}
+              aria-label="Copy code"
+              title={copied ? "Copied!" : "Copy"}
+              onClick={async (e) => {
+                const codeEl = preRef.current?.querySelector("code");
+                const text = codeEl?.textContent ?? "";
+                const ok = await copyTextToClipboard(text);
+                if (ok) {
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 1200);
+                }
+              }}
+            >
+              {copied ? (
+                // Green check mark
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="#22c55e"
+                  aria-hidden="true"
+                >
+                  <path d="M9 16.2l-3.5-3.5L4 14.2 9 19l11-11-1.5-1.5z" />
+                </svg>
+              ) : (
+                <img src="/copy.svg" alt="" aria-hidden="true" />
+              )}
+            </button>
+          </div>
+        </div>
         <pre ref={preRef} {...props} />
       </div>
     );
@@ -110,11 +172,7 @@ export default function MarkdownMessage({ content }: { content: string }) {
 
   return (
     <ReactMarkdown
-      remarkPlugins={[
-        remarkMath, // parse $...$ and $$...$$
-        remarkGfm,
-        remarkBreaks,
-      ]}
+      remarkPlugins={[remarkMath, remarkGfm, remarkBreaks]}
       rehypePlugins={[[rehypeKatex, { throwOnError: false }], rehypeHighlight]}
       components={{
         a: ({ node, ...props }) => (
@@ -125,9 +183,9 @@ export default function MarkdownMessage({ content }: { content: string }) {
             <table {...props} />
           </div>
         ),
-        // Override pre (block code) to add the copy button; keeps valid HTML structure
+        // Add the header to block code without breaking HTML semantics
         pre: PreWithCopy,
-        // Keep code element default behavior; do not wrap block code here to avoid <div> inside <p> issues
+        // Inline code remains inline; block code is handled by the pre wrapper
         code: ({ inline, className, children, ...props }: any) => {
           if (inline) {
             return (
@@ -136,9 +194,14 @@ export default function MarkdownMessage({ content }: { content: string }) {
               </code>
             );
           }
-          // For block code, let <pre> wrapper handle it; return code as-is
+          // Attach data-lang so the pre wrapper can reliably read the language
+          const lang =
+            (className && (className.match(/language-([a-z0-9+\-]+)/i)?.[1] || "")) || "";
+          const dataProps: any = {};
+          if (lang) dataProps["data-lang"] = lang.toLowerCase();
+
           return (
-            <code className={className} {...props}>
+            <code className={className} {...dataProps} {...props}>
               {children}
             </code>
           );

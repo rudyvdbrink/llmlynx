@@ -66,6 +66,41 @@ async function copyTextToClipboard(text: string) {
   }
 }
 
+// Small helper component for the per-message copy button with green check feedback
+function MessageCopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <button
+      type="button"
+      className={styles.messageCopyBtn}
+      aria-label={copied ? "Copied!" : "Copy response"}
+      title={copied ? "Copied!" : "Copy"}
+      onClick={async () => {
+        const ok = await copyTextToClipboard(text);
+        if (ok) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }
+      }}
+    >
+      {copied ? (
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="#22c55e"
+          aria-hidden="true"
+        >
+          <path d="M9 16.2l-3.5-3.5L4 14.2 9 19l11-11-1.5-1.5z" />
+        </svg>
+      ) : (
+        <img src="/copy.svg" alt="" aria-hidden="true" />
+      )}
+    </button>
+  );
+}
+
 export default function ChatPage() {
   const [conversation, setConversation] = useState<ChatMessage[]>([]);
   const [uiMessages, setUiMessages] = useState<UiMessage[]>([]);
@@ -84,6 +119,29 @@ export default function ChatPage() {
 
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
+
+  // Focus textarea automatically after a streaming response completes (desktop)
+  const prevStreamingRef = useRef(isStreaming);
+  useEffect(() => {
+    const prev = prevStreamingRef.current;
+    if (prev && !isStreaming) {
+      // streaming transitioned true -> false
+      if (typeof window !== "undefined" && window.innerWidth >= 760) {
+        const ta = textAreaRef.current;
+        if (ta) {
+          ta.focus();
+          // place caret at end
+          const len = ta.value.length;
+          try {
+            ta.setSelectionRange(len, len);
+          } catch {
+            // ignore if not supported
+          }
+        }
+      }
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming]);
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.innerWidth < 760) {
@@ -354,37 +412,23 @@ export default function ChatPage() {
 
       <div className={styles.chatArea}>
         <section className={styles.messages} aria-live="polite" aria-label="Chat messages">
-          {uiMessages.map((msg, idx) => (
-            <div
-              key={idx}
-              className={`${styles.messageRow} ${
-                msg.sender === "user" ? styles.user : styles.bot
-              }`}
-            >
-              <div className={styles.bubble}>
-                <MarkdownMessage content={msg.text} />
-                {msg.sender === "bot" && (
-                  <button
-                    type="button"
-                    className={styles.messageCopyBtn}
-                    aria-label="Copy response"
-                    title="Copy"
-                    onClick={async (e) => {
-                      const btn = e.currentTarget as HTMLButtonElement; // capture before awaiting
-                      const ok = await copyTextToClipboard(msg.text);
-                      const prev = btn.title;
-                      btn.title = ok ? "Copied!" : "Copy failed";
-                      setTimeout(() => {
-                        btn.title = prev;
-                      }, 1200);
-                    }}
-                  >
-                    <img src="/copy.svg" alt="" aria-hidden="true" />
-                  </button>
-                )}
+          {uiMessages.map((msg, idx) => {
+            const showMessageCopy =
+              msg.sender === "bot" && (!isStreaming || idx !== uiMessages.length - 1);
+            return (
+              <div
+                key={idx}
+                className={`${styles.messageRow} ${
+                  msg.sender === "user" ? styles.user : styles.bot
+                }`}
+              >
+                <div className={styles.bubble}>
+                  <MarkdownMessage content={msg.text} />
+                  {showMessageCopy && <MessageCopyButton text={msg.text} />}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <div ref={endRef} />
         </section>
 
