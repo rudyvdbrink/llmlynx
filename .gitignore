@@ -148,3 +148,4 @@ to_do*
 /prisma/dev.db-journal
 *.db
 scrap/
+./logs
