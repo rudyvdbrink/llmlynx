@@ -17,7 +17,7 @@ export default function ModelSection({
   onChangeModel,
   disabled,
 }: {
-  // model is a selection string like "model:mistral" or "agent:<id>".
+  // model is a selection string like "model:mistral", "agent:<id>", or "remote:<id>".
   // For backward compatibility, plain model names are also accepted.
   model: string;
   onChangeModel: (v: string) => void;
@@ -25,11 +25,13 @@ export default function ModelSection({
 }) {
   const [baseModels, setBaseModels] = useState<string[]>([]);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
+  const [remoteModels, setRemoteModels] = useState<string[]>([]);
 
   // Normalize incoming value to ensure the select has a matching option
-  const normalizedValue = model.startsWith("agent:") || model.startsWith("model:")
-    ? model
-    : `model:${model}`;
+  const normalizedValue =
+    model.startsWith("agent:") || model.startsWith("model:") || model.startsWith("remote:")
+      ? model
+      : `model:${model}`;
 
   // Load local models from Ollama proxy
   useEffect(() => {
@@ -75,7 +77,25 @@ export default function ModelSection({
     };
   }, []);
 
+  // Load remote models availability
+  useEffect(() => {
+    let active = true;
+    fetch("/api/remote-models")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data) => {
+        if (!active) return;
+        const available = !!data?.available;
+        const models: string[] = Array.isArray(data?.models) ? data.models : [];
+        setRemoteModels(available ? models : []);
+      })
+      .catch(() => setRemoteModels([]));
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const hasAgents = agents.length > 0;
+  const hasRemote = remoteModels.length > 0;
 
   return (
     <div className={styles.modelBlock}>
@@ -99,6 +119,16 @@ export default function ModelSection({
           </optgroup>
         )}
 
+        {hasRemote && (
+          <optgroup label="Remote">
+            {remoteModels.map((m) => (
+              <option key={`remote:${m}`} value={`remote:${m}`}>
+                {m}
+              </option>
+            ))}
+          </optgroup>
+        )}
+
         <optgroup label="Base models">
           {baseModels.map((m) => (
             <option key={`model:${m}`} value={`model:${m}`}>
@@ -110,6 +140,7 @@ export default function ModelSection({
         {/* Safety net: if current value isn't in lists yet, keep it selectable */}
         {!hasAgents &&
           baseModels.length === 0 &&
+          !hasRemote &&
           normalizedValue && <option value={normalizedValue}>{normalizedValue}</option>}
       </select>
     </div>
