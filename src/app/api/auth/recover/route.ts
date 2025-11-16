@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "../../../../server/db/prisma";
 import { hashPassword } from "../../../../server/auth/hash";
+import { checkRateLimit } from "../../../../server/limits/rateLimit";
 import { logAuthEvent } from "../../../../server/logging/authLogger";
 
 export async function POST(req: Request) {
@@ -8,6 +9,26 @@ export async function POST(req: Request) {
     (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() ||
     req.headers.get("x-real-ip") ||
     null;
+
+  // Rate limit per IP for recovery attempts
+  const rl = checkRateLimit("recovery", ip);
+  if (!rl.allowed) {
+    await logAuthEvent({
+      type: "RESET",
+      outcome: "FAILURE",
+      reason: "RATE_LIMITED",
+      ip,
+    });
+    return NextResponse.json(
+      { message: "Too many recovery attempts. Please try again later." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": Math.max(1, Math.round((rl.resetAt - Date.now()) / 1000)).toString(),
+        },
+      }
+    );
+  }
 
   try {
     const { recoveryCode, newPassword } = await req.json();

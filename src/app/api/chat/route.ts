@@ -26,6 +26,13 @@ function makeTitleFrom(content: string, maxWords = 8, maxChars = 80) {
 }
 
 export async function POST(req: NextRequest) {
+  // Require authentication for all chat calls
+  const user = await getCurrentUser().catch(() => null);
+  if (!user) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+  const isAuthed = true;
+
   let body: {
     messages: ChatMessage[];
     model?: string;           // selection string: "model:<name>" | "remote:<name>" | legacy raw model
@@ -43,9 +50,6 @@ export async function POST(req: NextRequest) {
     return new Response("messages array required", { status: 400 });
   }
 
-  const user = await getCurrentUser().catch(() => null);
-  const isAuthed = !!user;
-
   // Detect selection type
   const selection = body.model || "";
   const isRemote = typeof selection === "string" && selection.startsWith("remote:");
@@ -58,12 +62,9 @@ export async function POST(req: NextRequest) {
   let options: Record<string, any> | undefined = undefined;
 
   if (body.agentId) {
-    // Must be authenticated to use an agent (since we need to load it from DB)
-    if (!isAuthed) {
-      return new Response("Unauthorized", { status: 401 });
-    }
+    // Must be authenticated to use an agent (we already enforce auth above)
     const agent = await prisma.agent.findUnique({ where: { id: body.agentId } });
-    if (!agent || agent.userId !== user!.id) {
+    if (!agent || agent.userId !== user.id) {
       return new Response("Agent not found", { status: 404 });
     }
     upstreamModel = agent.baseModel || upstreamModel;
@@ -96,64 +97,62 @@ export async function POST(req: NextRequest) {
       : [{ role: "system", content: systemPrompt } as ChatMessage, ...body.messages];
   }
 
-  // Resolve or create a conversation (ONLY if authenticated)
+  // Resolve or create a conversation (authentication is required, so always write to DB)
   let conversationId: string | null = null;
-  if (isAuthed) {
-    conversationId = body.conversationId || null;
 
-    if (conversationId) {
-      const convo = await prisma.conversation.findUnique({
-        where: { id: conversationId },
-        select: { id: true, userId: true, title: true },
-      });
-      if (!convo || convo.userId !== user!.id) {
-        return new Response("Conversation not found", { status: 404 });
-      }
-    } else {
-      const convo = await prisma.conversation.create({
-        data: { userId: user!.id, model: modelIdent },
-        select: { id: true },
-      });
-      conversationId = convo.id;
+  conversationId = body.conversationId || null;
+
+  if (conversationId) {
+    const convo = await prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { id: true, userId: true, title: true },
+    });
+    if (!convo || convo.userId !== user.id) {
+      return new Response("Conversation not found", { status: 404 });
     }
+  } else {
+    const convo = await prisma.conversation.create({
+      data: { userId: user.id, model: modelIdent },
+      select: { id: true },
+    });
+    conversationId = convo.id;
+  }
 
-    // Save the just-submitted user message (the last "user" message)
-    const last = [...body.messages].reverse().find((m) => m.role === "user");
-    if (last) {
-      const hasAnyMessage = await prisma.message.findFirst({
-        where: { conversationId: conversationId! },
-        select: { id: true },
-      });
+  // Save the just-submitted user message (the last "user" message)
+  const last = [...body.messages].reverse().find((m) => m.role === "user");
+  if (last) {
+    const hasAnyMessage = await prisma.message.findFirst({
+      where: { conversationId: conversationId! },
+      select: { id: true },
+    });
 
-      await prisma.$transaction(async (tx) => {
-        if (!hasAnyMessage) {
-          await tx.conversation.update({
-            where: { id: conversationId! },
-            data: { title: makeTitleFrom(last.content) },
-          });
-        }
-        await tx.message.create({
-          data: {
-            conversationId: conversationId!,
-            role: "user",
-            content: last.content,
-          },
-        });
+    await prisma.$transaction(async (tx) => {
+      if (!hasAnyMessage) {
         await tx.conversation.update({
           where: { id: conversationId! },
-          data: { updatedAt: new Date(), model: modelIdent },
+          data: { title: makeTitleFrom(last.content) },
         });
+      }
+      await tx.message.create({
+        data: {
+          conversationId: conversationId!,
+          role: "user",
+          content: last.content,
+        },
       });
-    }
+      await tx.conversation.update({
+        where: { id: conversationId! },
+        data: { updatedAt: new Date(), model: modelIdent },
+      });
+    });
   }
-  // Guest mode: no DB writes; still call model.
 
-  // Build streaming response machinery shared by both paths
+  // Build streaming response machinery
   let assistantAccum = "";
   let saved = false;
 
   const persistAssistant = async () => {
-    if (saved || !isAuthed || !conversationId) return;
+    if (saved || !conversationId) return;
     saved = true;
     try {
       if (assistantAccum.trim().length > 0) {
@@ -278,7 +277,7 @@ export async function POST(req: NextRequest) {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
     };
-    if (isAuthed && conversationId) {
+    if (conversationId) {
       headers["X-Conversation-Id"] = conversationId;
     }
     return new Response(stream, { headers });
@@ -358,7 +357,7 @@ export async function POST(req: NextRequest) {
     "Content-Type": "text/plain; charset=utf-8",
     "Cache-Control": "no-cache, no-transform",
   };
-  if (isAuthed && conversationId) {
+  if (conversationId) {
     headers["X-Conversation-Id"] = conversationId;
   }
 
