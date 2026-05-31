@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import styles from "../Chat.module.css";
 import MarkdownMessage from "./MarkdownMessage";
 import MessageCopyButton from "./MessageCopyButton";
 import { UiMessage } from "../types/chat";
 
-export default function MessageList({
+function MessageList({
   uiMessages,
   isStreaming,
 }: {
@@ -39,3 +39,5 @@ export default function MessageList({
     </section>
   );
 }
+
+export default memo(MessageList);
