@@ -80,6 +80,15 @@ export default function ChatClientPage({ user }: { user: User }) {
 
   return (
     <main className={styles.page}>
+      {!collapsed && (
+        <button
+          type="button"
+          className={styles.sidebarBackdrop}
+          aria-label="Collapse sidebar"
+          onClick={() => setCollapsed(true)}
+        />
+      )}
+
       <Sidebar
         collapsed={collapsed}
         onToggle={() => setCollapsed((c) => !c)}

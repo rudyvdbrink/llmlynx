@@ -7,6 +7,25 @@
   gap: 0;
 }
 
+.sidebarBackdrop {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  .sidebarBackdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: block;
+    border: none;
+    background: rgba(2, 6, 23, 0.18);
+    padding: 0;
+    margin: 0;
+    appearance: none;
+    cursor: pointer;
+  }
+}
+
 /* Chat area (sidebar styles moved to Sidebar.module.css) */
 .chatArea {
   position: relative;
