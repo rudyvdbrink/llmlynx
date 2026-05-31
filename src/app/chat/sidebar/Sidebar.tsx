@@ -78,27 +78,31 @@ export default function Sidebar({
       </button>
 
       <div className={styles.sidebarContent}>
-        <AccountSection user={user} />
+        <div className={styles.sidebarHeader}>
+          <AccountSection user={user} />
 
-        <div className={styles.divider} role="separator" aria-orientation="horizontal" />
+          <div className={styles.divider} role="separator" aria-orientation="horizontal" />
 
-        <ModelSection
-          model={model}
-          onChangeModel={onChangeModel}
-          disabled={modelDisabled}
-        />
+          <ModelSection
+            model={model}
+            onChangeModel={onChangeModel}
+            disabled={modelDisabled}
+          />
 
-        <div className={styles.divider} role="separator" aria-orientation="horizontal" />
+          <div className={styles.divider} role="separator" aria-orientation="horizontal" />
+        </div>
 
-        <ConversationsPanel
-          collapsed={collapsed}
-          conversations={conversations}
-          activeConversationId={activeConversationId ?? null}
-          onNewConversation={onNewConversation}
-          onOpenConversation={onOpenConversation}
-          onRenameConversation={onRenameConversation}
-          onDeleteConversation={onDeleteConversation}
-        />
+        <div className={styles.sidebarScrollArea}>
+          <ConversationsPanel
+            collapsed={collapsed}
+            conversations={conversations}
+            activeConversationId={activeConversationId ?? null}
+            onNewConversation={onNewConversation}
+            onOpenConversation={onOpenConversation}
+            onRenameConversation={onRenameConversation}
+            onDeleteConversation={onDeleteConversation}
+          />
+        </div>
       </div>
 
       {footerNavHref && footerNavLabel && (

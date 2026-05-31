@@ -38,14 +38,43 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-  overflow-y: auto;
-  overflow-x: hidden;            /* prevent horizontal scrollbar in sidebar */
+  min-height: 0;
+  overflow: hidden;
   opacity: 1;
   transform: translateX(0);
   transition:
     opacity 0.22s ease 0.08s,
     transform 0.38s cubic-bezier(.4,0,.2,1);
   will-change: opacity, transform;
+}
+
+.sidebarHeader {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sidebarScrollArea {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: #2a3446 transparent;
+}
+
+.sidebarScrollArea::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebarScrollArea::-webkit-scrollbar-thumb {
+  background: #2a3446;
+  border-radius: 999px;
+}
+
+.sidebarScrollArea::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .sidebar.collapsed .sidebarContent {
@@ -340,6 +369,12 @@
 }
 .footerButtonLabel {
   line-height: 1;
+}
+
+@media (min-width: 861px) {
+  .sidebar {
+    width: 304px;
+  }
 }
 
 /* Collapsed tweaks */
