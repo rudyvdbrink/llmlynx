@@ -71,9 +71,39 @@
   padding-bottom: 28px;
 }
 
-.composer {
+/* Holds the composer at the bottom of the viewport. It extends over the chat
+   area's bottom padding, so the composer rests in the same spot whether the
+   page is scrolled to the end or not, and covers the messages scrolling under it. */
+.composerDock {
   position: sticky;
   bottom: 0;
+  z-index: 10;
+  margin-bottom: -16px;
+  padding-bottom: 16px;
+  background: var(--bg);
+}
+
+/* Fade the messages out just above the composer */
+.composerDock::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 24px;
+  background: linear-gradient(transparent, var(--bg));
+  pointer-events: none;
+}
+
+@media (min-width: 1024px) {
+  .composerDock { margin-bottom: -128px; padding-bottom: 128px; }
+}
+
+@media (max-width: 760px) {
+  .composerDock { margin-bottom: -12px; padding-bottom: 12px; }
+}
+
+.composer {
   display: flex;
   align-items: center;
   gap: 8px;

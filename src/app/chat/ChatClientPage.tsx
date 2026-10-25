@@ -79,7 +79,9 @@ export default function ChatClientPage({ user }: { user: SessionUser }) {
     >
       <div className={styles.chatArea}>
         <MessageList messages={messages} isStreaming={isStreaming} />
-        <Composer key={composerKey} isStreaming={isStreaming} onSend={send} onCancel={cancel} />
+        <div className={styles.composerDock}>
+          <Composer key={composerKey} isStreaming={isStreaming} onSend={send} onCancel={cancel} />
+        </div>
       </div>
     </AppShell>
   );

@@ -26,6 +26,21 @@ export default function Composer({
     ta.style.height = Math.min(200, ta.scrollHeight) + "px";
   }, [input]);
 
+  // The on-screen keyboard shortens the viewport (see the chat layout). While the
+  // textarea has focus, scroll down by the same amount, so the messages just above
+  // the composer stay in view instead of sliding under it. When the keyboard
+  // closes, the browser itself keeps the page end in place.
+  useEffect(() => {
+    let height = window.innerHeight;
+    function onResize() {
+      const shrunk = height - window.innerHeight;
+      height = window.innerHeight;
+      if (shrunk > 0 && document.activeElement === textAreaRef.current) window.scrollBy(0, shrunk);
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   // The textarea is disabled while streaming and loses focus. Give it back when
   // the reply completes (not on mobile, where focus opens the keyboard).
   const wasStreaming = useRef(isStreaming);
@@ -42,6 +57,8 @@ export default function Composer({
     const text = input.trim();
     if (!text || isStreaming) return;
     setInput("");
+    // Close the on-screen keyboard now, so the viewport does not resize while the reply streams in
+    textAreaRef.current?.blur();
     onSend(text);
   }
 
