@@ -3,13 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import styles from "./Sidebar.module.css";
-
-type ConversationItem = {
-  id: string;
-  title: string | null;
-  updatedAt: string;
-  model: string | null;
-};
+import type { ConversationSummary } from "@/lib/types";
 
 export default function ConversationsPanel({
   collapsed,
@@ -21,7 +15,7 @@ export default function ConversationsPanel({
   onDeleteConversation,
 }: {
   collapsed: boolean;
-  conversations: ConversationItem[];
+  conversations: ConversationSummary[];
   activeConversationId: string | null;
   onNewConversation: () => void;
   onOpenConversation: (id: string) => void;
@@ -107,7 +101,7 @@ export default function ConversationsPanel({
     }
 
     // Right-align with the button, clamp to viewport
-    let left = Math.min(
+    const left = Math.min(
       window.innerWidth - MARGIN - EST_W,
       Math.max(MARGIN, anchorRect.right - EST_W)
     );

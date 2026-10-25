@@ -1,15 +1,15 @@
 "use client";
 
-import React, { useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import React, { memo, useMemo, useRef } from "react";
+import ReactMarkdown, { type Components, type ExtraProps, type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeHighlight from "rehype-highlight";
-import "katex/dist/katex.min.css";
 import tableStyles from "../Table.module.css";
 import chatStyles from "../Chat.module.css";
+import CopyButton from "./CopyButton";
 
 /**
  * Normalize TeX-style delimiters \( ... \) and \[ ... \] in the raw markdown
@@ -17,9 +17,9 @@ import chatStyles from "../Chat.module.css";
  * We temporarily stash fenced and inline code so we don't touch them.
  */
 function normalizeTeXDelimiters(input: string): string {
-  const BLOCK_TOKEN_START = "\uE000";
-  const INLINE_TOKEN_START = "\uE002";
-  const TOKEN_END = "\uE001";
+  const BLOCK_TOKEN_START = "";
+  const INLINE_TOKEN_START = "";
+  const TOKEN_END = "";
   const stash: string[] = [];
 
   // Stash fenced code blocks ```...```
@@ -51,164 +51,67 @@ function normalizeTeXDelimiters(input: string): string {
   return text;
 }
 
-async function copyTextToClipboard(text: string) {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through to legacy path
-  }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const LANGUAGE_CLASS = /language-([a-z0-9+\-]+)/i;
 
-/**
- * Try to read the language from:
- * - a "data-lang" or "data-language" on the child element
- * - a "language-xxx" class on the child element
- * - a "language-xxx" class on the pre element
- */
-function getLangFromChildren(children: React.ReactNode, preClassName?: string): string {
+/** Reads the language from a "language-xxx" class on the <code> child, or else on the <pre>. */
+function getCodeLanguage(children: React.ReactNode, preClassName?: string): string {
   let lang = "";
-
   React.Children.forEach(children, (child) => {
-    if (!React.isValidElement(child)) return;
-    const props: any = child.props || {};
-
-    const dataLang: string | undefined = props["data-lang"] || props["data-language"];
-    if (typeof dataLang === "string" && dataLang) {
-      lang = dataLang.toLowerCase();
-      return;
-    }
-
-    const cls: string = props.className || "";
-    const m = String(cls).match(/language-([a-z0-9+\-]+)/i);
-    if (m?.[1]) {
-      lang = m[1].toLowerCase();
-      return;
-    }
+    if (lang || !React.isValidElement<{ className?: string }>(child)) return;
+    lang = child.props.className?.match(LANGUAGE_CLASS)?.[1] ?? "";
   });
-
-  if (!lang && preClassName) {
-    const m2 = String(preClassName).match(/language-([a-z0-9+\-]+)/i);
-    if (m2?.[1]) lang = m2[1].toLowerCase();
-  }
-
-  return lang || "text";
+  lang ||= preClassName?.match(LANGUAGE_CLASS)?.[1] ?? "";
+  return lang.toLowerCase() || "text";
 }
 
-export default function MarkdownMessage({ content }: { content: string }) {
-  const normalized = useMemo(() => normalizeTeXDelimiters(content), [content]);
-
-  // Custom <pre> element to add a top bar with language and copy action
-  const PreWithCopy: React.FC<React.HTMLAttributes<HTMLPreElement>> = (props) => {
-    const preRef = useRef<HTMLPreElement | null>(null);
-    const [copied, setCopied] = useState(false);
-
-    // Compute the label directly from the React element tree; no state/effect needed
-    const langLabel = useMemo(
-      () => getLangFromChildren(props.children, props.className as string | undefined),
-      [props.children, props.className]
-    );
-
-    return (
-      <div className={chatStyles.codeBlockWrapper}>
-        <div className={chatStyles.codeHeader}>
-          <div className={chatStyles.codeHeaderLeft}>
-            <span className={chatStyles.codeLanguage}>{langLabel}</span>
-          </div>
-          <div className={chatStyles.codeHeaderRight}>
-            <span className={chatStyles.copyLabel}>copy code</span>
-            <button
-              type="button"
-              className={chatStyles.copyCodeBtn}
-              aria-label="Copy code"
-              title={copied ? "Copied!" : "Copy"}
-              onClick={async (e) => {
-                const codeEl = preRef.current?.querySelector("code");
-                const text = codeEl?.textContent ?? "";
-                const ok = await copyTextToClipboard(text);
-                if (ok) {
-                  setCopied(true);
-                  setTimeout(() => setCopied(false), 1200);
-                }
-              }}
-            >
-              {copied ? (
-                // Green check mark
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="#22c55e"
-                  aria-hidden="true"
-                >
-                  <path d="M9 16.2l-3.5-3.5L4 14.2 9 19l11-11-1.5-1.5z" />
-                </svg>
-              ) : (
-                <img src="/copy.svg" alt="" aria-hidden="true" />
-              )}
-            </button>
-          </div>
-        </div>
-        <pre ref={preRef} {...props} />
-      </div>
-    );
-  };
+// Block code gets a top bar with the language and a copy action.
+function PreWithCopy({ node, ...props }: React.ComponentProps<"pre"> & ExtraProps) {
+  const preRef = useRef<HTMLPreElement | null>(null);
 
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkMath, remarkGfm, remarkBreaks]}
-      rehypePlugins={[[rehypeKatex, { throwOnError: false }], rehypeHighlight]}
-      components={{
-        a: ({ node, ...props }) => (
-          <a {...props} target="_blank" rel="nofollow noopener noreferrer" />
-        ),
-        table: ({ node, ...props }) => (
-          <div className={tableStyles.mdTableWrapper}>
-            <table {...props} />
-          </div>
-        ),
-        // Add the header to block code without breaking HTML semantics
-        pre: PreWithCopy,
-        // Inline code remains inline; block code is handled by the pre wrapper
-        code: ({ inline, className, children, ...props }: any) => {
-          if (inline) {
-            return (
-              <code className={className} {...props}>
-                {children}
-              </code>
-            );
-          }
-          // Attach data-lang so the pre wrapper can reliably read the language
-          const lang =
-            (className && (className.match(/language-([a-z0-9+\-]+)/i)?.[1] || "")) || "";
-          const dataProps: any = {};
-          if (lang) dataProps["data-lang"] = lang.toLowerCase();
+    <div className={chatStyles.codeBlockWrapper}>
+      <div className={chatStyles.codeHeader}>
+        <div className={chatStyles.codeHeaderLeft}>
+          <span className={chatStyles.codeLanguage}>{getCodeLanguage(props.children, props.className)}</span>
+        </div>
+        <div className={chatStyles.codeHeaderRight}>
+          <span className={chatStyles.copyLabel}>copy code</span>
+          <CopyButton
+            className={chatStyles.copyCodeBtn}
+            label="Copy code"
+            getText={() => preRef.current?.querySelector("code")?.textContent ?? ""}
+          />
+        </div>
+      </div>
+      <pre ref={preRef} {...props} />
+    </div>
+  );
+}
 
-          return (
-            <code className={className} {...dataProps} {...props}>
-              {children}
-            </code>
-          );
-        },
-      }}
-    >
+// Defined once at module level: inline definitions would give React new
+// component types on every render and remount every code block per token.
+const COMPONENTS: Components = {
+  a: ({ node, ...props }) => <a {...props} target="_blank" rel="nofollow noopener noreferrer" />,
+  table: ({ node, ...props }) => (
+    <div className={tableStyles.mdTableWrapper}>
+      <table {...props} />
+    </div>
+  ),
+  pre: PreWithCopy,
+};
+
+const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkMath, remarkGfm, remarkBreaks];
+const REHYPE_PLUGINS: Options["rehypePlugins"] = [[rehypeKatex, { throwOnError: false }], rehypeHighlight];
+
+function MarkdownMessage({ content }: { content: string }) {
+  const normalized = useMemo(() => normalizeTeXDelimiters(content), [content]);
+
+  return (
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}>
       {normalized}
     </ReactMarkdown>
   );
 }
+
+// Memoized so that earlier messages are not re-parsed while a reply streams in.
+export default memo(MarkdownMessage);

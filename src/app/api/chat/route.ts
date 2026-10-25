@@ -1,365 +1,111 @@
 import { NextRequest } from "next/server";
-import { prisma } from "../../../server/db/prisma";
-import { getCurrentUser } from "../../../server/auth/session";
-import OpenAI from "openai";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/session";
+import { getDefaultSystemPrompt, getOpenAIConfig } from "@/server/config";
+import { createAssistantReply, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
+import { streamOllamaChat } from "@/server/chat/ollama";
+import { streamOpenAIChat } from "@/server/chat/openai";
+import { normalizeSelection, parseSelection, toSelection } from "@/lib/selection";
+import type { ChatMessage, Role } from "@/lib/types";
 
 export const runtime = "nodejs";
 
-const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+// POST /api/chat
+// body: { messages: ChatMessage[], model?: string, agentId?: string, conversationId?: string }
+// `model` is a selection ("model:<name>" | "remote:<name>") or a plain Ollama model name.
+// Responds with an NDJSON stream and the conversation id in X-Conversation-Id.
 
-type ChatMessage = {
-  role: "user" | "assistant" | "system";
-  content: string;
-};
+type Target =
+  | { kind: "ollama"; modelKey: string; model: string; systemPrompt: string; options?: unknown }
+  | { kind: "remote"; modelKey: string; model: string };
 
-function getDefaultSystemPrompt(): string {
-  const raw = process.env.SYSTEM_PROMPT || "You are the llynx, a helpful assistant.";
-  return raw.replace(/\\n/g, "\n").trim();
+const ROLES: Role[] = ["user", "assistant", "system"];
+
+function parseMessages(input: unknown): ChatMessage[] | null {
+  if (!Array.isArray(input)) return null;
+  const valid = input.every(
+    (m) => m && typeof m === "object" && ROLES.includes(m.role) && typeof m.content === "string"
+  );
+  return valid ? input.map((m) => ({ role: m.role, content: m.content })) : null;
 }
 
-// Helper to make a short title from the first user message
-function makeTitleFrom(content: string, maxWords = 8, maxChars = 80) {
-  const words = content.trim().split(/\s+/).slice(0, maxWords);
-  let title = words.join(" ");
-  if (title.length > maxChars) title = title.slice(0, maxChars - 1) + "…";
-  return title || "New chat";
+/** Works out which backend and model to use. Returns null if the agent is not the user's. */
+async function resolveTarget(userId: string, model: unknown, agentId: unknown): Promise<Target | null> {
+  if (typeof agentId === "string" && agentId) {
+    const agent = await prisma.agent.findFirst({ where: { id: agentId, userId } });
+    if (!agent) return null;
+    return {
+      kind: "ollama",
+      modelKey: toSelection("agent", agent.id),
+      model: parseSelection(agent.baseModel).value,
+      systemPrompt: agent.systemPrompt?.trim() || getDefaultSystemPrompt(),
+      options: agent.settings,
+    };
+  }
+
+  const selection = normalizeSelection(typeof model === "string" ? model : undefined);
+  const { kind, value } = parseSelection(selection);
+  if (kind === "remote") return { kind, modelKey: selection, model: value || "gpt-5" };
+  return { kind: "ollama", modelKey: selection, model: value, systemPrompt: getDefaultSystemPrompt() };
 }
 
 export async function POST(req: NextRequest) {
   // Require authentication for all chat calls
   const user = await getCurrentUser().catch(() => null);
-  if (!user) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-  const isAuthed = true;
+  if (!user) return new Response("Unauthorized", { status: 401 });
 
-  let body: {
-    messages: ChatMessage[];
-    model?: string;           // selection string: "model:<name>" | "remote:<name>" | legacy raw model
-    agentId?: string;         // selected agent id
-    conversationId?: string;
-  } | null = null;
-
+  let body: Record<string, unknown> | null;
   try {
     body = await req.json();
   } catch {
     return new Response("Invalid JSON body", { status: 400 });
   }
 
-  if (!body?.messages || !Array.isArray(body.messages)) {
-    return new Response("messages array required", { status: 400 });
+  const messages = parseMessages(body?.messages);
+  if (!body || !messages) return new Response("messages array required", { status: 400 });
+
+  const target = await resolveTarget(user.id, body.model, body.agentId);
+  if (!target) return new Response("Agent not found", { status: 404 });
+
+  const openaiConfig = target.kind === "remote" ? getOpenAIConfig() : null;
+  if (target.kind === "remote" && !openaiConfig) {
+    return new Response("OpenAI API key not configured", { status: 403 });
   }
 
-  // Detect selection type
-  const selection = body.model || "";
-  const isRemote = typeof selection === "string" && selection.startsWith("remote:");
-  const remoteModelName = isRemote ? selection.slice("remote:".length) : null;
-
-  // Resolve agent if provided
-  let upstreamModel = body.model || "gemma3:1b";
-  let systemPrompt = getDefaultSystemPrompt();
-  let modelIdent: string | null = null;
-  let options: Record<string, any> | undefined = undefined;
-
-  if (body.agentId) {
-    // Must be authenticated to use an agent (we already enforce auth above)
-    const agent = await prisma.agent.findUnique({ where: { id: body.agentId } });
-    if (!agent || agent.userId !== user.id) {
-      return new Response("Agent not found", { status: 404 });
-    }
-    upstreamModel = agent.baseModel || upstreamModel;
-    systemPrompt = (agent.systemPrompt?.trim() || systemPrompt);
-    options = agent.settings as any;
-    modelIdent = `agent:${agent.id}`;
-  } else if (isRemote) {
-    // For remote models, keep storage key as "remote:<name>"
-    modelIdent = `remote:${remoteModelName}`;
-  } else {
-    // If client is sending a prefixed value via conversations API, unify storage key
-    modelIdent =
-      body.model
-        ? body.model.startsWith("model:") || body.model.startsWith("agent:") || body.model.startsWith("remote:")
-          ? body.model
-          : `model:${body.model}`
-        : "model:gemma3:1b";
-  }
-
-  // Prepare messages
-  // For OpenAI remote models: do NOT include system prompts; only pass user/assistant messages.
-  // For local models (Ollama): inject default/agent system prompt if no system message exists.
-  let finalMessages: ChatMessage[];
-  if (isRemote) {
-    finalMessages = body.messages.filter((m) => m.role === "user" || m.role === "assistant");
-  } else {
-    const hasSystem = body.messages.some((m) => m.role === "system");
-    finalMessages = hasSystem
-      ? body.messages
-      : [{ role: "system", content: systemPrompt } as ChatMessage, ...body.messages];
-  }
-
-  // Resolve or create a conversation (authentication is required, so always write to DB)
-  let conversationId: string | null = null;
-
-  conversationId = body.conversationId || null;
-
-  if (conversationId) {
-    const convo = await prisma.conversation.findUnique({
-      where: { id: conversationId },
-      select: { id: true, userId: true, title: true },
-    });
-    if (!convo || convo.userId !== user.id) {
-      return new Response("Conversation not found", { status: 404 });
-    }
-  } else {
-    const convo = await prisma.conversation.create({
-      data: { userId: user.id, model: modelIdent },
-      select: { id: true },
-    });
-    conversationId = convo.id;
-  }
+  const conversationId = await resolveConversation(
+    user.id,
+    typeof body.conversationId === "string" ? body.conversationId : undefined,
+    target.modelKey
+  );
+  if (!conversationId) return new Response("Conversation not found", { status: 404 });
 
   // Save the just-submitted user message (the last "user" message)
-  const last = [...body.messages].reverse().find((m) => m.role === "user");
-  if (last) {
-    const hasAnyMessage = await prisma.message.findFirst({
-      where: { conversationId: conversationId! },
-      select: { id: true },
-    });
+  const lastUser = messages.findLast((m) => m.role === "user");
+  if (lastUser) await saveUserMessage(conversationId, lastUser.content, target.modelKey);
 
-    await prisma.$transaction(async (tx) => {
-      if (!hasAnyMessage) {
-        await tx.conversation.update({
-          where: { id: conversationId! },
-          data: { title: makeTitleFrom(last.content) },
-        });
-      }
-      await tx.message.create({
-        data: {
-          conversationId: conversationId!,
-          role: "user",
-          content: last.content,
-        },
-      });
-      await tx.conversation.update({
-        where: { id: conversationId! },
-        data: { updatedAt: new Date(), model: modelIdent },
-      });
-    });
-  }
+  // The system prompt always comes from the server, never from the client.
+  // Remote models get no system prompt at all.
+  const history = messages.filter((m) => m.role !== "system");
+  const reply = createAssistantReply(conversationId, target.modelKey);
 
-  // Build streaming response machinery
-  let assistantAccum = "";
-  let saved = false;
+  const stream =
+    target.kind === "remote"
+      ? streamOpenAIChat({ model: target.model, messages: history }, openaiConfig!, reply)
+      : await streamOllamaChat(
+          {
+            model: target.model,
+            messages: [{ role: "system", content: target.systemPrompt }, ...history],
+            options: target.options,
+          },
+          reply
+        );
+  if (stream instanceof Response) return stream;
 
-  const persistAssistant = async () => {
-    if (saved || !conversationId) return;
-    saved = true;
-    try {
-      if (assistantAccum.trim().length > 0) {
-        await prisma.$transaction(async (tx) => {
-          await tx.message.create({
-            data: {
-              conversationId: conversationId!,
-              role: "assistant",
-              content: assistantAccum,
-            },
-          });
-          await tx.conversation.update({
-            where: { id: conversationId! },
-            data: { updatedAt: new Date(), model: modelIdent },
-          });
-        });
-      } else {
-        await prisma.conversation.update({
-          where: { id: conversationId! },
-          data: { model: modelIdent },
-        });
-      }
-    } catch {
-      // swallow
-    }
-  };
-
-  // Remote (OpenAI) path
-  if (isRemote) {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-      return new Response("OpenAI API key not configured", { status: 403 });
-    }
-
-    const organization = process.env.OPENAI_ORG || process.env.OPENAI_ORG_ID || undefined;
-    const project = process.env.OPENAI_PROJECT || undefined;
-
-    // Map to OpenAI chat messages (exclude system by design above)
-    const openaiMessages = finalMessages.map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
-
-    const client = new OpenAI({ apiKey, ...(organization ? { organization } : {}), ...(project ? { project } : {}) });
-
-    const isUnsupportedStream = (err: any) =>
-      (err && (err.code === "unsupported_value" || err?.error?.code === "unsupported_value") &&
-        (err.param === "stream" || err?.error?.param === "stream")) ||
-      (err?.status === 400 && /must be verified to stream/i.test(String(err?.message || err?.error?.message || "")));
-
-    const stream = new ReadableStream({
-      async start(controller) {
-        const encoder = new TextEncoder();
-        const writeDelta = (text: string) => {
-          if (!text) return;
-          assistantAccum += text;
-          controller.enqueue(encoder.encode(JSON.stringify({ message: { content: text } }) + "\n"));
-        };
-        const writeDone = () => {
-          controller.enqueue(encoder.encode(JSON.stringify({ done: true }) + "\n"));
-        };
-
-        try {
-          try {
-            // First attempt: true streaming
-            const completion = await client.chat.completions.create({
-              model: remoteModelName || "gpt-5",
-              messages: openaiMessages as any,
-              stream: true,
-            });
-
-            // @ts-ignore async iterable
-            for await (const part of completion) {
-              const choice = part?.choices?.[0];
-              const deltaText = choice?.delta?.content ?? "";
-              if (deltaText) writeDelta(deltaText);
-              const finish = choice?.finish_reason;
-              if (finish) {
-                writeDone();
-              }
-            }
-          } catch (err: any) {
-            if (!isUnsupportedStream(err)) throw err;
-
-            // Fallback: non-streaming request, return as a single message (no fake chunking)
-            const completion = await client.chat.completions.create({
-              model: remoteModelName || "gpt-5",
-              messages: openaiMessages as any,
-              // no stream
-            });
-            const full = completion?.choices?.[0]?.message?.content ?? "";
-            if (full) {
-              writeDelta(full);
-            }
-            writeDone();
-          }
-        } catch (err) {
-          try {
-            await persistAssistant();
-          } finally {
-            controller.error(err as any);
-          }
-          return;
-        }
-
-        try {
-          await persistAssistant();
-        } finally {
-          controller.close();
-        }
-      },
-      async cancel() {
-        try {
-          await persistAssistant();
-        } catch {
-          // ignore
-        }
-      },
-    });
-
-    const headers: Record<string, string> = {
+  return new Response(stream, {
+    headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
-    };
-    if (conversationId) {
-      headers["X-Conversation-Id"] = conversationId;
-    }
-    return new Response(stream, { headers });
-  }
-
-  // Local (Ollama) path
-  const upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: upstreamModel.startsWith("model:") ? upstreamModel.slice("model:".length) : upstreamModel,
-      messages: finalMessages,
-      stream: true,
-      ...(options ? { options } : {}),
-    }),
-  });
-
-  if (!upstream.ok || !upstream.body) {
-    const txt = await upstream.text().catch(() => "");
-    return new Response(`Ollama error: ${txt || upstream.status}`, { status: 502 });
-  }
-
-  const stream = new ReadableStream({
-    start(controller) {
-      const reader = upstream.body!.getReader();
-      const decoder = new TextDecoder();
-      const encoder = new TextEncoder();
-      let buffer = "";
-
-      const pump = () => {
-        reader
-          .read()
-          .then(async ({ value, done }) => {
-            if (done) {
-              await persistAssistant();
-              controller.close();
-              return;
-            }
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed) continue;
-
-              try {
-                const obj = JSON.parse(trimmed);
-                if (obj?.message?.content) {
-                  assistantAccum += obj.message.content;
-                }
-                if (obj?.done) {
-                  await persistAssistant();
-                }
-              } catch {
-                // ignore
-              }
-
-              controller.enqueue(encoder.encode(trimmed + "\n"));
-            }
-
-            pump();
-          })
-          .catch(async (err) => {
-            try {
-              await persistAssistant();
-            } finally {
-              controller.error(err);
-            }
-          });
-      };
-      pump();
+      "X-Conversation-Id": conversationId,
     },
   });
-
-  const headers: Record<string, string> = {
-    "Content-Type": "text/plain; charset=utf-8",
-    "Cache-Control": "no-cache, no-transform",
-  };
-  if (conversationId) {
-    headers["X-Conversation-Id"] = conversationId;
-  }
-
-  return new Response(stream, { headers });
 }

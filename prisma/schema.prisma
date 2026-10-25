@@ -7,27 +7,28 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Secrets are never stored in plain text: passwords and recovery codes as
+// bcrypt hashes, session tokens as SHA-256 hashes.
 model User {
-  id            String         @id @default(uuid())
-  email         String         @unique
-  passwordHash  String
-  recoveryCode  String?        @unique
-  createdAt     DateTime       @default(now())
-  sessions      Session[]
-  conversations Conversation[]
-  agents        Agent[]        // NEW: user-created agents
+  id               String         @id @default(uuid())
+  email            String         @unique
+  passwordHash     String
+  recoveryCodeHash String?
+  createdAt        DateTime       @default(now())
+  sessions         Session[]
+  conversations    Conversation[]
+  agents           Agent[]
 }
 
 model Session {
   id        String   @id @default(uuid())
-  token     String   @unique
+  tokenHash String   @unique // SHA-256 of the token in the session cookie
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
 
   @@index([userId])
-  @@index([token])
 }
 
 enum MessageRole {
@@ -60,7 +61,7 @@ model Message {
   @@index([conversationId, createdAt])
 }
 
-// NEW: Agent model to store custom agent configurations
+// Custom agent configurations
 model Agent {
   id           String   @id @default(uuid())
   userId       String

@@ -1,118 +1,62 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../../server/db/prisma";
-import { hashPassword } from "../../../../server/auth/hash";
-import { checkRateLimit } from "../../../../server/limits/rateLimit";
-import { logAuthEvent } from "../../../../server/logging/authLogger";
+import { prisma } from "@/server/db/prisma";
+import { hashSecret, verifySecret } from "@/server/auth/hash";
+import { destroyAllSessions } from "@/server/auth/session";
+import { createAuthResponder } from "@/server/auth/respond";
+import { getClientIp, optionalString, readJsonObject } from "@/server/http";
+import { isRecoveryCode, MIN_PASSWORD_LENGTH, normalizeEmail } from "@/lib/authRules";
 
+// POST /api/auth/recover
+// body: { email, recoveryCode, newPassword }
+// Recovery codes are stored as bcrypt hashes, so the account is found by email
+// and the code is checked against that account's hash.
 export async function POST(req: Request) {
-  const ip =
-    (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() ||
-    req.headers.get("x-real-ip") ||
-    null;
+  const auth = createAuthResponder("RESET", getClientIp(req));
 
-  // Rate limit per IP for recovery attempts
-  const rl = checkRateLimit("recovery", ip);
-  if (!rl.allowed) {
-    await logAuthEvent({
-      type: "RESET",
-      outcome: "FAILURE",
-      reason: "RATE_LIMITED",
-      ip,
-    });
-    return NextResponse.json(
-      { message: "Too many recovery attempts. Please try again later." },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": Math.max(1, Math.round((rl.resetAt - Date.now()) / 1000)).toString(),
-        },
-      }
-    );
-  }
+  const limited = await auth.rateLimit("recovery", "Too many recovery attempts. Please try again later.");
+  if (limited) return limited;
 
   try {
-    const { recoveryCode, newPassword } = await req.json();
+    const body = await readJsonObject(req);
+    const email = normalizeEmail(optionalString(body.email) ?? "");
+    const { recoveryCode } = body;
+    const newPassword = optionalString(body.newPassword) ?? "";
 
-    if (!recoveryCode || !newPassword) {
-      await logAuthEvent({
-        type: "RESET",
-        outcome: "FAILURE",
-        reason: "MISSING_FIELDS",
-        ip,
-      });
-      return NextResponse.json(
-        { message: "Recovery code and new password required" },
-        { status: 400 }
+    if (!email || !recoveryCode || !newPassword) {
+      return auth.fail(400, "Email, recovery code and new password required", "MISSING_FIELDS", email);
+    }
+
+    if (!isRecoveryCode(recoveryCode)) {
+      return auth.fail(400, "Invalid recovery code format", "INVALID_RECOVERY_CODE_FORMAT", email);
+    }
+
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      return auth.fail(
+        400,
+        `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+        "PASSWORD_TOO_SHORT",
+        email
       );
     }
 
-    if (!/^[0-9]{12}$/.test(recoveryCode)) {
-      await logAuthEvent({
-        type: "RESET",
-        outcome: "FAILURE",
-        reason: "INVALID_RECOVERY_CODE_FORMAT",
-        ip,
-      });
-      return NextResponse.json(
-        { message: "Invalid recovery code format" },
-        { status: 400 }
-      );
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!(await verifySecret(recoveryCode, user?.recoveryCodeHash)) || !user) {
+      // Same message for unknown email and wrong code, to avoid an oracle
+      return auth.fail(400, "Invalid email or recovery code", "INVALID_RECOVERY_CODE", email);
     }
 
-    if (typeof newPassword !== "string" || newPassword.length < 8) {
-      await logAuthEvent({
-        type: "RESET",
-        outcome: "FAILURE",
-        reason: "PASSWORD_TOO_SHORT",
-        ip,
-      });
-      return NextResponse.json(
-        { message: "Password must be at least 8 characters" },
-        { status: 400 }
-      );
-    }
-
-    const user = await prisma.user.findUnique({
-      where: { recoveryCode },
-    });
-
-    if (!user) {
-      // Generic message to avoid oracle
-      await logAuthEvent({
-        type: "RESET",
-        outcome: "FAILURE",
-        reason: "INVALID_RECOVERY_CODE",
-        ip,
-      });
-      return NextResponse.json(
-        { message: "Invalid recovery code" },
-        { status: 400 }
-      );
-    }
-
-    const passwordHash = await hashPassword(newPassword);
-
-    // Update password (keeping the same recovery code, per requirements).
+    // Update password (keeping the same recovery code, per requirements) and
+    // sign out every existing session of this account.
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash },
+      data: { passwordHash: await hashSecret(newPassword) },
     });
+    await destroyAllSessions(user.id);
 
-    await logAuthEvent({
-      type: "RESET",
-      outcome: "SUCCESS",
-      email: user.email,
-      ip,
-    });
+    await auth.succeed(user.email);
 
     return NextResponse.json({ ok: true });
   } catch {
-    await logAuthEvent({
-      type: "RESET",
-      outcome: "FAILURE",
-      reason: "INTERNAL_ERROR",
-      ip,
-    });
-    return NextResponse.json({ message: "Recovery failed" }, { status: 500 });
+    return auth.fail(500, "Recovery failed", "INTERNAL_ERROR");
   }
 }

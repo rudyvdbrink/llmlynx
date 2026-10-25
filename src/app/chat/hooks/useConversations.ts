@@ -1,42 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type {
-  ConversationSummary,
-  ConversationWithMessages,
-  ChatMessage,
-  User,
-} from "../types/chat";
-import { normalizeSelection } from "../utils/selection";
+import { useCallback, useState } from "react";
+import { useConversationList } from "@/hooks/useConversationList";
+import { normalizeSelection } from "@/lib/selection";
+import type { ChatMessage, ConversationWithMessages } from "@/lib/types";
 
-export function useConversations(
-  user: User,
-  selection: string,
-  setSelection: (val: string) => void
-) {
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+/** Conversation list plus the active conversation and its CRUD actions. */
+export function useConversations(selection: string, setSelection: (val: string) => void) {
+  const { conversations, refresh: refreshConversations } = useConversationList();
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
 
-  const refreshConversations = useCallback(() => {
-    if (!user) {
-      setConversations([]);
-      return;
-    }
-    fetch("/api/conversations")
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((data) => setConversations(data.conversations ?? []))
-      .catch(() => setConversations([]));
-  }, [user]);
-
-  useEffect(() => {
-    refreshConversations();
-    if (!user) {
-      setActiveConversationId(null);
-    }
-  }, [user, refreshConversations]);
-
-  const ensureConversation = useCallback(async (): Promise<string | null> => {
-    if (!user) return null;
+  /** Returns the active conversation id, creating a conversation first if there is none. */
+  const ensureConversation = useCallback(async (): Promise<string> => {
     if (activeConversationId) return activeConversationId;
     const res = await fetch("/api/conversations", {
       method: "POST",
@@ -49,53 +24,45 @@ export function useConversations(
     setActiveConversationId(id);
     refreshConversations();
     return id;
-  }, [user, activeConversationId, selection, refreshConversations]);
+  }, [activeConversationId, selection, refreshConversations]);
 
+  /** Makes `id` the active conversation and returns its messages. */
   const openConversation = useCallback(
-    async (id: string): Promise<{ convo: ConversationWithMessages; messages: ChatMessage[] }> => {
-      if (!user) throw new Error("Not authenticated");
+    async (id: string): Promise<ChatMessage[]> => {
       const res = await fetch(`/api/conversations/${id}`);
       if (!res.ok) throw new Error("Failed to open conversation");
-      const data = (await res.json()) as { conversation: ConversationWithMessages };
-      const convo = data.conversation;
+      const { conversation } = (await res.json()) as { conversation: ConversationWithMessages };
 
-      const msgs: ChatMessage[] = convo.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
-
-      setActiveConversationId(convo.id);
-      setSelection(normalizeSelection(convo.model, "model:gemma3:1b"));
-      return { convo, messages: msgs };
+      setActiveConversationId(conversation.id);
+      setSelection(normalizeSelection(conversation.model));
+      return conversation.messages.map((m) => ({ role: m.role, content: m.content }));
     },
-    [user, setSelection]
+    [setSelection]
   );
 
-  const renameConversation = useCallback(async (id: string, newTitle: string) => {
-    if (!user) return;
-    await fetch(`/api/conversations/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: newTitle }),
-    }).catch(() => {});
-    refreshConversations();
-  }, [user, refreshConversations]);
+  const renameConversation = useCallback(
+    async (id: string, newTitle: string) => {
+      await fetch(`/api/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: newTitle }),
+      }).catch(() => {});
+      refreshConversations();
+    },
+    [refreshConversations]
+  );
 
-  const deleteConversation = useCallback(async (id: string): Promise<boolean> => {
-    if (!user) return false;
-    let deletedActive = false;
-    await fetch(`/api/conversations/${id}`, { method: "DELETE" })
-      .then((r) => {
-        if (!r.ok && r.status !== 204) throw new Error("Delete failed");
-      })
-      .catch(() => {});
-    if (id === activeConversationId) {
-      setActiveConversationId(null);
-      deletedActive = true;
-    }
-    refreshConversations();
-    return deletedActive;
-  }, [user, activeConversationId, refreshConversations]);
+  /** Deletes a conversation. Returns true if it was the active one. */
+  const deleteConversation = useCallback(
+    async (id: string): Promise<boolean> => {
+      await fetch(`/api/conversations/${id}`, { method: "DELETE" }).catch(() => {});
+      const wasActive = id === activeConversationId;
+      if (wasActive) setActiveConversationId(null);
+      refreshConversations();
+      return wasActive;
+    },
+    [activeConversationId, refreshConversations]
+  );
 
   const newConversation = useCallback(() => {
     setActiveConversationId(null);
@@ -104,7 +71,6 @@ export function useConversations(
   return {
     conversations,
     activeConversationId,
-    setActiveConversationId,
     refreshConversations,
     ensureConversation,
     openConversation,

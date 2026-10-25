@@ -1,64 +1,50 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import styles from "./Chat.module.css";
-import Sidebar from "./sidebar/Sidebar";
-
-import type { User } from "./types/chat";
+import AppShell from "@/components/AppShell";
+import { DEFAULT_SELECTION } from "@/lib/selection";
+import type { SessionUser } from "@/lib/types";
 import { useConversations } from "./hooks/useConversations";
 import { useChat } from "./hooks/useChat";
 import MessageList from "./components/MessageList";
 import Composer from "./components/Composer";
 
-export default function ChatClientPage({ user }: { user: User }) {
-  // Collapsible sidebar behavior
-  const [collapsed, setCollapsed] = useState<boolean>(false);
-  useEffect(() => {
-    if (typeof window !== "undefined" && window.innerWidth < 760) {
-      setCollapsed(true);
-    }
-  }, []);
-
-  // Selection can be "model:<name>" or "agent:<id>"
-  const [selection, setSelection] = useState<string>("model:gpt-oss:20b");
+export default function ChatClientPage({ user }: { user: SessionUser }) {
+  // Selection can be "model:<name>", "agent:<id>" or "remote:<name>"
+  const [selection, setSelection] = useState<string>(DEFAULT_SELECTION);
+  // Bumped to remount the composer, which clears its draft.
+  const [composerKey, setComposerKey] = useState(0);
 
   // Conversations (list + active + CRUD)
   const {
     conversations,
     activeConversationId,
-    setActiveConversationId,
     refreshConversations,
     ensureConversation,
     openConversation,
     renameConversation,
     deleteConversation,
     newConversation,
-  } = useConversations(user, selection, setSelection);
+  } = useConversations(selection, setSelection);
 
-  // Chat state (messages + composer + streaming)
-  const {
-    uiMessages,
-    input,
-    isStreaming,
-    setInput,
-    loadHistory,
-    reset,
-    onSubmit,
-    onKeyDown,
-    onCancel,
-  } = useChat({
-    user,
+  // Chat state (messages + streaming)
+  const { messages, isStreaming, send, cancel, loadHistory, reset } = useChat({
     selection,
     ensureConversation,
     refreshConversations,
   });
 
+  function clearChat() {
+    reset();
+    setComposerKey((k) => k + 1);
+  }
+
   // Handlers bridging conversations <> chat
   async function handleOpenConversation(id: string) {
-    if (isStreaming || !user) return;
+    if (isStreaming) return;
     try {
-      const { messages } = await openConversation(id);
-      loadHistory(messages);
+      loadHistory(await openConversation(id));
     } catch {
       // ignore
     }
@@ -67,57 +53,36 @@ export default function ChatClientPage({ user }: { user: User }) {
   function handleNewConversation() {
     if (isStreaming) return;
     newConversation();
-    reset();
+    clearChat();
   }
 
   async function handleDeleteConversation(id: string) {
-    if (!user) return;
-    const deletedActive = await deleteConversation(id);
-    if (deletedActive) {
-      reset();
-    }
+    if (await deleteConversation(id)) clearChat();
   }
 
   return (
-    <main className={styles.page}>
-      {!collapsed && (
-        <button
-          type="button"
-          className={styles.sidebarBackdrop}
-          aria-label="Collapse sidebar"
-          onClick={() => setCollapsed(true)}
-        />
-      )}
-
-      <Sidebar
-        collapsed={collapsed}
-        onToggle={() => setCollapsed((c) => !c)}
-        user={user}
-        model={selection}
-        onChangeModel={setSelection}
-        modelDisabled={isStreaming}
-        conversations={conversations}
-        activeConversationId={activeConversationId}
-        onNewConversation={handleNewConversation}
-        onOpenConversation={handleOpenConversation}
-        onRenameConversation={renameConversation}
-        onDeleteConversation={handleDeleteConversation}
-        // Show agents navigation only when authenticated (always true here)
-        footerNavLabel="Agents"
-        footerNavHref="/agents"
-      />
-
+    <AppShell
+      sidebar={{
+        user,
+        model: selection,
+        onChangeModel: setSelection,
+        modelDisabled: isStreaming,
+        conversations,
+        activeConversationId,
+        onNewConversation: handleNewConversation,
+        onOpenConversation: handleOpenConversation,
+        onRenameConversation: renameConversation,
+        onDeleteConversation: handleDeleteConversation,
+        footerNavLabel: "Agents",
+        footerNavHref: "/agents",
+      }}
+    >
       <div className={styles.chatArea}>
-        <MessageList uiMessages={uiMessages} isStreaming={isStreaming} />
-        <Composer
-          input={input}
-          setInput={setInput}
-          isStreaming={isStreaming}
-          onSubmit={onSubmit}
-          onKeyDown={onKeyDown}
-          onCancel={onCancel}
-        />
+        <MessageList messages={messages} isStreaming={isStreaming} />
+        <div className={styles.composerDock}>
+          <Composer key={composerKey} isStreaming={isStreaming} onSend={send} onCancel={cancel} />
+        </div>
       </div>
-    </main>
+    </AppShell>
   );
 }

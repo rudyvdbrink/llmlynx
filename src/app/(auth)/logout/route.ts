@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { destroySession } from "../../../server/auth/session";
+import { destroySession } from "@/server/auth/session";
 
 export async function GET(request: Request) {
   // Destroy the session (cookie + db row)
@@ -10,6 +10,5 @@ export async function GET(request: Request) {
   return NextResponse.redirect(loginURL);
 }
 
-// Optional: allow POST as well if something posts to /logout
+// Also allow POST if something posts to /logout
 export const POST = GET;
-export const HEAD = GET;

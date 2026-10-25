@@ -8,6 +8,15 @@
   --muted: #9aa4b2;
   --border: rgba(255, 255, 255, 0.08);
   --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+
+  /* Controls: inputs, buttons, list items, menus */
+  --surface: #0b1220;
+  --surface-hover: #0e1628;
+
+  --scrollbar: #2a3446;
+
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
   /* Bubbles (can be used in multiple pages if desired) */
   --bubble-user: #111827;

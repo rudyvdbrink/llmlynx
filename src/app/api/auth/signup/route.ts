@@ -1,106 +1,66 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../../server/db/prisma";
-import { hashPassword } from "../../../../server/auth/hash";
-import { createSession } from "../../../../server/auth/session";
-import { generateRecoveryCode } from "../../../../server/auth/recovery";
-import { isEmailAllowed } from "../../../../server/auth/allowlist";
-import { checkRateLimit } from "../../../../server/limits/rateLimit";
-import { logAuthEvent } from "../../../../server/logging/authLogger";
+import { prisma } from "@/server/db/prisma";
+import { hashSecret } from "@/server/auth/hash";
+import { createSession } from "@/server/auth/session";
+import { generateRecoveryCode } from "@/server/auth/recovery";
+import { isEmailAllowed } from "@/server/auth/allowlist";
+import { createAuthResponder } from "@/server/auth/respond";
+import { getClientIp, optionalString, readJsonObject } from "@/server/http";
+import { MIN_PASSWORD_LENGTH, normalizeEmail } from "@/lib/authRules";
 
 export async function POST(req: Request) {
-  const ip =
-    (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() ||
-    req.headers.get("x-real-ip") ||
-    null;
+  const auth = createAuthResponder("SIGNUP", getClientIp(req));
 
-  // Rate limit per IP for signup attempts
-  const rl = checkRateLimit("signup", ip);
-  if (!rl.allowed) {
-    await logAuthEvent({
-      type: "SIGNUP",
-      outcome: "FAILURE",
-      reason: "RATE_LIMITED",
-      ip,
-    });
-    return NextResponse.json(
-      { message: "Too many signup attempts. Please try again later." },
-      {
-        status: 429,
-        headers: {
-          "Retry-After": Math.max(1, Math.round((rl.resetAt - Date.now()) / 1000)).toString(),
-        },
-      }
-    );
-  }
+  const limited = await auth.rateLimit("signup", "Too many signup attempts. Please try again later.");
+  if (limited) return limited;
 
   try {
-    const { email, password } = await req.json();
+    const body = await readJsonObject(req);
+    const email = normalizeEmail(optionalString(body.email) ?? "");
+    const password = optionalString(body.password) ?? "";
+
     if (!email || !password) {
-      await logAuthEvent({
-        type: "SIGNUP",
-        outcome: "FAILURE",
-        email,
-        reason: "MISSING_CREDENTIALS",
-        ip,
-      });
-      return NextResponse.json({ message: "Email and password required" }, { status: 400 });
+      return auth.fail(400, "Email and password required", "MISSING_CREDENTIALS", email);
+    }
+
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      return auth.fail(
+        400,
+        `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+        "PASSWORD_TOO_SHORT",
+        email
+      );
     }
 
     // Enforce environment-based allow list for new signups.
     // If ALLOWED_SIGNUP_EMAILS is not configured or empty, isEmailAllowed()
     // will return true and signups are unrestricted.
     if (!isEmailAllowed(email)) {
-      await logAuthEvent({
-        type: "SIGNUP",
-        outcome: "FAILURE",
-        email,
-        reason: "NOT_ALLOWED_BY_ALLOWLIST",
-        ip,
-      });
-      return NextResponse.json(
-        { message: "Signups are restricted. Please contact the administrator." },
-        { status: 403 }
+      return auth.fail(
+        403,
+        "Signups are restricted. Please contact the administrator.",
+        "NOT_ALLOWED_BY_ALLOWLIST",
+        email
       );
     }
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
-      await logAuthEvent({
-        type: "SIGNUP",
-        outcome: "FAILURE",
-        email,
-        reason: "EMAIL_ALREADY_IN_USE",
-        ip,
-      });
-      return NextResponse.json({ message: "Email already in use" }, { status: 409 });
+      return auth.fail(409, "Email already in use", "EMAIL_ALREADY_IN_USE", email);
     }
 
-    const passwordHash = await hashPassword(password);
+    // Only the hash is stored; the code itself is returned once for the user to save.
     const recoveryCode = generateRecoveryCode();
-
     const user = await prisma.user.create({
-      data: { email, passwordHash, recoveryCode },
-      select: { id: true, email: true, recoveryCode: true },
+      data: { email, passwordHash: await hashSecret(password), recoveryCodeHash: await hashSecret(recoveryCode) },
+      select: { id: true, email: true },
     });
 
     await createSession(user.id);
+    await auth.succeed(user.email);
 
-    await logAuthEvent({
-      type: "SIGNUP",
-      outcome: "SUCCESS",
-      email: user.email,
-      ip,
-    });
-
-    // Return recoveryCode so the frontend can show it once.
-    return NextResponse.json(user);
+    return NextResponse.json({ ...user, recoveryCode });
   } catch {
-    await logAuthEvent({
-      type: "SIGNUP",
-      outcome: "FAILURE",
-      reason: "INTERNAL_ERROR",
-      ip,
-    });
-    return NextResponse.json({ message: "Signup failed" }, { status: 500 });
+    return auth.fail(500, "Signup failed", "INTERNAL_ERROR");
   }
 }

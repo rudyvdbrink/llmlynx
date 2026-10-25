@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import styles from "../auth.module.css";
+import { MIN_PASSWORD_LENGTH } from "@/lib/authRules";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -77,18 +78,18 @@ export default function SignupPage() {
                 className={styles.input}
                 type="password"
                 required
-                minLength={8}
+                minLength={MIN_PASSWORD_LENGTH}
                 autoComplete="new-password"
                 value={pw}
                 onChange={(e) => setPw(e.target.value)}
-                placeholder="At least 8 characters"
+                placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
               />
             </div>
 
             <button
               type="submit"
               className={styles.button}
-              disabled={loading || !email || pw.length < 8}
+              disabled={loading || !email || pw.length < MIN_PASSWORD_LENGTH}
             >
               {loading ? "Creating..." : "Sign Up"}
             </button>

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { getCurrentUser } from "../../../../server/auth/session";
+import { getCurrentUser } from "@/server/auth/session";
 
 export async function GET() {
   const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ user: null }, { status: 200 });
-  return NextResponse.json({ user: { id: user.id, email: user.email } });
+  return NextResponse.json({ user: user ? { id: user.id, email: user.email } : null });
 }
