@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "../../server/auth/session";
+import { getCurrentUser } from "@/server/auth/session";
 import ChatClientPage from "./ChatClientPage";
 
 export default async function ChatPage() {
@@ -9,6 +9,5 @@ export default async function ChatPage() {
     redirect("/login");
   }
 
-  // Pass through the minimal user data the client needs
-  return <ChatClientPage user={{ id: user.id, email: user.email }} />;
+  return <ChatClientPage user={user} />;
 }

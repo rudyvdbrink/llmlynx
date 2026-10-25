@@ -4,25 +4,17 @@ import styles from "./Sidebar.module.css";
 import AccountSection from "./AccountSection";
 import ModelSection from "./ModelSection";
 import ConversationsPanel from "./ConversationsPanel";
+import type { ConversationSummary, SessionUser } from "@/lib/types";
 
-type User = { id: string; email: string } | null;
-
-type ConversationItem = {
-  id: string;
-  title: string | null;
-  updatedAt: string;
-  model: string | null;
-};
-
-interface SidebarProps {
+export interface SidebarProps {
   collapsed: boolean;
   onToggle(): void;
-  user: User;
+  user: SessionUser;
   model: string;
   onChangeModel: (value: string) => void;
   modelDisabled?: boolean;
 
-  conversations: ConversationItem[];
+  conversations: ConversationSummary[];
   activeConversationId?: string | null;
   onNewConversation: () => void;
   onOpenConversation: (id: string) => void;
@@ -30,7 +22,7 @@ interface SidebarProps {
   onRenameConversation?: (id: string, newTitle: string) => Promise<void> | void;
   onDeleteConversation?: (id: string) => Promise<void> | void;
 
-  // New footer navigation button (e.g., to /agents or /chat)
+  // Footer navigation button (e.g., to /agents or /chat)
   footerNavLabel?: string;
   footerNavHref?: string;
 }
@@ -109,7 +101,6 @@ export default function Sidebar({
         <div className={styles.sidebarFooter}>
           <a href={footerNavHref} className={styles.footerButton}>
             <span className={styles.footerButtonIcon} aria-hidden="true">
-              {/* Simple arrows icon that flips based on context can be added later */}
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M8 5l8 7-8 7V5z" />
               </svg>

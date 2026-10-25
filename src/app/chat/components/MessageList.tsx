@@ -3,34 +3,37 @@
 import { memo, useEffect, useRef } from "react";
 import styles from "../Chat.module.css";
 import MarkdownMessage from "./MarkdownMessage";
-import MessageCopyButton from "./MessageCopyButton";
-import { UiMessage } from "../types/chat";
+import CopyButton from "./CopyButton";
+import type { DisplayMessage } from "@/lib/types";
+
+const STREAM_ERROR_NOTE = "\n\n*(Stream error)*";
 
 function MessageList({
-  uiMessages,
+  messages,
   isStreaming,
 }: {
-  uiMessages: UiMessage[];
+  messages: DisplayMessage[];
   isStreaming: boolean;
 }) {
   const endRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [uiMessages]);
+  }, [messages]);
 
   return (
     <section className={styles.messages} aria-live="polite" aria-label="Chat messages">
-      {uiMessages.map((msg, idx) => {
-        const showMessageCopy = msg.sender === "bot" && (!isStreaming || idx !== uiMessages.length - 1);
+      {messages.map((msg, idx) => {
+        const isUser = msg.role === "user";
+        // Hide the copy button on the reply that is still streaming
+        const showCopy = !isUser && (!isStreaming || idx !== messages.length - 1);
         return (
-          <div
-            key={idx}
-            className={`${styles.messageRow} ${msg.sender === "user" ? styles.user : styles.bot}`}
-          >
+          <div key={idx} className={`${styles.messageRow} ${isUser ? styles.user : styles.bot}`}>
             <div className={styles.bubble}>
-              <MarkdownMessage content={msg.text} />
-              {showMessageCopy && <MessageCopyButton text={msg.text} />}
+              <MarkdownMessage content={msg.error ? msg.content + STREAM_ERROR_NOTE : msg.content} />
+              {showCopy && (
+                <CopyButton className={styles.messageCopyBtn} label="Copy response" getText={() => msg.content} />
+              )}
             </div>
           </div>
         );

@@ -61,7 +61,7 @@
   overflow-x: hidden;
   padding-right: 10px;
   scrollbar-width: thin;
-  scrollbar-color: #2a3446 transparent;
+  scrollbar-color: var(--scrollbar) transparent;
 }
 
 .sidebarScrollArea::-webkit-scrollbar {
@@ -69,7 +69,7 @@
 }
 
 .sidebarScrollArea::-webkit-scrollbar-thumb {
-  background: #2a3446;
+  background: var(--scrollbar);
   border-radius: 999px;
 }
 
@@ -114,20 +114,6 @@
 }
 .userEmail span { color: var(--accent); }
 
-.loginLink {
-  display: inline-block;
-  margin-top: 4px;
-  font-size: 13px;
-  color: var(--accent);
-  text-decoration: none;
-  transition: color 0.15s ease;
-}
-.loginLink:hover,
-.loginLink:focus-visible {
-  color: #60a5fa;
-  text-decoration: underline;
-}
-
 /* Small inline action button (e.g., + New) */
 .inlineLink {
   background: transparent;
@@ -141,7 +127,7 @@
 }
 .inlineLink:hover,
 .inlineLink:focus-visible {
-  color: #60a5fa;
+  color: var(--accent-hover);
   text-decoration: underline;
 }
 
@@ -162,11 +148,10 @@
 
 /* Model select block */
 .modelBlock { display: flex; flex-direction: column; gap: 6px; }
-/* Model label now uses .sidebarTitle in Sidebar.tsx for consistency */
 
 /* Keep the select visuals aligned with conversation items */
 .modelSelect {
-  background: #0b1220;
+  background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -232,7 +217,7 @@
 .conversationItem {
   position: relative;
   width: 100%;
-  background: #0b1220;          /* align with .modelSelect */
+  background: var(--surface);          /* align with .modelSelect */
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -265,7 +250,7 @@
   letter-spacing: 0.01em;        /* slightly increased char spacing */
 }
 
-/* Kebab (ellipsis) button — always visible on the right */
+/* Kebab (ellipsis) button, always visible on the right */
 .kebabBtn {
   grid-column: 2 / 3;
   background: transparent;
@@ -288,7 +273,7 @@
 .menu {
   position: fixed;               /* detach from scrolling/overflow containers */
   min-width: 180px;
-  background: #0b1220;
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 6px;
@@ -310,7 +295,7 @@
 }
 .menuItem:hover,
 .menuItem:focus-visible {
-  background: #0e1628;
+  background: var(--surface-hover);
 }
 .menuDanger {
   color: #f87171;
@@ -328,7 +313,7 @@
   overflow: hidden;              /* no wrapping */
   text-overflow: clip;           /* base behavior without fade */
 }
-/* Applied only when text actually overflows (Sidebar.tsx toggles this class) */
+/* Applied only when text actually overflows (ConversationsPanel.tsx toggles this class) */
 .conversationTitleFade {
   -webkit-mask-image: linear-gradient(to right, black 85%, transparent 100%);
           mask-image: linear-gradient(to right, black 85%, transparent 100%);
@@ -350,7 +335,7 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  background: #0b1220;
+  background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -361,7 +346,7 @@
 }
 .footerButton:hover,
 .footerButton:focus-visible {
-  background: #0e1628;
+  background: var(--surface-hover);
   outline: none;
 }
 .footerButtonIcon {

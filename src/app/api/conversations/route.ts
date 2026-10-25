@@ -1,17 +1,18 @@
 import { NextResponse } from "next/server";
-import { prisma } from "../../../server/db/prisma";
-import { getCurrentUser } from "../../../server/auth/session";
+import { prisma } from "@/server/db/prisma";
+import { getCurrentUser } from "@/server/auth/session";
+import { jsonError, optionalString, readJsonObject } from "@/server/http";
+
+const SUMMARY_SELECT = { id: true, title: true, model: true, createdAt: true, updatedAt: true } as const;
 
 // GET /api/conversations -> list current user's conversations (most recent first)
 export async function GET() {
   const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-  }
+  if (!user) return jsonError("Unauthorized", 401);
 
   const conversations = await prisma.conversation.findMany({
     where: { userId: user.id },
-    select: { id: true, title: true, model: true, createdAt: true, updatedAt: true },
+    select: SUMMARY_SELECT,
     orderBy: { updatedAt: "desc" },
   });
 
@@ -23,18 +24,20 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json({ message: "Unauthorized" }, { status: 401 });
-    }
+    if (!user) return jsonError("Unauthorized", 401);
 
-    const { title, model } = await req.json().catch(() => ({}));
+    const body = await readJsonObject(req);
     const convo = await prisma.conversation.create({
-      data: { userId: user.id, title: title ?? null, model: model ?? null },
-      select: { id: true, title: true, model: true, createdAt: true, updatedAt: true },
+      data: {
+        userId: user.id,
+        title: optionalString(body.title) ?? null,
+        model: optionalString(body.model) ?? null,
+      },
+      select: SUMMARY_SELECT,
     });
 
     return NextResponse.json({ conversation: convo });
   } catch {
-    return NextResponse.json({ message: "Failed to create conversation" }, { status: 500 });
+    return jsonError("Failed to create conversation", 500);
   }
 }

@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import styles from "../auth.module.css";
+import { isRecoveryCode, MIN_PASSWORD_LENGTH, RECOVERY_CODE_LENGTH } from "@/lib/authRules";
 
 export default function RecoveryPage() {
   const router = useRouter();
+  const [email, setEmail] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
@@ -20,8 +22,8 @@ export default function RecoveryPage() {
       setMsg({ type: "error", text: "Passwords do not match" });
       return;
     }
-    if (!/^[0-9]{12}$/.test(recoveryCode)) {
-      setMsg({ type: "error", text: "Recovery code must be 12 digits" });
+    if (!isRecoveryCode(recoveryCode)) {
+      setMsg({ type: "error", text: `Recovery code must be ${RECOVERY_CODE_LENGTH} digits` });
       return;
     }
 
@@ -31,6 +33,7 @@ export default function RecoveryPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          email,
           recoveryCode,
           newPassword: pw
         }),
@@ -53,26 +56,42 @@ export default function RecoveryPage() {
     <section className={styles.card} aria-label="Recover account">
       <h1 className={styles.title}>Reset password</h1>
       <p className={styles.subtitle}>
-        Enter your 12‑digit recovery code and choose a new password.
+        Enter your email and 12‑digit recovery code, then choose a new password.
       </p>
 
       <form className={styles.form} onSubmit={submit} noValidate>
         <div className={styles.fieldGroup}>
           <div className={styles.labelRow}>
+            <label htmlFor="email" className={styles.label}>Email</label>
+          </div>
+          <input
+            id="email"
+            className={styles.input}
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="you@example.com"
+          />
+        </div>
+
+        <div className={styles.fieldGroup}>
+          <div className={styles.labelRow}>
             <label htmlFor="recovery" className={styles.label}>Recovery Code</label>
           </div>
-            <input
-              id="recovery"
-              className={styles.input}
-              type="text"
-              inputMode="numeric"
-              pattern="[0-9]{12}"
-              maxLength={12}
-              required
-              value={recoveryCode}
-              onChange={(e) => setRecoveryCode(e.target.value.replace(/\D/g, "").slice(0, 12))}
-              placeholder="12 digits"
-            />
+          <input
+            id="recovery"
+            className={styles.input}
+            type="text"
+            inputMode="numeric"
+            pattern={`[0-9]{${RECOVERY_CODE_LENGTH}}`}
+            maxLength={RECOVERY_CODE_LENGTH}
+            required
+            value={recoveryCode}
+            onChange={(e) => setRecoveryCode(e.target.value.replace(/\D/g, "").slice(0, RECOVERY_CODE_LENGTH))}
+            placeholder={`${RECOVERY_CODE_LENGTH} digits`}
+          />
         </div>
 
         <div className={styles.fieldGroup}>
@@ -84,10 +103,10 @@ export default function RecoveryPage() {
             className={styles.input}
             type="password"
             required
-            minLength={8}
+            minLength={MIN_PASSWORD_LENGTH}
             value={pw}
             onChange={(e) => setPw(e.target.value)}
-            placeholder="At least 8 characters"
+            placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
           />
         </div>
 
@@ -100,7 +119,7 @@ export default function RecoveryPage() {
             className={styles.input}
             type="password"
             required
-            minLength={8}
+            minLength={MIN_PASSWORD_LENGTH}
             value={pw2}
             onChange={(e) => setPw2(e.target.value)}
             placeholder="Repeat password"
@@ -112,9 +131,10 @@ export default function RecoveryPage() {
           className={styles.button}
           disabled={
             loading ||
-            recoveryCode.length !== 12 ||
-            pw.length < 8 ||
-            pw2.length < 8
+            !email ||
+            recoveryCode.length !== RECOVERY_CODE_LENGTH ||
+            pw.length < MIN_PASSWORD_LENGTH ||
+            pw2.length < MIN_PASSWORD_LENGTH
           }
         >
           {loading ? "Updating..." : "Reset Password"}

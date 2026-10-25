@@ -68,7 +68,7 @@
   padding: 12px 14px;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: #0b1220;
+  background: var(--surface);
   color: var(--text);
   font-size: 14px;
   outline: none;
@@ -126,7 +126,6 @@
   display: grid;
   gap: 16px;
 }
-.logoutForm { margin-top: 8px; }
 .badge {
   display: inline-block;
   padding: 4px 10px 5px;
@@ -141,7 +140,7 @@
 
 /* Recovery Code display */
 .codeBox {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 18px;
   letter-spacing: 2px;
   padding: 14px 16px;

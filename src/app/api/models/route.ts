@@ -1,56 +1,68 @@
+import { NextResponse } from "next/server";
+import { OLLAMA_URL } from "@/server/config";
+
 export const runtime = "nodejs";
 
-import { NextResponse } from "next/server";
+// Fail fast when the Ollama host is unreachable so the UI can fall back.
+const TIMEOUT_MS = 5000;
 
-const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+// Shape of one entry in Ollama's GET /api/tags response.
+type OllamaTag = {
+  name?: string;
+  model?: string;
+  modified_at?: string;
+  size?: number;
+  digest?: string;
+  details?: {
+    family?: string;
+    families?: string[];
+    parameter_size?: string;
+    quantization_level?: string;
+  };
+};
 
 // GET /api/models -> proxy to OLLAMA_URL/api/tags and normalize shape
-export async function GET(_req: Request) {
+export async function GET() {
   try {
     const upstream = await fetch(`${OLLAMA_URL}/api/tags`, {
-      method: "GET",
-      // Prevent caching since local model availability can change
-      headers: { "Accept": "application/json" },
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
     if (!upstream.ok) {
-      let err = "";
-      try { err = await upstream.text(); } catch {}
+      const err = await upstream.text().catch(() => "");
       return NextResponse.json(
         { message: "Failed to load models from Ollama", upstreamStatus: upstream.status, error: err || undefined },
         { status: 502 }
       );
     }
 
-    const raw = await upstream.json().catch(() => ({} as any));
-    // Ollama returns: { models: [ { name, model, modified_at, size, digest, details: {...} } ] }
-    const list: any[] = Array.isArray(raw?.models) ? raw.models : Array.isArray(raw) ? raw : [];
+    const raw: unknown = await upstream.json().catch(() => ({}));
+    const list: OllamaTag[] = Array.isArray(raw)
+      ? raw
+      : Array.isArray((raw as { models?: unknown })?.models)
+        ? (raw as { models: OllamaTag[] }).models
+        : [];
 
     const models = list
-      .map((m) => {
-        const name = m?.name || m?.model || "";
-        return {
-          name,
-          modifiedAt: m?.modified_at ?? null,
-          size: typeof m?.size === "number" ? m.size : null,
-          digest: m?.digest ?? null,
-          family: m?.details?.family ?? null,
-          families: m?.details?.families ?? null,
-          parameterSize: m?.details?.parameter_size ?? null,
-          quantization: m?.details?.quantization ?? null,
-          // Keep original object for debugging if needed in future:
-          // raw: m,
-        };
-      })
+      .map((m) => ({
+        name: m?.name || m?.model || "",
+        modifiedAt: m?.modified_at ?? null,
+        size: typeof m?.size === "number" ? m.size : null,
+        digest: m?.digest ?? null,
+        family: m?.details?.family ?? null,
+        families: m?.details?.families ?? null,
+        parameterSize: m?.details?.parameter_size ?? null,
+        // Ollama names this field quantization_level; the old key never matched.
+        quantization: m?.details?.quantization_level ?? null,
+      }))
       .filter((m) => m.name);
 
+    return NextResponse.json({ models }, { headers: { "Cache-Control": "no-store" } });
+  } catch (e) {
     return NextResponse.json(
-      { models },
-      { headers: { "Cache-Control": "no-store" } }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      { message: "Error contacting Ollama", error: e?.message || String(e) },
+      { message: "Error contacting Ollama", error: e instanceof Error ? e.message : String(e) },
       { status: 500 }
     );
   }
