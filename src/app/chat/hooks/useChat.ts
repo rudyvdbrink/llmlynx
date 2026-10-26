@@ -57,20 +57,25 @@ export function useChat({
           }),
           signal: controller.signal,
         });
-        if (!res.ok || !res.body) throw new Error("Network/response error");
+        if (!res.ok || !res.body) {
+          throw new Error((await res.text().catch(() => "")) || `Request failed (status ${res.status})`);
+        }
 
         let reply = "";
         await readNdjson(res.body, (obj) => {
-          const delta = (obj as { message?: { content?: unknown } })?.message?.content;
+          const line = obj as { message?: { content?: unknown }; error?: unknown };
+          const delta = line?.message?.content;
           if (typeof delta === "string" && delta) {
             reply += delta;
             updateReply({ content: reply });
           }
+          // Ollama and the OpenAI-compatible providers report a failed chat as an { error } line.
+          if (typeof line?.error === "string" && line.error) updateReply({ error: line.error });
         });
 
         refreshConversations();
       } catch (err) {
-        if ((err as Error)?.name !== "AbortError") updateReply({ error: true });
+        if ((err as Error)?.name !== "AbortError") updateReply({ error: (err as Error)?.message || "Stream error" });
       } finally {
         setIsStreaming(false);
         abortRef.current = null;

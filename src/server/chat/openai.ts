@@ -21,11 +21,18 @@ function isStreamingUnsupported(err: unknown): boolean {
   return e.status === 400 && /must be verified to stream/i.test(String(e.message || e.error?.message || ""));
 }
 
+// The provider's own explanation, such as "The model `gpt-4` has been deprecated".
+function errorMessage(err: unknown): string {
+  const e = err as { message?: string; error?: { message?: string } } | null;
+  return e?.error?.message || e?.message || String(err);
+}
+
 /**
  * Starts a chat on OpenAI, or another OpenAI-compatible API such as OpenRouter,
  * and returns an NDJSON stream in the same format as Ollama
- * ({ message: { content } } lines, then { done: true }). System messages are
- * not sent. Cancelling the stream aborts the request.
+ * ({ message: { content } } lines, then { done: true }, or an { error } line
+ * when the request fails). System messages are not sent. Cancelling the
+ * stream aborts the request.
  */
 export function streamOpenAIChat(
   { model, messages }: { model: string; messages: ChatMessage[] },
@@ -78,7 +85,8 @@ export function streamOpenAIChat(
         if (!cancelled) controller.close();
       } catch (err) {
         await reply.persist();
-        if (!cancelled) controller.error(err);
+        send({ error: errorMessage(err) });
+        if (!cancelled) controller.close();
       }
     },
     async cancel() {

@@ -7,7 +7,7 @@ import CopyButton from "./CopyButton";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import type { DisplayMessage } from "@/lib/types";
 
-const STREAM_ERROR_NOTE = "\n\n*(Stream error)*";
+const errorNote = (error: string) => `\n\n*(Error: ${error})*`;
 
 function MessageList({
   messages,
@@ -27,7 +27,7 @@ function MessageList({
         return (
           <div key={idx} className={`${styles.messageRow} ${isUser ? styles.user : styles.bot}`}>
             <div className={styles.bubble}>
-              <MarkdownMessage content={msg.error ? msg.content + STREAM_ERROR_NOTE : msg.content} />
+              <MarkdownMessage content={msg.error ? msg.content + errorNote(msg.error) : msg.content} />
               {showCopy && (
                 <CopyButton className={styles.messageCopyBtn} label="Copy response" getText={() => msg.content} />
               )}

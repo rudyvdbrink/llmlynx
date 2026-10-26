@@ -4,8 +4,8 @@ export type Role = "user" | "assistant" | "system";
 
 export type ChatMessage = { role: Role; content: string };
 
-// A message as shown in the chat view. `error` marks a reply whose stream failed.
-export type DisplayMessage = ChatMessage & { error?: boolean };
+// A message as shown in the chat view. `error` says why its reply failed.
+export type DisplayMessage = ChatMessage & { error?: string };
 
 export type SessionUser = { id: string; email: string };
 

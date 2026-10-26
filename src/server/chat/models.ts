@@ -34,7 +34,14 @@ export async function listOllamaModels(baseUrl: string): Promise<string[]> {
 // OpenAI also lists models for embeddings, images, audio, and models that only
 // work with the Responses API. Keep the ones that can chat.
 const OPENAI_CHAT_MODEL = /^(gpt-|chatgpt-|o\d)/;
-const OPENAI_NOT_CHAT = /embedding|image|audio|realtime|transcribe|tts|search|moderation|codex|deep-research|-pro\b/;
+const OPENAI_NOT_CHAT = /embedding|image|audio|realtime|transcribe|tts|search|moderation|codex|deep-research|-pro\b|instruct|live/;
+
+// OpenAI keeps listing a model after its shutdown date ("YYYY-MM-DD"), but chats with it then fail.
+// Some retired models have no shutdown date: all of gpt-3.5 is retired.
+type ListedModel = { id: string; shutdown_date?: string | null };
+const OPENAI_RETIRED = /^gpt-3\.5/;
+const isShutDown = (m: ListedModel, today: string) =>
+  (!!m.shutdown_date && m.shutdown_date <= today) || OPENAI_RETIRED.test(m.id);
 
 /** Ids of the chat models available with an OpenAI or OpenRouter API key. */
 export async function listApiModels(provider: KeyProviderId, config: ApiConfig): Promise<string[]> {
@@ -42,7 +49,9 @@ export async function listApiModels(provider: KeyProviderId, config: ApiConfig):
   // OpenRouter lists models without checking the key, so ask about the key first:
   // a wrong key then shows up here rather than in the middle of a chat.
   if (provider === "openrouter") await client.get("/key");
-  const ids = (await client.models.list()).data.map((m) => m.id);
+  const today = new Date().toISOString().slice(0, 10);
+  const models: ListedModel[] = (await client.models.list()).data;
+  const ids = models.filter((m) => !isShutDown(m, today)).map((m) => m.id);
   return sortNames(
     provider === "openai" ? ids.filter((id) => OPENAI_CHAT_MODEL.test(id) && !OPENAI_NOT_CHAT.test(id)) : ids
   );
