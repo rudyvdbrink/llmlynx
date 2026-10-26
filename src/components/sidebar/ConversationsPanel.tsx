@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import styles from "./Sidebar.module.css";
-import type { ConversationSummary } from "@/lib/types";
+import { PencilIcon, PinIcon, PinOffIcon, SearchIcon, TrashIcon } from "@/components/icons";
+import type { ConversationList } from "@/hooks/useConversationList";
+import { groupByDate } from "@/lib/dateGroups";
 
 export default function ConversationsPanel({
   collapsed,
-  conversations,
+  conversationList,
   activeConversationId,
   onNewConversation,
   onOpenConversation,
@@ -15,14 +17,21 @@ export default function ConversationsPanel({
   onDeleteConversation,
 }: {
   collapsed: boolean;
-  conversations: ConversationSummary[];
+  conversationList: ConversationList;
   activeConversationId: string | null;
   onNewConversation: () => void;
   onOpenConversation: (id: string) => void;
   onRenameConversation?: (id: string, newTitle: string) => Promise<void> | void;
   onDeleteConversation?: (id: string) => Promise<void> | void;
 }) {
-  const listRef = useRef<HTMLUListElement | null>(null);
+  const { conversations, hasOlder, loading, query, setQuery, loadOlder, setPinned } = conversationList;
+  // Pinned conversations come first from the API and get their own group.
+  const groups = useMemo(() => {
+    const pinned = conversations.filter((c) => c.pinnedAt);
+    const rest = groupByDate(conversations.filter((c) => !c.pinnedAt));
+    return pinned.length > 0 ? [{ label: "Pinned", items: pinned }, ...rest] : rest;
+  }, [conversations]);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const [overflowIds, setOverflowIds] = useState<Set<string>>(new Set());
   const [menuState, setMenuState] = useState<{ id: string; anchorRect: DOMRect } | null>(null);
 
@@ -131,6 +140,11 @@ export default function ConversationsPanel({
     Promise.resolve(onDeleteConversation(id)).finally(() => setMenuState(null));
   }
 
+  function handlePin(id: string) {
+    const pinned = !!conversations.find((c) => c.id === id)?.pinnedAt;
+    Promise.resolve(setPinned(id, !pinned)).finally(() => setMenuState(null));
+  }
+
   function toggleMenuFor(id: string, btnEl: HTMLElement) {
     if (menuState?.id === id) {
       setMenuState(null);
@@ -140,74 +154,106 @@ export default function ConversationsPanel({
   }
 
   const menuPos = menuState ? computeMenuPosition(menuState.anchorRect) : null;
+  const menuPinned = !!conversations.find((c) => c.id === menuState?.id)?.pinnedAt;
 
   return (
     <div>
-      <div className={styles.sidebarTitleRow}>
-        <p className={styles.sidebarTitle}>Conversations</p>
-        <button type="button" className={styles.inlineLink} onClick={onNewConversation}>
-          + New
-        </button>
+      {/* Stays at the top while the list scrolls */}
+      <div className={styles.conversationsHeader}>
+        <div className={styles.sidebarTitleRow}>
+          <p className={styles.sidebarTitle}>Conversations</p>
+          <button type="button" className={styles.inlineLink} onClick={onNewConversation}>
+            + New
+          </button>
+        </div>
+        <div className={styles.conversationSearchBox}>
+          <SearchIcon className={styles.conversationSearchIcon} />
+          <input
+            type="search"
+            className={styles.conversationSearch}
+            aria-label="Search conversations"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
       </div>
 
-      <ul className={styles.conversationList} aria-label="Conversations" ref={listRef}>
-        {conversations.map((c) => {
-          const isActive = c.id === activeConversationId;
-          const fade = overflowIds.has(c.id);
-          const isOpen = menuState?.id === c.id;
-          return (
-            <li key={c.id}>
-              <div
-                className={`${styles.conversationItem} ${isActive ? styles.active : ""}`}
-                data-menu-root={c.id}
-              >
-                <button
-                  type="button"
-                  className={styles.conversationMainBtn}
-                  onClick={() => onOpenConversation(c.id)}
-                  title={c.title ?? "Untitled"}
-                >
-                  <span
-                    className={`${styles.conversationTitle} ${fade ? styles.conversationTitleFade : ""}`}
-                    data-convo-title="true"
-                    data-id={c.id}
-                  >
-                    {c.title ?? "Untitled"}
-                  </span>
-                </button>
+      <div ref={listRef}>
+        {groups.map((group) => (
+          <section key={group.label} className={styles.conversationGroup}>
+            <p className={styles.groupLabel}>{group.label}</p>
+            <ul className={styles.conversationList} aria-label={group.label}>
+              {group.items.map((c) => {
+                const isActive = c.id === activeConversationId;
+                const fade = overflowIds.has(c.id);
+                const isOpen = menuState?.id === c.id;
+                return (
+                  <li key={c.id}>
+                    <div
+                      className={`${styles.conversationItem} ${isActive ? styles.active : ""}`}
+                      data-menu-root={c.id}
+                    >
+                      <button
+                        type="button"
+                        className={styles.conversationMainBtn}
+                        onClick={() => onOpenConversation(c.id)}
+                        title={c.title ?? "Untitled"}
+                      >
+                        <span
+                          className={`${styles.conversationTitle} ${fade ? styles.conversationTitleFade : ""}`}
+                          data-convo-title="true"
+                          data-id={c.id}
+                        >
+                          {c.title ?? "Untitled"}
+                        </span>
+                      </button>
 
-                <button
-                  type="button"
-                  className={styles.kebabBtn}
-                  aria-haspopup="menu"
-                  aria-expanded={isOpen}
-                  aria-controls={isOpen ? `menu-${c.id}` : undefined}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleMenuFor(c.id, e.currentTarget);
-                  }}
-                  title="More options"
-                >
-                  <svg
-                    width="18"
-                    height="18"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <circle cx="5" cy="12" r="2" />
-                    <circle cx="12" cy="12" r="2" />
-                    <circle cx="19" cy="12" r="2" />
-                  </svg>
-                </button>
-              </div>
-            </li>
-          );
-        })}
-        {conversations.length === 0 && (
-          <li className={styles.emptyNote}>No conversations yet</li>
-        )}
-      </ul>
+                      <button
+                        type="button"
+                        className={styles.kebabBtn}
+                        aria-haspopup="menu"
+                        aria-expanded={isOpen}
+                        aria-controls={isOpen ? `menu-${c.id}` : undefined}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleMenuFor(c.id, e.currentTarget);
+                        }}
+                        title="More options"
+                      >
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                          aria-hidden="true"
+                        >
+                          <circle cx="5" cy="12" r="2" />
+                          <circle cx="12" cy="12" r="2" />
+                          <circle cx="19" cy="12" r="2" />
+                        </svg>
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
+
+      {conversations.length === 0 && !loading && (
+        <p className={styles.emptyNote}>
+          {query.trim() ? "No matching conversations" : hasOlder ? "No recent conversations" : "No conversations yet"}
+        </p>
+      )}
+
+      {hasOlder && (
+        <button type="button" className={styles.loadOlder} onClick={loadOlder} disabled={loading}>
+          {loading ? "Loading…" : query.trim() ? "Load older matches" : "Load older conversations"}
+        </button>
+      )}
 
       {/* Global portal menu to avoid clipping by the sidebar */}
       {menuState &&
@@ -225,18 +271,33 @@ export default function ConversationsPanel({
               type="button"
               role="menuitem"
               className={styles.menuItem}
-              onClick={() => handleRename(menuState.id)}
+              onClick={() => handlePin(menuState.id)}
             >
-              Edit title
+              {menuPinned ? <PinOffIcon className={styles.menuIcon} /> : <PinIcon className={styles.menuIcon} />}
+              {menuPinned ? "Unpin" : "Pin"}
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              className={`${styles.menuItem} ${styles.menuDanger}`}
-              onClick={() => handleDelete(menuState.id)}
-            >
-              Delete chat
-            </button>
+            {onRenameConversation && (
+              <button
+                type="button"
+                role="menuitem"
+                className={styles.menuItem}
+                onClick={() => handleRename(menuState.id)}
+              >
+                <PencilIcon className={styles.menuIcon} />
+                Edit title
+              </button>
+            )}
+            {onDeleteConversation && (
+              <button
+                type="button"
+                role="menuitem"
+                className={`${styles.menuItem} ${styles.menuDanger}`}
+                onClick={() => handleDelete(menuState.id)}
+              >
+                <TrashIcon className={styles.menuIcon} />
+                Delete chat
+              </button>
+            )}
           </div>,
           document.body
         )}

@@ -1,23 +1,26 @@
 import { NextRequest } from "next/server";
 import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
-import { getDefaultSystemPrompt, getOpenAIConfig } from "@/server/config";
+import { getDefaultSystemPrompt } from "@/server/config";
+import { getApiConfig, getOllamaUrl } from "@/server/providers";
 import { createAssistantReply, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
 import { streamOllamaChat } from "@/server/chat/ollama";
 import { streamOpenAIChat } from "@/server/chat/openai";
 import { normalizeSelection, parseSelection, toSelection } from "@/lib/selection";
+import { PROVIDER_LABELS, type KeyProviderId } from "@/lib/providers";
 import type { ChatMessage, Role } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 // POST /api/chat
 // body: { messages: ChatMessage[], model?: string, agentId?: string, conversationId?: string }
-// `model` is a selection ("model:<name>" | "remote:<name>") or a plain Ollama model name.
+// `model` is a selection ("ollama:<name>" | "openai:<name>" | "openrouter:<name>")
+// or a plain Ollama model name. Each user's own Ollama server and API keys are used.
 // Responds with an NDJSON stream and the conversation id in X-Conversation-Id.
 
 type Target =
-  | { kind: "ollama"; modelKey: string; model: string; systemPrompt: string; options?: unknown }
-  | { kind: "remote"; modelKey: string; model: string };
+  | { kind: "ollama"; modelKey: string; model: string; baseUrl: string; systemPrompt: string; options?: unknown }
+  | { kind: KeyProviderId; modelKey: string; model: string };
 
 const ROLES: Role[] = ["user", "assistant", "system"];
 
@@ -38,6 +41,7 @@ async function resolveTarget(userId: string, model: unknown, agentId: unknown): 
       kind: "ollama",
       modelKey: toSelection("agent", agent.id),
       model: parseSelection(agent.baseModel).value,
+      baseUrl: await getOllamaUrl(userId),
       systemPrompt: agent.systemPrompt?.trim() || getDefaultSystemPrompt(),
       options: agent.settings,
     };
@@ -45,8 +49,15 @@ async function resolveTarget(userId: string, model: unknown, agentId: unknown): 
 
   const selection = normalizeSelection(typeof model === "string" ? model : undefined);
   const { kind, value } = parseSelection(selection);
-  if (kind === "remote") return { kind, modelKey: selection, model: value || "gpt-5" };
-  return { kind: "ollama", modelKey: selection, model: value, systemPrompt: getDefaultSystemPrompt() };
+  if (kind === "agent") return null; // agents are chosen with agentId
+  if (kind !== "ollama") return { kind, modelKey: selection, model: value };
+  return {
+    kind: "ollama",
+    modelKey: selection,
+    model: value,
+    baseUrl: await getOllamaUrl(userId),
+    systemPrompt: getDefaultSystemPrompt(),
+  };
 }
 
 export async function POST(req: NextRequest) {
@@ -66,10 +77,11 @@ export async function POST(req: NextRequest) {
 
   const target = await resolveTarget(user.id, body.model, body.agentId);
   if (!target) return new Response("Agent not found", { status: 404 });
+  if (!target.model) return new Response("No model selected", { status: 400 });
 
-  const openaiConfig = target.kind === "remote" ? getOpenAIConfig() : null;
-  if (target.kind === "remote" && !openaiConfig) {
-    return new Response("OpenAI API key not configured", { status: 403 });
+  const apiConfig = target.kind === "ollama" ? null : await getApiConfig(user.id, target.kind);
+  if (target.kind !== "ollama" && !apiConfig) {
+    return new Response(`No ${PROVIDER_LABELS[target.kind]} API key. Add one on the account page.`, { status: 403 });
   }
 
   const conversationId = await resolveConversation(
@@ -84,15 +96,16 @@ export async function POST(req: NextRequest) {
   if (lastUser) await saveUserMessage(conversationId, lastUser.content, target.modelKey);
 
   // The system prompt always comes from the server, never from the client.
-  // Remote models get no system prompt at all.
+  // OpenAI and OpenRouter models get no system prompt at all.
   const history = messages.filter((m) => m.role !== "system");
   const reply = createAssistantReply(conversationId, target.modelKey);
 
   const stream =
-    target.kind === "remote"
-      ? streamOpenAIChat({ model: target.model, messages: history }, openaiConfig!, reply)
+    target.kind !== "ollama"
+      ? streamOpenAIChat({ model: target.model, messages: history }, apiConfig!, reply)
       : await streamOllamaChat(
           {
+            baseUrl: target.baseUrl,
             model: target.model,
             messages: [{ role: "system", content: target.systemPrompt }, ...history],
             options: target.options,

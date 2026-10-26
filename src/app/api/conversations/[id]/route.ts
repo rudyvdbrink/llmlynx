@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { jsonError, optionalString, readJsonObject } from "@/server/http";
@@ -17,6 +18,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       id: true,
       title: true,
       model: true,
+      pinnedAt: true,
       createdAt: true,
       updatedAt: true,
       messages: {
@@ -30,22 +32,34 @@ export async function GET(_req: Request, ctx: Ctx) {
   return NextResponse.json({ conversation });
 }
 
-// PATCH /api/conversations/:id -> update conversation title
+// PATCH /api/conversations/:id -> rename and/or pin the conversation
+// body: { title?: string, pinned?: boolean }
+// Neither counts as activity, so the conversation keeps its place in the date groups.
 export async function PATCH(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const user = await getCurrentUser();
   if (!user) return jsonError("Unauthorized", 401);
 
-  const title = (optionalString((await readJsonObject(req)).title) ?? "").trim();
-  if (!title) return jsonError("Title is required", 400);
+  const body = await readJsonObject(req);
+  const data: Prisma.ConversationUpdateInput = {};
+  if (body.title !== undefined) {
+    const title = (optionalString(body.title) ?? "").trim();
+    if (!title) return jsonError("Title is required", 400);
+    data.title = title;
+  }
+  if (typeof body.pinned === "boolean") data.pinnedAt = body.pinned ? new Date() : null;
+  if (Object.keys(data).length === 0) return jsonError("Nothing to update", 400);
 
-  const owned = await prisma.conversation.findFirst({ where: { id, userId: user.id }, select: { id: true } });
+  const owned = await prisma.conversation.findFirst({
+    where: { id, userId: user.id },
+    select: { id: true, updatedAt: true },
+  });
   if (!owned) return jsonError("Not found", 404);
 
   const updated = await prisma.conversation.update({
     where: { id },
-    data: { title },
-    select: { id: true, title: true, updatedAt: true },
+    data: { ...data, updatedAt: owned.updatedAt },
+    select: { id: true, title: true, pinnedAt: true, updatedAt: true },
   });
 
   return NextResponse.json({ conversation: updated });

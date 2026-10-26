@@ -34,7 +34,14 @@ function normalizeTeXDelimiters(input: string): string {
     return `${INLINE_TOKEN_START}${id}${TOKEN_END}`;
   });
 
-  // Replace \[ ... \] -> $$ ... $$  and  \( ... \) -> $ ... $
+  // remark-math reads $$ ... $$ within a line as inline math. A \[ ... \] or
+  // $$ ... $$ that fills its own line(s) becomes a $$ block, so it renders as
+  // display math (which scrolls sideways when it is too wide).
+  const toBlock = (_: string, indent: string, inner: string) => `${indent}$$\n${indent}${inner.trim()}\n${indent}$$`;
+  text = text.replace(/^([ \t]*)\\\[([\s\S]*?)\\\][ \t]*$/gm, toBlock);
+  text = text.replace(/^([ \t]*)\$\$((?:(?!\$\$)[^\n])+)\$\$[ \t]*$/gm, toBlock);
+
+  // Replace the remaining \[ ... \] -> $$ ... $$  and  \( ... \) -> $ ... $
   text = text.replace(/\\\[([\s\S]*?)\\\]/g, (_: string, inner: string) => `$$${inner}$$`);
   text = text.replace(/\\\(([\s\S]*?)\\\)/g, (_: string, inner: string) => `$${inner}$`);
 

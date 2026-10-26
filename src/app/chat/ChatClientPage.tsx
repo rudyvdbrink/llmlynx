@@ -11,14 +11,14 @@ import MessageList from "./components/MessageList";
 import Composer from "./components/Composer";
 
 export default function ChatClientPage({ user }: { user: SessionUser }) {
-  // Selection can be "model:<name>", "agent:<id>" or "remote:<name>"
+  // Selection can be "ollama:<name>", "openai:<name>", "openrouter:<name>" or "agent:<id>"
   const [selection, setSelection] = useState<string>(DEFAULT_SELECTION);
   // Bumped to remount the composer, which clears its draft.
   const [composerKey, setComposerKey] = useState(0);
 
   // Conversations (list + active + CRUD)
   const {
-    conversations,
+    conversationList,
     activeConversationId,
     refreshConversations,
     ensureConversation,
@@ -67,7 +67,7 @@ export default function ChatClientPage({ user }: { user: SessionUser }) {
         model: selection,
         onChangeModel: setSelection,
         modelDisabled: isStreaming,
-        conversations,
+        conversationList,
         activeConversationId,
         onNewConversation: handleNewConversation,
         onOpenConversation: handleOpenConversation,

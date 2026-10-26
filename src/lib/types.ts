@@ -13,6 +13,7 @@ export type ConversationSummary = {
   id: string;
   title: string | null;
   model: string | null; // a selection string, see lib/selection.ts
+  pinnedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };

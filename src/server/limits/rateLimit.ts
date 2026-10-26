@@ -17,6 +17,9 @@ const LIMITS = {
 
   // 5 recovery attempts per 10 minutes per IP
   recovery: { windowMs: 10 * 60 * 1000, max: 5 },
+
+  // 10 password checks on the account page (change password, delete account) per 10 minutes per IP
+  account: { windowMs: 10 * 60 * 1000, max: 10 },
 } satisfies Record<string, RateLimitConfig>;
 
 export type RateLimitKind = keyof typeof LIMITS;

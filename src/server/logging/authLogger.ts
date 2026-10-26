@@ -18,7 +18,7 @@ function sanitize(value: string) {
   return value.replace(/[\s\p{C}]+/gu, "_");
 }
 
-export type AuthEventType = "LOGIN" | "SIGNUP" | "RESET";
+export type AuthEventType = "LOGIN" | "SIGNUP" | "RESET" | "PASSWORD_CHANGE" | "DELETE_ACCOUNT";
 
 export type AuthEvent = {
   type: AuthEventType;

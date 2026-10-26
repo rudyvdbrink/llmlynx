@@ -54,12 +54,17 @@
   gap: 14px;
 }
 
+/* Reaches into the sidebar's right padding by the scrollbar width (measured in
+   Sidebar.tsx, as it differs per browser) plus a 4px gap, so the list is as
+   wide as the controls above it. */
 .sidebarScrollArea {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-right: 10px;
+  margin-right: calc(-4px - var(--scrollbar-width, 6px));
+  padding-right: 4px;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar) transparent;
 }
@@ -112,7 +117,15 @@
   color: var(--text);
   word-break: break-all;
 }
-.userEmail span { color: var(--accent); }
+.userEmailLink {
+  color: var(--accent);
+  text-decoration: none;
+}
+.userEmailLink:hover,
+.userEmailLink:focus-visible {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
 
 /* Small inline action button (e.g., + New) */
 .inlineLink {
@@ -149,20 +162,127 @@
 /* Model select block */
 .modelBlock { display: flex; flex-direction: column; gap: 6px; }
 
-/* Keep the select visuals aligned with conversation items */
+/* Keep the select visuals aligned with conversation items. The provider select
+   and the model picker button share this class; the browser's own select arrow
+   is replaced, so both draw the same chevron with the same text inset. */
 .modelSelect {
-  background: var(--surface);
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  padding: 0 30px 0 10px;
+  background-color: var(--surface);
+  /* Chevron in var(--muted); a data URI cannot use CSS variables */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa4b2' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 12px 12px;
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 6px 10px;
+  font-family: inherit;
   font-size: 13px;
+  line-height: normal;
+  text-align: left;
   outline: none;
-  width: 100%;
+  cursor: pointer;
 }
+/* The focus ring is drawn inside the border: the sidebar clips anything outside it. */
 .modelSelect:focus {
   border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.modelSelect:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Model picker: a .modelSelect button that opens a searchable list */
+.picker {
+  position: relative;
+}
+.pickerTrigger {
+  display: flex;
+  align-items: center;
+}
+.pickerValue {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Drops down over the conversation list */
+.pickerPopover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+}
+.pickerSearch {
+  width: 100%;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.pickerSearch:focus {
+  border-color: var(--accent);
+}
+.pickerSearch::placeholder { color: var(--muted); }
+
+.pickerNote {
+  margin: 0;
+  padding: 4px 6px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+.pickerNoteError { color: #f87171; }
+
+.pickerList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(320px, 40dvh);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.pickerOption {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 9px; /* 1px more than the search field, which has a border: the texts line up */
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.pickerOption[data-active="true"] { background: var(--surface-hover); }
+.pickerOption[aria-selected="true"] { color: var(--accent); }
+.pickerDetail {
+  flex: none;
+  max-width: 45%;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: right;
 }
 
 /* Sidebar toggle button */
@@ -194,6 +314,85 @@
 }
 .sidebar.collapsed .sidebarToggleIcon {
   transform: rotate(180deg);
+}
+
+/* Conversations title row and search; sticks to the top while the list scrolls */
+.conversationsHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--panel);
+  padding-bottom: 4px;
+}
+/* Search field with a magnifying glass inside, on the left */
+.conversationSearchBox {
+  position: relative;
+  margin: 2px 0 0;
+}
+.conversationSearchIcon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+}
+.conversationSearch {
+  display: block;
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  padding: 0 10px 0 32px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+}
+.conversationSearch:focus {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Date group (Today, Yesterday, ...) */
+.conversationGroup + .conversationGroup {
+  margin-top: 14px;
+}
+.groupLabel {
+  margin: 10px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+/* Shown below the list when older conversations exist */
+.loadOlder {
+  display: block;
+  width: 100%;
+  margin: 14px 0 4px;
+  padding: 7px 10px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.loadOlder:hover:not(:disabled),
+.loadOlder:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  outline: none;
+}
+.loadOlder:disabled {
+  cursor: default;
 }
 
 /* Conversations list (no bullets, option-like items) */
@@ -284,6 +483,9 @@
   box-shadow: 0 8px 20px rgba(0,0,0,0.35);
 }
 .menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: transparent;
   border: none;
   text-align: left;
@@ -291,7 +493,17 @@
   padding: 6px 8px;
   border-radius: 6px;
   cursor: pointer;
+  font-family: inherit;
   font-size: 13px;
+}
+.menuIcon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+.menuDanger .menuIcon {
+  color: inherit;
 }
 .menuItem:hover,
 .menuItem:focus-visible {
@@ -321,9 +533,10 @@
 
 /* Empty state */
 .emptyNote {
+  margin: 10px 0 0;
   font-size: 12px;
   color: var(--muted);
-  padding: 4px 2px;
+  padding: 4px 0;
 }
 
 /* Footer nav button at the bottom */

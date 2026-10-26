@@ -6,4 +6,8 @@ export async function register() {
   const { hashPlainRecoveryCodes } = await import("@/server/auth/recovery");
   const count = await hashPlainRecoveryCodes();
   if (count > 0) console.log(`Hashed ${count} recovery code(s) that were stored in plain text.`);
+
+  const { secretsKeyProblem } = await import("@/server/secrets");
+  const problem = secretsKeyProblem();
+  if (problem) console.warn(`${problem}. Users cannot save or use OpenAI and OpenRouter API keys until it is fixed.`);
 }

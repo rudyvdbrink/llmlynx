@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
-import type { OpenAIConfig } from "@/server/config";
+import type { ApiConfig } from "@/server/providers";
 import type { ChatMessage } from "@/lib/types";
 import type { AssistantReply } from "./conversation";
 
@@ -22,13 +22,14 @@ function isStreamingUnsupported(err: unknown): boolean {
 }
 
 /**
- * Starts a chat on OpenAI and returns an NDJSON stream in the same format as
- * Ollama ({ message: { content } } lines, then { done: true }). System
- * messages are not sent. Cancelling the stream aborts the OpenAI request.
+ * Starts a chat on OpenAI, or another OpenAI-compatible API such as OpenRouter,
+ * and returns an NDJSON stream in the same format as Ollama
+ * ({ message: { content } } lines, then { done: true }). System messages are
+ * not sent. Cancelling the stream aborts the request.
  */
 export function streamOpenAIChat(
   { model, messages }: { model: string; messages: ChatMessage[] },
-  config: OpenAIConfig,
+  config: ApiConfig,
   reply: AssistantReply
 ): ReadableStream<Uint8Array> {
   const client = new OpenAI(config);

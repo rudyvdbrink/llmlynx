@@ -7,7 +7,8 @@ import type { ChatMessage, ConversationWithMessages } from "@/lib/types";
 
 /** Conversation list plus the active conversation and its CRUD actions. */
 export function useConversations(selection: string, setSelection: (val: string) => void) {
-  const { conversations, refresh: refreshConversations } = useConversationList();
+  const conversationList = useConversationList();
+  const refreshConversations = conversationList.refresh;
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null);
 
   /** Returns the active conversation id, creating a conversation first if there is none. */
@@ -69,7 +70,7 @@ export function useConversations(selection: string, setSelection: (val: string) 
   }, []);
 
   return {
-    conversations,
+    conversationList,
     activeConversationId,
     refreshConversations,
     ensureConversation,

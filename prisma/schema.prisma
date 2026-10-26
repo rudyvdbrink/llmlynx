@@ -8,16 +8,17 @@ datasource db {
 }
 
 // Secrets are never stored in plain text: passwords and recovery codes as
-// bcrypt hashes, session tokens as SHA-256 hashes.
+// bcrypt hashes, session tokens as SHA-256 hashes, API keys encrypted.
 model User {
-  id               String         @id @default(uuid())
-  email            String         @unique
+  id               String            @id @default(uuid())
+  email            String            @unique
   passwordHash     String
   recoveryCodeHash String?
-  createdAt        DateTime       @default(now())
+  createdAt        DateTime          @default(now())
   sessions         Session[]
   conversations    Conversation[]
   agents           Agent[]
+  providerSettings ProviderSetting[]
 }
 
 model Session {
@@ -43,6 +44,7 @@ model Conversation {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   title     String?
   model     String?
+  pinnedAt  DateTime? // set while the conversation is pinned to the top of the list
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   messages  Message[]
@@ -98,4 +100,19 @@ model Agent {
 
   @@index([userId, updatedAt])
   @@unique([userId, name]) // prevent duplicate names per user
+}
+
+// A user's settings for one model provider. API keys must be readable to call
+// the provider, so they are encrypted (AES-256-GCM with SECRETS_KEY), not hashed.
+model ProviderSetting {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider        String   // "ollama" | "openai" | "openrouter"
+  apiKeyEncrypted String?  // OpenAI and OpenRouter
+  baseUrl         String?  // Ollama server address
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([userId, provider])
 }

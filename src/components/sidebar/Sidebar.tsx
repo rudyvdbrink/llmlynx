@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import styles from "./Sidebar.module.css";
 import AccountSection from "./AccountSection";
 import ModelSection from "./ModelSection";
 import ConversationsPanel from "./ConversationsPanel";
-import type { ConversationSummary, SessionUser } from "@/lib/types";
+import type { ConversationList } from "@/hooks/useConversationList";
+import type { SessionUser } from "@/lib/types";
 
 export interface SidebarProps {
   collapsed: boolean;
@@ -14,7 +16,7 @@ export interface SidebarProps {
   onChangeModel: (value: string) => void;
   modelDisabled?: boolean;
 
-  conversations: ConversationSummary[];
+  conversationList: ConversationList;
   activeConversationId?: string | null;
   onNewConversation: () => void;
   onOpenConversation: (id: string) => void;
@@ -34,7 +36,7 @@ export default function Sidebar({
   model,
   onChangeModel,
   modelDisabled,
-  conversations,
+  conversationList,
   activeConversationId,
   onNewConversation,
   onOpenConversation,
@@ -43,6 +45,13 @@ export default function Sidebar({
   footerNavLabel,
   footerNavHref,
 }: SidebarProps) {
+  // Width of the conversation list's scrollbar, for .sidebarScrollArea
+  const scrollAreaRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = scrollAreaRef.current;
+    if (el) el.style.setProperty("--scrollbar-width", `${el.offsetWidth - el.clientWidth}px`);
+  }, []);
+
   return (
     <aside
       className={`${styles.sidebar} ${collapsed ? styles.collapsed : ""}`}
@@ -84,10 +93,10 @@ export default function Sidebar({
           <div className={styles.divider} role="separator" aria-orientation="horizontal" />
         </div>
 
-        <div className={styles.sidebarScrollArea}>
+        <div className={styles.sidebarScrollArea} ref={scrollAreaRef}>
           <ConversationsPanel
             collapsed={collapsed}
-            conversations={conversations}
+            conversationList={conversationList}
             activeConversationId={activeConversationId ?? null}
             onNewConversation={onNewConversation}
             onOpenConversation={onOpenConversation}

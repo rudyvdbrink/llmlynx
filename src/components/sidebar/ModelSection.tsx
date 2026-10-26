@@ -1,8 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import styles from "./Sidebar.module.css";
-import { useAgentList, useLocalModels, useRemoteModels } from "@/hooks/useModelCatalog";
-import { normalizeSelection, parseSelection, toSelection } from "@/lib/selection";
+import ModelPicker, { type PickerItem } from "./ModelPicker";
+import { useAgentList, useProviderModels, useProviderSettings } from "@/hooks/useModelCatalog";
+import { DEFAULT_MODELS, isProviderReady, PROVIDER_LABELS, PROVIDERS } from "@/lib/providers";
+import { normalizeSelection, parseSelection, toSelection, type SelectionKind } from "@/lib/selection";
+
+// The provider dropdown lists the model providers, then the user's agents.
+const KINDS: SelectionKind[] = [...PROVIDERS, "agent"];
+const KIND_LABELS: Record<SelectionKind, string> = { ...PROVIDER_LABELS, agent: "Agents" };
+
+// The model last used per provider, so switching back to a provider restores it.
+const lastUsed = new Map<SelectionKind, string>();
 
 export default function ModelSection({
   model,
@@ -14,63 +24,75 @@ export default function ModelSection({
   onChangeModel: (v: string) => void;
   disabled?: boolean;
 }) {
-  const baseModels = useLocalModels();
-  const [agents] = useAgentList();
-  const remoteModels = useRemoteModels();
-
-  // Normalize incoming value to ensure the select has a matching option
   const value = normalizeSelection(model);
-
-  // Keep the current selection visible even when it is not in any list
-  // (still loading, an uninstalled model, or a deleted agent).
-  const listed =
-    agents.some((a) => toSelection("agent", a.id) === value) ||
-    remoteModels.some((m) => toSelection("remote", m) === value) ||
-    baseModels.some((m) => toSelection("model", m) === value);
   const current = parseSelection(value);
+  const isAgent = current.kind === "agent";
+
+  const settings = useProviderSettings();
+  const [agents] = useAgentList();
+  const { models, loading, error } = useProviderModels(current.kind === "agent" ? null : current.kind);
+  const [pickerOpen, setPickerOpen] = useState(false);
+
+  function unavailableReason(kind: SelectionKind): string | null {
+    if (kind === "agent") return agents.length > 0 ? null : "none yet";
+    // Until the settings have loaded, every provider is offered.
+    return !settings || isProviderReady(settings, kind) ? null : "no API key";
+  }
+
+  function changeKind(kind: SelectionKind) {
+    lastUsed.set(current.kind, current.value);
+    const next = lastUsed.get(kind) ?? (kind === "agent" ? agents[0]?.id : DEFAULT_MODELS[kind]);
+    if (!next) return;
+    onChangeModel(toSelection(kind, next));
+    setPickerOpen(true);
+  }
+
+  const items: PickerItem[] = isAgent
+    ? agents.map((a) => ({ value: a.id, label: a.name, detail: a.baseModel }))
+    : models.map((m) => ({ value: m, label: m }));
+
+  // The current selection stays visible even when it is not in the list
+  // (still loading, an uninstalled model, or a deleted agent).
+  const valueLabel = isAgent ? (agents.find((a) => a.id === current.value)?.name ?? "Unknown agent") : current.value;
+
+  // When Ollama cannot be reached, the list holds common model names instead.
+  const notice = error && models.length > 0 ? `${error}. Showing common models.` : error;
 
   return (
     <div className={styles.modelBlock}>
-      <p className={styles.sidebarTitle} id="model-select-label">
-        Model
-      </p>
+      <p className={styles.sidebarTitle}>Model</p>
       <select
-        aria-labelledby="model-select-label"
+        aria-label="Provider"
         className={styles.modelSelect}
-        value={value}
-        onChange={(e) => onChangeModel(e.target.value)}
+        value={current.kind}
+        onChange={(e) => changeKind(e.target.value as SelectionKind)}
         disabled={disabled}
       >
-        {agents.length > 0 && (
-          <optgroup label="Agents">
-            {agents.map((a) => (
-              <option key={a.id} value={toSelection("agent", a.id)}>
-                {a.name} {a.baseModel ? `(${a.baseModel})` : ""}
-              </option>
-            ))}
-          </optgroup>
-        )}
-
-        {remoteModels.length > 0 && (
-          <optgroup label="Remote">
-            {remoteModels.map((m) => (
-              <option key={m} value={toSelection("remote", m)}>
-                {m}
-              </option>
-            ))}
-          </optgroup>
-        )}
-
-        <optgroup label="Base models">
-          {baseModels.map((m) => (
-            <option key={m} value={toSelection("model", m)}>
-              {m}
+        {KINDS.map((kind) => {
+          const reason = kind === current.kind ? null : unavailableReason(kind);
+          return (
+            <option key={kind} value={kind} disabled={!!reason}>
+              {KIND_LABELS[kind]}
+              {reason ? ` (${reason})` : ""}
             </option>
-          ))}
-        </optgroup>
-
-        {!listed && <option value={value}>{current.kind === "agent" ? "Unknown agent" : current.value}</option>}
+          );
+        })}
       </select>
+      <ModelPicker
+        label={isAgent ? "Agent" : "Model"}
+        items={items}
+        value={current.value}
+        valueLabel={valueLabel}
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onPick={(picked) => onChangeModel(toSelection(current.kind, picked))}
+        loading={loading}
+        notice={notice}
+        noticeIsError={!!error && models.length === 0}
+        emptyText={isAgent ? "No agents yet" : "No models available"}
+        searchPlaceholder={isAgent ? "Search agents…" : "Search models…"}
+        disabled={disabled}
+      />
     </div>
   );
 }

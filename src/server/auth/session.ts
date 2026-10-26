@@ -72,3 +72,11 @@ export async function destroySession() {
 export async function destroyAllSessions(userId: string) {
   await prisma.session.deleteMany({ where: { userId } });
 }
+
+/** Signs a user out on every other device, keeping the current session, e.g. after a password change. */
+export async function destroyOtherSessions(userId: string) {
+  const token = (await cookies()).get(COOKIE_NAME)?.value;
+  await prisma.session.deleteMany({
+    where: { userId, ...(token ? { tokenHash: { not: hashToken(token) } } : {}) },
+  });
+}

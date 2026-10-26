@@ -1,9 +1,9 @@
-import { OLLAMA_URL } from "@/server/config";
 import { createLineSplitter } from "@/lib/ndjson";
 import type { ChatMessage } from "@/lib/types";
 import type { AssistantReply } from "./conversation";
 
 export type OllamaChatRequest = {
+  baseUrl: string; // the user's Ollama server
   model: string;
   messages: ChatMessage[];
   options?: unknown; // agent generation settings, passed through as Ollama options
@@ -18,12 +18,12 @@ export type OllamaChatRequest = {
  * Returns a 502 Response if Ollama cannot be reached or rejects the request.
  */
 export async function streamOllamaChat(
-  { model, messages, options }: OllamaChatRequest,
+  { baseUrl, model, messages, options }: OllamaChatRequest,
   reply: AssistantReply
 ): Promise<ReadableStream<Uint8Array> | Response> {
   let upstream: Response;
   try {
-    upstream = await fetch(`${OLLAMA_URL}/api/chat`, {
+    upstream = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model, messages, stream: true, ...(options ? { options } : {}) }),
