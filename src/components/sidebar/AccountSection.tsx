@@ -6,7 +6,10 @@ export default function AccountSection({ user }: { user: SessionUser }) {
     <div>
       <p className={styles.sidebarTitle}>Account</p>
       <p className={styles.userEmail}>
-        Logged in as: <span>{user.email}</span>
+        Logged in as:{" "}
+        <a href="/account" className={styles.userEmailLink} title="Account settings">
+          {user.email}
+        </a>
       </p>
     </div>
   );

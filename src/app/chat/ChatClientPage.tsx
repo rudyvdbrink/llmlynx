@@ -11,14 +11,14 @@ import MessageList from "./components/MessageList";
 import Composer from "./components/Composer";
 
 export default function ChatClientPage({ user }: { user: SessionUser }) {
-  // Selection can be "model:<name>", "agent:<id>" or "remote:<name>"
+  // Selection can be "ollama:<name>", "openai:<name>", "openrouter:<name>" or "agent:<id>"
   const [selection, setSelection] = useState<string>(DEFAULT_SELECTION);
   // Bumped to remount the composer, which clears its draft.
   const [composerKey, setComposerKey] = useState(0);
 
   // Conversations (list + active + CRUD)
   const {
-    conversations,
+    conversationList,
     activeConversationId,
     refreshConversations,
     ensureConversation,
@@ -29,7 +29,7 @@ export default function ChatClientPage({ user }: { user: SessionUser }) {
   } = useConversations(selection, setSelection);
 
   // Chat state (messages + streaming)
-  const { messages, isStreaming, send, cancel, loadHistory, reset } = useChat({
+  const { messages, isStreaming, replyStatus, send, cancel, loadHistory, reset } = useChat({
     selection,
     ensureConversation,
     refreshConversations,
@@ -67,7 +67,7 @@ export default function ChatClientPage({ user }: { user: SessionUser }) {
         model: selection,
         onChangeModel: setSelection,
         modelDisabled: isStreaming,
-        conversations,
+        conversationList,
         activeConversationId,
         onNewConversation: handleNewConversation,
         onOpenConversation: handleOpenConversation,
@@ -77,8 +77,10 @@ export default function ChatClientPage({ user }: { user: SessionUser }) {
         footerNavHref: "/agents",
       }}
     >
+      {/* Inside the page, so it stays centered on the space beside the sidebar */}
+      <div className={styles.fixedCenterLogo} aria-hidden="true" />
       <div className={styles.chatArea}>
-        <MessageList messages={messages} isStreaming={isStreaming} />
+        <MessageList messages={messages} isStreaming={isStreaming} replyStatus={replyStatus} />
         <div className={styles.composerDock}>
           <Composer key={composerKey} isStreaming={isStreaming} onSend={send} onCancel={cancel} />
         </div>

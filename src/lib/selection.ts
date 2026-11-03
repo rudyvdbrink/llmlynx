@@ -1,16 +1,21 @@
 // A selection identifies what the user chats with, as a prefixed string:
-//   "model:<ollama model>" | "agent:<agent id>" | "remote:<remote model>"
-// Conversations store the selection in their `model` column. Older rows hold a
-// plain model name, which is read as "model:<name>".
+//   "ollama:<model>" | "openai:<model>" | "openrouter:<model>" | "agent:<agent id>"
+// Conversations store the selection in their `model` column. Older rows hold
+// "model:<name>" (Ollama), "remote:<name>" (OpenAI) or a plain Ollama model
+// name; these are read as the matching new selection.
 
-export type SelectionKind = "model" | "agent" | "remote";
+import { DEFAULT_MODELS, PROVIDERS, type ProviderId } from "./providers";
 
-export const DEFAULT_SELECTION = "model:gpt-oss:20b";
+export type SelectionKind = ProviderId | "agent";
+
+export const DEFAULT_SELECTION = `ollama:${DEFAULT_MODELS.ollama}`;
 
 // Shown when the Ollama model list cannot be loaded.
 export const FALLBACK_MODELS = ["gpt-oss:20b", "gemma3:1b", "gemma3:12b", "mistral"];
 
-const KINDS: SelectionKind[] = ["model", "agent", "remote"];
+const KINDS: SelectionKind[] = [...PROVIDERS, "agent"];
+
+const LEGACY_KINDS: Record<string, SelectionKind> = { model: "ollama", remote: "openai" };
 
 export function toSelection(kind: SelectionKind, value: string): string {
   return `${kind}:${value}`;
@@ -19,7 +24,10 @@ export function toSelection(kind: SelectionKind, value: string): string {
 export function normalizeSelection(sel: string | null | undefined, fallback = DEFAULT_SELECTION): string {
   if (!sel) return fallback;
   if (KINDS.some((kind) => sel.startsWith(`${kind}:`))) return sel;
-  return toSelection("model", sel);
+  for (const [legacy, kind] of Object.entries(LEGACY_KINDS)) {
+    if (sel.startsWith(`${legacy}:`)) return toSelection(kind, sel.slice(legacy.length + 1));
+  }
+  return toSelection("ollama", sel);
 }
 
 export function parseSelection(sel: string | null | undefined): { kind: SelectionKind; value: string } {

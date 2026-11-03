@@ -6,10 +6,32 @@
   gap: 0;
 }
 
+/* On wide screens the sidebar sits beside the page instead of over it: the page
+   keeps its width free (the grip's when collapsed), and slides along with it.
+   --sidebar-space is registered so it can animate, and so fixed elements in the
+   page (the chat's background logo) can stay centered on the free space. */
+@property --sidebar-space {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
+@media (min-width: 861px) {
+  .page {
+    --sidebar-space: var(--sidebar-grip);
+    padding-left: var(--sidebar-space);
+    transition: --sidebar-space 0.38s cubic-bezier(.4,0,.2,1);
+  }
+  .page.sidebarOpen {
+    --sidebar-space: var(--sidebar-width);
+  }
+}
+
 .sidebarBackdrop {
   display: none;
 }
 
+/* Narrower screens have no room beside it: the sidebar opens over the page */
 @media (max-width: 860px) {
   .sidebarBackdrop {
     position: fixed;

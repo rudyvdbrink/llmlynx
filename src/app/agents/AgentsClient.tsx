@@ -20,7 +20,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
   const router = useRouter();
 
   // Sidebar state (auth ensured by server)
-  const { conversations } = useConversationList();
+  const conversationList = useConversationList();
   const [sidebarSelection, setSidebarSelection] = useState(DEFAULT_SELECTION);
   const goToChat = () => router.push("/chat");
 
@@ -99,7 +99,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
         setStatus({ kind: "error", msg: (err as Error)?.message || "Failed to load agent" });
         setAgentId(null);
       }
-    } else if (kind === "model") {
+    } else if (kind === "ollama") {
       setBaseModelPick(value);
       setAgentId(null); // new agent (Save)
     }
@@ -182,7 +182,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
   }
 
   // The base model dropdown doubles as the agent picker.
-  const selectValue = agentId ? toSelection("agent", agentId) : toSelection("model", baseModel);
+  const selectValue = agentId ? toSelection("agent", agentId) : toSelection("ollama", baseModel);
 
   return (
     <AppShell
@@ -191,7 +191,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
         model: sidebarSelection,
         onChangeModel: setSidebarSelection,
         modelDisabled: false,
-        conversations,
+        conversationList,
         activeConversationId: null,
         onNewConversation: goToChat,
         onOpenConversation: goToChat,
@@ -239,7 +239,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
               )}
               <optgroup label="Base models">
                 {availableModels.map((m) => (
-                  <option key={m} value={toSelection("model", m)}>
+                  <option key={m} value={toSelection("ollama", m)}>
                     {m}
                   </option>
                 ))}
