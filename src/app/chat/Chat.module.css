@@ -248,7 +248,8 @@
   100% { --math-fade-left: 28px; --math-fade-right: 0px; }
 }
 @supports (animation-timeline: scroll()) {
-  .bubble :global(.katex-display) {
+  .bubble :global(.katex-display),
+  .thinkingText :global(.katex-display) {
     animation: mathScrollFade linear both;
     animation-timeline: scroll(self inline);
     -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--math-fade-left), #000 calc(100% - var(--math-fade-right)), transparent);
@@ -465,8 +466,8 @@
   overflow: hidden;
 }
 
-/* The reasoning, as the model wrote it, scrolls inside a short area. Its
-   scrollbar is hidden unless the user scrolls (.scrolling). */
+/* The reasoning scrolls inside a short area. Its scrollbar is hidden unless
+   the user scrolls (.scrolling). */
 @property --thinking-thumb {
   syntax: "<color>";
   inherits: false;
@@ -479,14 +480,76 @@
   padding-bottom: 2px;
   font-size: 13.5px;
   line-height: 1.5;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   scrollbar-width: thin;
   scrollbar-color: var(--thinking-thumb) transparent;
   transition: --thinking-thumb 0.3s ease;
 }
-.thinkingText p { margin: 0 0 0.5em; }
-.thinkingText p:last-child { margin-bottom: 0; }
+
+/* Markdown in the reasoning (ReasoningText.tsx): compact, and as quiet as its text */
+.thinkingText p,
+.thinkingText ul,
+.thinkingText ol,
+.thinkingText pre,
+.thinkingText blockquote { margin: 0 0 0.5em; }
+.thinkingText > :last-child,
+.thinkingText li > :last-child { margin-bottom: 0; }
+.thinkingText :is(ul, ol) { padding-left: 1.5em; }
+.thinkingText li > p { margin-bottom: 0.25em; }
+.thinkingText :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0.6em 0 0.3em;
+  font-size: 1em;
+  font-weight: 600;
+}
+.thinkingText > :is(h1, h2, h3, h4, h5, h6):first-child { margin-top: 0; }
+.thinkingText strong { font-weight: 600; }
+.thinkingText code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+.thinkingText :not(pre) > code {
+  padding: 0.05em 0.35em;
+  border-radius: 4px;
+  background: var(--surface);
+}
+.thinkingText pre {
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--surface);
+  overflow-wrap: normal;
+}
+.thinkingText blockquote {
+  padding-left: 0.8em;
+  border-left: 2px solid var(--border);
+}
+.thinkingText hr {
+  margin: 0.6em 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+/* Math in the reasoning. KaTeX's classes are global. Wide display math, like
+   wide code, scrolls sideways instead of widening the area, fading at its edges
+   like equations in replies; these scrollbars show like the area's. */
+.thinkingText :global(.katex) { overflow-wrap: normal; }
+.thinkingText :global(.katex-display) {
+  margin: 0.25em 0;
+  padding: 0.2em 0 0.35em;
+  overflow-y: hidden;
+}
+.thinkingText :global(.katex-display),
+.thinkingText pre {
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--thinking-thumb) transparent;
+  transition: --thinking-thumb 0.3s ease;
+}
+.thinkingText.scrolling :global(.katex-display),
+.thinkingText.scrolling pre { --thinking-thumb: var(--scrollbar); }
+.thinkingText :global(.katex-display)::-webkit-scrollbar,
+.thinkingText pre::-webkit-scrollbar { height: 6px; }
+.thinkingText :global(.katex-display)::-webkit-scrollbar-thumb,
+.thinkingText pre::-webkit-scrollbar-thumb { background: var(--thinking-thumb); border-radius: 999px; }
 .thinkingText.scrolling { --thinking-thumb: var(--scrollbar); }
 .thinkingText::-webkit-scrollbar { width: 6px; }
 .thinkingText::-webkit-scrollbar-thumb { background: var(--thinking-thumb); border-radius: 999px; }

@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import styles from "../Chat.module.css";
 import { ChevronRightIcon } from "@/components/icons";
+import ReasoningText from "./ReasoningText";
 import type { ReplyStatus } from "@/lib/types";
 
 const LABELS: Record<ReplyStatus, string> = { loading: "Loading model…", thinking: "Thinking…" };
@@ -17,8 +18,8 @@ const SCROLLBAR_MS = 1000;
  * Once the reply starts (`status` "done"), the reasoning folds away behind a
  * "Show thinking" toggle.
  *
- * Reasoning is shown as plain text: models write "2*3" in it, which markdown
- * would turn into italics.
+ * Reasoning is rendered as markdown, prepared so that what models do not mean
+ * as formatting (such as "2*3") stays as written; see ReasoningText.tsx.
  */
 export default function Thinking({ text, status }: { text: string; status: ReplyStatus | "done" | null }) {
   const done = status === "done";
@@ -50,7 +51,11 @@ export default function Thinking({ text, status }: { text: string; status: Reply
       return;
     }
     following.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
-    // The scrollbar only shows while the user scrolls
+    showScrollbars();
+  }
+
+  // Scrollbars (the area's, and those of wide formulas in it) only show while the user scrolls
+  function showScrollbars() {
     setScrolling(true);
     clearTimeout(scrollTimer.current);
     scrollTimer.current = setTimeout(() => setScrolling(false), SCROLLBAR_MS);
@@ -81,13 +86,10 @@ export default function Thinking({ text, status }: { text: string; status: Reply
               ref={scrollRef}
               className={`${styles.thinkingText} ${scrolling ? styles.scrolling : ""}`}
               onScroll={onScroll}
+              // A wide formula scrolling sideways; scroll events do not bubble, but can be captured
+              onScrollCapture={(e) => e.target !== e.currentTarget && showScrollbars()}
             >
-              {text
-                .trim()
-                .split(/\n\s*\n/)
-                .map((paragraph, i) => (
-                  <p key={i}>{paragraph}</p>
-                ))}
+              <ReasoningText text={text} />
             </div>
           </div>
         </div>
