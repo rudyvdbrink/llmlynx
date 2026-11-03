@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import styles from "./Chat.module.css";
 import AppShell from "@/components/AppShell";
 import { DEFAULT_SELECTION } from "@/lib/selection";
@@ -10,7 +10,13 @@ import { useChat } from "./hooks/useChat";
 import MessageList from "./components/MessageList";
 import Composer from "./components/Composer";
 
-export default function ChatClientPage({ user }: { user: SessionUser }) {
+export default function ChatClientPage({
+  user,
+  initialConversationId,
+}: {
+  user: SessionUser;
+  initialConversationId: string | null;
+}) {
   // Selection can be "ollama:<name>", "openai:<name>", "openrouter:<name>" or "agent:<id>"
   const [selection, setSelection] = useState<string>(DEFAULT_SELECTION);
   // Bumped to remount the composer, which clears its draft.
@@ -34,6 +40,21 @@ export default function ChatClientPage({ user }: { user: SessionUser }) {
     ensureConversation,
     refreshConversations,
   });
+
+  // Opens the conversation picked in the sidebar on another page (/chat?conversation=<id>),
+  // and takes it out of the address, which does not follow the open conversation
+  useEffect(() => {
+    if (!initialConversationId) return;
+    let cancelled = false;
+    window.history.replaceState(null, "", "/chat");
+    openConversation(initialConversationId).then(
+      (msgs) => !cancelled && loadHistory(msgs),
+      () => {}
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [initialConversationId, openConversation, loadHistory]);
 
   function clearChat() {
     reset();
