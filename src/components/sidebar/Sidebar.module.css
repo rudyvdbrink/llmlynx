@@ -585,6 +585,11 @@
     background: transparent;
     border-right: none;          /* remove faint gray edge on mobile when collapsed */
     box-shadow: none;
+    /* The strip lies over the page's left edge: only its toggle takes taps */
+    pointer-events: none;
+  }
+  .sidebar.collapsed .sidebarToggle {
+    pointer-events: auto;
   }
   .sidebar.collapsed .sidebarContent {
     opacity: 0;
