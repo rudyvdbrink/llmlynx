@@ -23,6 +23,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
   const conversationList = useConversationList();
   const [sidebarSelection, setSidebarSelection] = useState(DEFAULT_SELECTION);
   const goToChat = () => router.push("/chat");
+  const openInChat = (id: string) => router.push(`/chat?conversation=${encodeURIComponent(id)}`);
 
   // Agent form state (UI)
   const availableModels = useLocalModels();
@@ -194,7 +195,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
         conversationList,
         activeConversationId: null,
         onNewConversation: goToChat,
-        onOpenConversation: goToChat,
+        onOpenConversation: openInChat,
         footerNavLabel: "Back to chat",
         footerNavHref: "/chat",
       }}

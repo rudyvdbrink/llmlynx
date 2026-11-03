@@ -28,6 +28,7 @@ export default function AccountClient({
   const conversationList = useConversationList();
   const [sidebarSelection, setSidebarSelection] = useState(DEFAULT_SELECTION);
   const goToChat = () => router.push("/chat");
+  const openInChat = (id: string) => router.push(`/chat?conversation=${encodeURIComponent(id)}`);
 
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -46,7 +47,7 @@ export default function AccountClient({
         conversationList,
         activeConversationId: null,
         onNewConversation: goToChat,
-        onOpenConversation: goToChat,
+        onOpenConversation: openInChat,
         footerNavLabel: "Back to chat",
         footerNavHref: "/chat",
       }}
