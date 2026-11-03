@@ -1,0 +1,74 @@
+# CI/CD: every push to main rebuilds the image natively on the production
+# server (self-hosted runner), migrates the database and restarts the app.
+#
+# The runner deploys from the server's checkout (DEPLOY_DIR), which also holds
+# the host state the stack bind-mounts (data/, logs/) and the .env files. All
+# of these are gitignored, so the checkout below leaves them alone, but it
+# discards any uncommitted edit to a tracked file: nobody develops on the
+# server.
+#
+# A failed build or migration stops the run before the restart, so the running
+# app keeps serving. Never add a pull_request trigger: it would run PR code on
+# the server.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+# DEPLOY_DIR (the checkout's absolute path) comes from the runner's own .env
+# file on the server, so no server path is in the repo.
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Sync deploy checkout to origin/main
+        run: |
+          test -n "$DEPLOY_DIR" || { echo "DEPLOY_DIR is not set in the runner's .env — see README (Production deployment)"; exit 1; }
+          test -d "$DEPLOY_DIR" || { echo "Deploy checkout $DEPLOY_DIR missing — see README (Production deployment)"; exit 1; }
+          echo "COMPOSE_FILE=$DEPLOY_DIR/docker-compose.yml" >> "$GITHUB_ENV"
+          git -C "$DEPLOY_DIR" fetch origin main
+          git -C "$DEPLOY_DIR" checkout --force -B main origin/main
+          git -C "$DEPLOY_DIR" log -1 --oneline
+
+      - name: Build image
+        run: docker compose build
+
+      - name: Back up database
+        run: |
+          db="$DEPLOY_DIR/data/llmlynx.db"
+          [ -f "$db" ] || { echo "No database yet, nothing to back up"; exit 0; }
+          mkdir -p "$DEPLOY_DIR/data/backups"
+          backup="$DEPLOY_DIR/data/backups/llmlynx-$(date +%Y%m%d-%H%M%S)-${GITHUB_SHA::7}.db"
+          # Online backup: consistent even while the app is writing.
+          sqlite3 "$db" ".backup '$backup'"
+          echo "Backed up to $backup"
+          # Keep the 20 newest.
+          ls -1t "$DEPLOY_DIR"/data/backups/llmlynx-*.db | tail -n +21 | xargs -r rm --
+
+      - name: Migrate database
+        run: docker compose run --rm --no-deps web node_modules/.bin/prisma migrate deploy
+
+      - name: Restart app
+        run: docker compose up -d --remove-orphans
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' llmlynx-web-1 2>/dev/null || echo starting)
+            [ "$status" = healthy ] && exit 0
+            sleep 5
+          done
+          echo "App container did not become healthy in time" >&2
+          docker compose ps
+          docker logs --tail 50 llmlynx-web-1 || true
+          exit 1
+
+      - name: Prune dangling images
+        run: docker image prune -f
