@@ -148,3 +148,6 @@ to_do*
 /prisma/dev.db-journal
 *.db
 scrap/
+
+# Production state on the deploy server (see README, Production deployment)
+/data/

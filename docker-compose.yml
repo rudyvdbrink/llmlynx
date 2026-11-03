@@ -1,0 +1,38 @@
+# Production stack: the Next.js app in one container.
+#
+# Host networking, because Ollama on the server listens on 127.0.0.1 only, and
+# users' own Ollama servers on the LAN are reached the same way as bare metal.
+# The app listens on WEB_PORT (default 3000) on every interface.
+#
+# Host state is bind-mounted, so the SQLite database stays a plain file on the
+# host (./data/llmlynx.db) that backups can copy. The image runs as uid 1000,
+# which owns these directories on the server. Secrets come from the gitignored
+# .env and .env.local at runtime and are never baked into the image.
+name: llmlynx
+
+services:
+  web:
+    image: llmlynx-web
+    build: .
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.local
+        required: false
+    environment:
+      # Override the dev-machine values from the env files.
+      DATABASE_URL: file:/app/data/llmlynx.db
+      AUTH_LOG_DIR: /app/logs
+      PORT: ${WEB_PORT:-3000}
+    volumes:
+      - ${DATA_DIR:-./data}:/app/data
+      - ${LOGS_DIR:-./logs}:/app/logs
+    network_mode: host
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + process.env.PORT + '/api/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    init: true
+    restart: unless-stopped

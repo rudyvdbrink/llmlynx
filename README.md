@@ -105,6 +105,67 @@ Other scripts: `npm run lint`, `npm run typecheck`.
 
 ---
 
+## Production deployment
+
+The production server deploys itself: every push to `main` runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) on a self-hosted runner on the server. The workflow:
+
+1. Resets the server's checkout to `origin/main`.
+2. Builds the Docker image on the server.
+3. Backs up the database to `data/backups/` (keeps the 20 newest).
+4. Applies new migrations.
+5. Restarts the app.
+6. Waits until `/api/health` answers.
+
+If the build or migration fails, the run stops and the running app keeps serving. If the new app does not become healthy, the run fails and shows its logs. Deploys can also be started by hand from the repo's Actions tab (**Run workflow**).
+
+The server's checkout is only for deploying: every deploy discards edits to tracked files there. Its state is gitignored, so deploys leave it alone:
+
+| Path | Contents |
+|---|---|
+| `data/llmlynx.db` | SQLite database |
+| `data/backups/` | Database backups taken before each deploy |
+| `logs/` | Auth log |
+| `.env`, `.env.local` | Settings and secrets (see `.env.example`). Read at runtime, never built into the image |
+
+The container uses the host network, so it reaches an Ollama server on the same machine at `http://localhost:11434`. It listens on port 3000, or on `WEB_PORT` if it is set in `.env`. The compose file overrides `DATABASE_URL` and `AUTH_LOG_DIR` from the env files with the paths above.
+
+Useful commands in the checkout: `docker compose ps`, `docker compose logs -f web`, `docker compose restart web`.
+
+### One-time server setup
+
+1. Install Docker with the compose plugin and `sqlite3`. Add the user to the `docker` group.
+2. Clone the repo to a fixed directory on the server. Create `.env` and/or `.env.local`, and the `data/` and `logs/` directories, owned by uid 1000 (the user the container runs as).
+3. Register a runner: on GitHub, open the repo → Settings → Actions → Runners → New self-hosted runner (Linux, ARM64). Run the commands it shows in a directory of its own, outside the clone.
+4. Tell the runner where the clone is: add `DEPLOY_DIR=<absolute path of the clone>` to the `.env` file in the runner's directory. The workflow reads it from there, so the path is not in the repo. Then install the runner as a service: `sudo ./svc.sh install $USER && sudo ./svc.sh start`.
+5. Make the service restart itself and wait for a correct clock. GitHub rejects a runner whose clock is wrong, and the Pi has no battery-backed clock. Run `sudo systemctl edit actions.runner.<name>.service` (the name is in `ls /etc/systemd/system | grep actions`) and add:
+
+   ```ini
+   [Unit]
+   StartLimitIntervalSec=0
+
+   [Service]
+   # runsvc.sh exits 0 even on fatal errors, so on-failure would never restart it.
+   Restart=always
+   RestartSec=60
+   ExecStartPre=/bin/sh -c 'until [ "$(timedatectl show -p NTPSynchronized --value)" = yes ]; do sleep 5; done'
+   TimeoutStartSec=infinity
+   ```
+
+6. Start the first deploy from the Actions tab, or push to `main`.
+
+### Rolling back
+
+To go back to an earlier version, reset the checkout and rebuild. The build is fast because Docker caches its layers:
+
+```bash
+git reset --hard <commit>
+docker compose build && docker compose up -d
+```
+
+If a migration has to be undone as well, stop the app (`docker compose stop web`), copy a backup from `data/backups/` over `data/llmlynx.db`, and start it again. The next push to `main` deploys `main` again.
+
+---
+
 ## Security
 
 - **Passwords** and **recovery codes** are stored as salted bcrypt hashes. A recovery code is shown once at signup and cannot be retrieved afterwards.
