@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { jsonError, optionalString, readJsonObject } from "@/server/http";
+import { deleteUnusedSetups } from "@/server/chat/setup";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -21,9 +22,11 @@ export async function GET(_req: Request, ctx: Ctx) {
       pinnedAt: true,
       createdAt: true,
       updatedAt: true,
+      // The chat view shows the user's messages and the replies, not tool steps
       messages: {
-        orderBy: { createdAt: "asc" },
-        select: { id: true, role: true, content: true, createdAt: true },
+        where: { role: { in: ["user", "assistant"] } },
+        orderBy: { position: "asc" },
+        select: { id: true, role: true, content: true, reasoning: true, createdAt: true },
       },
     },
   });
@@ -73,6 +76,8 @@ export async function DELETE(_req: Request, ctx: Ctx) {
 
   const { count } = await prisma.conversation.deleteMany({ where: { id, userId: user.id } });
   if (count === 0) return jsonError("Not found", 404);
+  // Drop the system prompts and options only its replies used
+  await deleteUnusedSetups(user.id);
 
   return new NextResponse(null, { status: 204 });
 }

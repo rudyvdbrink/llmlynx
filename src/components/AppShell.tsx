@@ -3,9 +3,12 @@
 import { useEffect, useState } from "react";
 import styles from "./AppShell.module.css";
 import Sidebar, { type SidebarProps } from "./sidebar/Sidebar";
-import { isNarrowViewport } from "@/lib/viewport";
+import { isSidebarOverlay } from "@/lib/viewport";
 
-/** Page frame with the collapsible sidebar. On small screens a backdrop closes it on tap. */
+/**
+ * Page frame with the collapsible sidebar. On wide screens the page makes room
+ * for it; on small screens it opens over the page, and a backdrop closes it on tap.
+ */
 export default function AppShell({
   sidebar,
   children,
@@ -19,11 +22,11 @@ export default function AppShell({
   // renders the sidebar expanded and this corrects it once after hydration.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (isNarrowViewport()) setCollapsed(true);
+    if (isSidebarOverlay()) setCollapsed(true);
   }, []);
 
   return (
-    <main className={styles.page}>
+    <main className={`${styles.page} ${collapsed ? "" : styles.sidebarOpen}`}>
       {!collapsed && (
         <button
           type="button"

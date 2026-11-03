@@ -4,17 +4,20 @@ import { memo } from "react";
 import styles from "../Chat.module.css";
 import MarkdownMessage from "./MarkdownMessage";
 import CopyButton from "./CopyButton";
+import Thinking from "./Thinking";
 import { useAutoScroll } from "../hooks/useAutoScroll";
-import type { DisplayMessage } from "@/lib/types";
+import type { DisplayMessage, ReplyStatus } from "@/lib/types";
 
 const errorNote = (error: string) => `\n\n*(Error: ${error})*`;
 
 function MessageList({
   messages,
   isStreaming,
+  replyStatus,
 }: {
   messages: DisplayMessage[];
   isStreaming: boolean;
+  replyStatus: ReplyStatus | null;
 }) {
   const endRef = useAutoScroll(messages, isStreaming);
 
@@ -22,16 +25,25 @@ function MessageList({
     <section className={styles.messages} aria-live="polite" aria-label="Chat messages">
       {messages.map((msg, idx) => {
         const isUser = msg.role === "user";
+        // The reply that is still streaming
+        const isReply = !isUser && isStreaming && idx === messages.length - 1;
+        // Until its text starts, the reply shows what the model is doing instead
+        const waiting = isReply && !msg.content && !msg.error;
         // Hide the copy button on the reply that is still streaming
-        const showCopy = !isUser && (!isStreaming || idx !== messages.length - 1);
+        const showCopy = !isUser && !isReply;
         return (
           <div key={idx} className={`${styles.messageRow} ${isUser ? styles.user : styles.bot}`}>
-            <div className={styles.bubble}>
-              <MarkdownMessage content={msg.error ? msg.content + errorNote(msg.error) : msg.content} />
-              {showCopy && (
-                <CopyButton className={styles.messageCopyBtn} label="Copy response" getText={() => msg.content} />
-              )}
-            </div>
+            {(waiting || msg.reasoning) && (
+              <Thinking text={msg.reasoning ?? ""} status={waiting ? replyStatus : "done"} />
+            )}
+            {!waiting && (
+              <div className={styles.bubble}>
+                <MarkdownMessage content={msg.error ? msg.content + errorNote(msg.error) : msg.content} />
+                {showCopy && (
+                  <CopyButton className={styles.messageCopyBtn} label="Copy response" getText={() => msg.content} />
+                )}
+              </div>
+            )}
           </div>
         );
       })}

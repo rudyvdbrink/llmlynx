@@ -3,7 +3,9 @@
 import { useCallback, useRef, useState } from "react";
 import { readNdjson } from "@/lib/ndjson";
 import { parseSelection } from "@/lib/selection";
-import type { ChatMessage, DisplayMessage } from "@/lib/types";
+import type { DisplayMessage, ReplyStatus } from "@/lib/types";
+
+const isReplyStatus = (value: unknown): value is ReplyStatus => value === "loading" || value === "thinking";
 
 export function useChat({
   selection,
@@ -16,6 +18,8 @@ export function useChat({
 }) {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  // What the model is doing until its reply starts; null until the server says
+  const [replyStatus, setReplyStatus] = useState<ReplyStatus | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Patch the assistant reply that is being streamed (always the last message).
@@ -32,13 +36,9 @@ export function useChat({
       const content = text.trim();
       if (!content || isStreaming) return;
 
-      // Earlier turns plus the new message. Replies that produced no text are left out.
-      const history: ChatMessage[] = [...messages, { role: "user" as const, content }]
-        .filter((m) => m.content.length > 0)
-        .map(({ role, content }) => ({ role, content }));
-
       setMessages((prev) => [...prev, { role: "user", content }, { role: "assistant", content: "" }]);
       setIsStreaming(true);
+      setReplyStatus(null);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -50,8 +50,9 @@ export function useChat({
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          // Only the new message: the server reads the rest of the conversation from the database
           body: JSON.stringify({
-            messages: history,
+            message: content,
             conversationId,
             ...(kind === "agent" ? { agentId: value } : { model: selection }),
           }),
@@ -62,8 +63,15 @@ export function useChat({
         }
 
         let reply = "";
+        let reasoning = "";
         await readNdjson(res.body, (obj) => {
-          const line = obj as { message?: { content?: unknown }; error?: unknown };
+          const line = obj as { message?: { content?: unknown; thinking?: unknown }; status?: unknown; error?: unknown };
+          if (isReplyStatus(line?.status)) setReplyStatus(line.status);
+          const thought = line?.message?.thinking;
+          if (typeof thought === "string" && thought) {
+            reasoning += thought;
+            updateReply({ reasoning });
+          }
           const delta = line?.message?.content;
           if (typeof delta === "string" && delta) {
             reply += delta;
@@ -81,14 +89,14 @@ export function useChat({
         abortRef.current = null;
       }
     },
-    [isStreaming, messages, selection, ensureConversation, refreshConversations, updateReply]
+    [isStreaming, selection, ensureConversation, refreshConversations, updateReply]
   );
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
-  const loadHistory = useCallback((msgs: ChatMessage[]) => {
+  const loadHistory = useCallback((msgs: DisplayMessage[]) => {
     setMessages(msgs);
   }, []);
 
@@ -97,5 +105,5 @@ export function useChat({
     setMessages([]);
   }, []);
 
-  return { messages, isStreaming, send, cancel, loadHistory, reset };
+  return { messages, isStreaming, replyStatus, send, cancel, loadHistory, reset };
 }

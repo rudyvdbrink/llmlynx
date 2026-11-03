@@ -19,6 +19,7 @@ model User {
   conversations    Conversation[]
   agents           Agent[]
   providerSettings ProviderSetting[]
+  requestSetups    RequestSetup[]
 }
 
 model Session {
@@ -36,6 +37,7 @@ enum MessageRole {
   user
   assistant
   system
+  tool // the result of a tool call
 }
 
 model Conversation {
@@ -52,15 +54,50 @@ model Conversation {
   @@index([userId, updatedAt])
 }
 
+// One step of a conversation, shaped like the messages model APIs take, so the
+// whole trace (reasoning, tool calls and their results) can be rebuilt or replayed.
+// A reply that uses tools is several steps: an assistant message with toolCalls,
+// a tool message per call, then the assistant message that answers.
 model Message {
   id             String        @id @default(uuid())
   conversationId String
   conversation   Conversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  position       Int           // order in the conversation, from 0
   role           MessageRole
-  content        String
+  content        String        // the text; "" for an assistant step that only calls tools
+  reasoning      String?       // assistant: the model's reasoning (thinking) before its reply
+  toolCalls      Json?         // assistant: [{ id, name, arguments }], the tools the model called
+  toolCallId     String?       // tool: the toolCalls[].id this is the result of
+  toolName       String?       // tool: the tool that produced it
+  model          String?       // assistant: "<provider>:<model>" that wrote it, see lib/selection.ts
+  setupId        String?       // assistant: what the model was given besides the conversation
+  setup          RequestSetup? @relation(fields: [setupId], references: [id])
+  // Anything else about the step, such as token usage, or data a provider needs
+  // back to continue the conversation (for example signed reasoning).
+  metadata       Json?
   createdAt      DateTime      @default(now())
 
-  @@index([conversationId, createdAt])
+  @@index([conversationId, position])
+  @@index([setupId])
+}
+
+// What a model was given besides the conversation: the system prompt, the
+// generation options and the tools it could call. Each distinct combination is
+// stored once per user (found by `hash`) and shared by every reply made with
+// it, so a long system prompt is not repeated per reply. Replies stored before
+// these existed have no setup.
+model RequestSetup {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hash         String    // SHA-256 of the fields below, see server/chat/setup.ts
+  systemPrompt String?   // null: the model got none (OpenAI and OpenRouter)
+  options      Json?     // generation options, such as an agent's settings
+  tools        Json?     // tool definitions the model could call
+  createdAt    DateTime  @default(now())
+  messages     Message[]
+
+  @@unique([userId, hash])
 }
 
 // Custom agent configurations

@@ -16,6 +16,10 @@
 
   --scrollbar: #2a3446;
 
+  /* Sidebar on wide screens: its width, and the grip left in view when collapsed */
+  --sidebar-width: 304px;
+  --sidebar-grip: 32px;
+
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
   /* Bubbles (can be used in multiple pages if desired) */

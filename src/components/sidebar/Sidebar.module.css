@@ -1,6 +1,6 @@
 /* Sidebar container */
 .sidebar {
-  --collapsed-width: 32px; /* desktop collapsed grip */
+  --collapsed-width: var(--sidebar-grip); /* desktop collapsed grip */
   position: fixed;
   top: 0;
   left: 0;
@@ -571,7 +571,7 @@
 
 @media (min-width: 861px) {
   .sidebar {
-    width: 304px;
+    width: var(--sidebar-width);
   }
 }
 

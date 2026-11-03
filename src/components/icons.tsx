@@ -22,6 +22,14 @@ function Icon({ size = 16, className, children }: IconProps & { children: React.
   );
 }
 
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m9 18 6-6-6-6" />
+    </Icon>
+  );
+}
+
 export function PinIcon(props: IconProps) {
   return (
     <Icon {...props}>

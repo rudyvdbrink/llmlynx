@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { useConversationList } from "@/hooks/useConversationList";
 import { normalizeSelection } from "@/lib/selection";
-import type { ChatMessage, ConversationWithMessages } from "@/lib/types";
+import type { ConversationWithMessages, DisplayMessage } from "@/lib/types";
 
 /** Conversation list plus the active conversation and its CRUD actions. */
 export function useConversations(selection: string, setSelection: (val: string) => void) {
@@ -29,14 +29,14 @@ export function useConversations(selection: string, setSelection: (val: string) 
 
   /** Makes `id` the active conversation and returns its messages. */
   const openConversation = useCallback(
-    async (id: string): Promise<ChatMessage[]> => {
+    async (id: string): Promise<DisplayMessage[]> => {
       const res = await fetch(`/api/conversations/${id}`);
       if (!res.ok) throw new Error("Failed to open conversation");
       const { conversation } = (await res.json()) as { conversation: ConversationWithMessages };
 
       setActiveConversationId(conversation.id);
       setSelection(normalizeSelection(conversation.model));
-      return conversation.messages.map((m) => ({ role: m.role, content: m.content }));
+      return conversation.messages.map((m) => ({ role: m.role, content: m.content, reasoning: m.reasoning ?? undefined }));
     },
     [setSelection]
   );

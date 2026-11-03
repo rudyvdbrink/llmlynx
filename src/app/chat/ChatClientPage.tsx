@@ -29,7 +29,7 @@ export default function ChatClientPage({ user }: { user: SessionUser }) {
   } = useConversations(selection, setSelection);
 
   // Chat state (messages + streaming)
-  const { messages, isStreaming, send, cancel, loadHistory, reset } = useChat({
+  const { messages, isStreaming, replyStatus, send, cancel, loadHistory, reset } = useChat({
     selection,
     ensureConversation,
     refreshConversations,
@@ -77,8 +77,10 @@ export default function ChatClientPage({ user }: { user: SessionUser }) {
         footerNavHref: "/agents",
       }}
     >
+      {/* Inside the page, so it stays centered on the space beside the sidebar */}
+      <div className={styles.fixedCenterLogo} aria-hidden="true" />
       <div className={styles.chatArea}>
-        <MessageList messages={messages} isStreaming={isStreaming} />
+        <MessageList messages={messages} isStreaming={isStreaming} replyStatus={replyStatus} />
         <div className={styles.composerDock}>
           <Composer key={composerKey} isStreaming={isStreaming} onSend={send} onCancel={cancel} />
         </div>

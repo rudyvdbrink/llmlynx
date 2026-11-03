@@ -3,17 +3,19 @@ import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { getDefaultSystemPrompt } from "@/server/config";
 import { getApiConfig, getOllamaUrl } from "@/server/providers";
-import { createAssistantReply, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
+import { createAssistantReply, loadHistory, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
 import { streamOllamaChat } from "@/server/chat/ollama";
 import { streamOpenAIChat } from "@/server/chat/openai";
+import type { RequestSetupInput } from "@/server/chat/setup";
 import { normalizeSelection, parseSelection, toSelection } from "@/lib/selection";
 import { PROVIDER_LABELS, type KeyProviderId } from "@/lib/providers";
-import type { ChatMessage, Role } from "@/lib/types";
 
 export const runtime = "nodejs";
 
 // POST /api/chat
-// body: { messages: ChatMessage[], model?: string, agentId?: string, conversationId?: string }
+// body: { message: string, model?: string, agentId?: string, conversationId?: string }
+// `message` is the user's new message; the rest of the conversation is read from
+// the database, so the model always gets the conversation as stored.
 // `model` is a selection ("ollama:<name>" | "openai:<name>" | "openrouter:<name>")
 // or a plain Ollama model name. Each user's own Ollama server and API keys are used.
 // Responds with an NDJSON stream and the conversation id in X-Conversation-Id.
@@ -21,16 +23,6 @@ export const runtime = "nodejs";
 type Target =
   | { kind: "ollama"; modelKey: string; model: string; baseUrl: string; systemPrompt: string; options?: unknown }
   | { kind: KeyProviderId; modelKey: string; model: string };
-
-const ROLES: Role[] = ["user", "assistant", "system"];
-
-function parseMessages(input: unknown): ChatMessage[] | null {
-  if (!Array.isArray(input)) return null;
-  const valid = input.every(
-    (m) => m && typeof m === "object" && ROLES.includes(m.role) && typeof m.content === "string"
-  );
-  return valid ? input.map((m) => ({ role: m.role, content: m.content })) : null;
-}
 
 /** Works out which backend and model to use. Returns null if the agent is not the user's. */
 async function resolveTarget(userId: string, model: unknown, agentId: unknown): Promise<Target | null> {
@@ -72,8 +64,8 @@ export async function POST(req: NextRequest) {
     return new Response("Invalid JSON body", { status: 400 });
   }
 
-  const messages = parseMessages(body?.messages);
-  if (!body || !messages) return new Response("messages array required", { status: 400 });
+  const message = typeof body?.message === "string" ? body.message.trim() : "";
+  if (!body || !message) return new Response("message required", { status: 400 });
 
   const target = await resolveTarget(user.id, body.model, body.agentId);
   if (!target) return new Response("Agent not found", { status: 404 });
@@ -91,19 +83,26 @@ export async function POST(req: NextRequest) {
   );
   if (!conversationId) return new Response("Conversation not found", { status: 404 });
 
-  // Save the just-submitted user message (the last "user" message)
-  const lastUser = messages.findLast((m) => m.role === "user");
-  if (lastUser) await saveUserMessage(conversationId, lastUser.content, target.modelKey);
-
-  // The system prompt always comes from the server, never from the client.
-  // OpenAI and OpenRouter models get no system prompt at all.
-  const history = messages.filter((m) => m.role !== "system");
-  const reply = createAssistantReply(conversationId, target.modelKey);
+  await saveUserMessage(conversationId, message, target.modelKey);
+  // The conversation so far, ending with the new message. Like the system
+  // prompt, it comes from the server, never from the client.
+  const history = await loadHistory(conversationId);
+  // Everything the model gets besides the conversation, which is stored with the reply
+  const setup: RequestSetupInput =
+    target.kind === "ollama" ? { systemPrompt: target.systemPrompt, options: target.options } : {};
+  const reply = createAssistantReply({
+    conversationId,
+    userId: user.id,
+    modelKey: target.modelKey,
+    model: toSelection(target.kind, target.model),
+    setup,
+  });
 
   const stream =
     target.kind !== "ollama"
+      // OpenAI and OpenRouter models get no system prompt at all
       ? streamOpenAIChat({ model: target.model, messages: history }, apiConfig!, reply)
-      : await streamOllamaChat(
+      : streamOllamaChat(
           {
             baseUrl: target.baseUrl,
             model: target.model,
@@ -112,7 +111,6 @@ export async function POST(req: NextRequest) {
           },
           reply
         );
-  if (stream instanceof Response) return stream;
 
   return new Response(stream, {
     headers: {
