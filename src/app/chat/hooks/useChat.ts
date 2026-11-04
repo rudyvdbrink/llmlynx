@@ -12,6 +12,12 @@ const isReplyStatus = (value: unknown): value is ReplyStatus => value === "loadi
 const isToolLine = (value: unknown): value is Partial<ToolStep> & { id: string } =>
   !!value && typeof value === "object" && typeof (value as ToolStep).id === "string";
 
+// Before calling a tool, models such as qwen3.5 may say what they are about to
+// do, in one short line ("Let me look that up."). Text that goes on past a line
+// break, or is longer than that, is taken for the answer.
+const PREAMBLE_MAX = 300;
+const looksLikeAnswer = (text: string) => /\S\s*\n\s*\S/.test(text) || text.trim().length > PREAMBLE_MAX;
+
 export function useChat({
   selection,
   ensureConversation,
@@ -25,7 +31,7 @@ export function useChat({
   const [isStreaming, setIsStreaming] = useState(false);
   // What the model is doing until its reply starts; null until the server says
   const [replyStatus, setReplyStatus] = useState<ReplyStatus | null>(null);
-  // True once the reply's text streams in, and again false while the model uses a tool
+  // True once the reply's answer shows, and again false while the model uses a tool
   const [answering, setAnswering] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -51,6 +57,13 @@ export function useChat({
       const controller = new AbortController();
       abortRef.current = controller;
 
+      // The text of the current step: the answer, unless a tool call follows it
+      let reply = "";
+      // Whether that text shows as the answer yet. While the model can call
+      // tools, it is held back until it looks like an answer or the reply ends:
+      // a model only says it calls a tool after the text before the call.
+      let shown = false;
+
       try {
         const conversationId = await ensureConversation();
         const { kind, value } = parseSelection(selection);
@@ -70,8 +83,7 @@ export function useChat({
           throw new Error((await res.text().catch(() => "")) || `Request failed (status ${res.status})`);
         }
 
-        // The text of the current step: the answer, unless a tool call follows it
-        let reply = "";
+        const mayCallTools = res.headers.get("X-Tools") === "1";
         // The reasoning and tool calls so far, in order
         let trace: TraceItem[] = [];
         await readNdjson(res.body, (obj) => {
@@ -86,6 +98,7 @@ export function useChat({
             // Text written before a tool call is not the answer: it moves into the trace
             trace = upsertToolStep(addReasoning(trace, reply, true), line.tool);
             reply = "";
+            shown = false;
             setAnswering(false);
             updateReply({ trace, content: reply });
           }
@@ -97,17 +110,22 @@ export function useChat({
           const delta = line?.message?.content;
           if (typeof delta === "string" && delta) {
             reply += delta;
-            setAnswering(true);
-            updateReply({ content: reply });
+            if (!shown && reply.trim() && (!mayCallTools || looksLikeAnswer(reply))) {
+              shown = true;
+              setAnswering(true);
+            }
+            if (shown) updateReply({ content: reply });
           }
           // Ollama and the OpenAI-compatible providers report a failed chat as an { error } line.
-          if (typeof line?.error === "string" && line.error) updateReply({ error: line.error });
+          if (typeof line?.error === "string" && line.error) updateReply({ content: reply, error: line.error });
         });
 
         refreshConversations();
       } catch (err) {
         if ((err as Error)?.name !== "AbortError") updateReply({ error: (err as Error)?.message || "Stream error" });
       } finally {
+        // Text still held back is the answer: no tool call followed it
+        if (!shown && reply) updateReply({ content: reply });
         setIsStreaming(false);
         abortRef.current = null;
       }

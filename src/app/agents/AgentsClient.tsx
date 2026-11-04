@@ -19,8 +19,8 @@ import { DEFAULT_SELECTION, parseSelection, toSelection } from "@/lib/selection"
 import type { AgentSummary, SessionUser } from "@/lib/types";
 import chatStyles from "../chat/Chat.module.css";
 import styles from "./Agents.module.css";
-import { OPTION_FIELDS, parseOptionValue, type OptionField } from "./optionFields";
-import { useToolAvailability } from "./useToolAvailability";
+import { contextStops, DEFAULT_CONTEXT_MAX, OPTION_FIELDS, parseOptionValue, type OptionField } from "./optionFields";
+import { useBaseModelInfo } from "./useBaseModelInfo";
 import { ToolStepIcon } from "../chat/components/ToolLine";
 
 const DEFAULT_BASE_MODEL = parseSelection(DEFAULT_SELECTION).value;
@@ -62,7 +62,9 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
       ? availableModels[0]
       : baseModelPick;
 
-  const toolAvailability = useToolAvailability(baseModel);
+  const baseModelInfo = useBaseModelInfo(baseModel);
+  const toolAvailability = baseModelInfo?.tools ?? null;
+  const contextLength = baseModelInfo?.contextLength ?? null;
 
   function toggleTool(name: AgentToolName, on: boolean) {
     setTools((prev) => AGENT_TOOLS.filter((t) => (t === name ? on : prev.includes(t))));
@@ -87,6 +89,24 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
             </option>
           ))}
         </select>
+      );
+    }
+    if (field.contextSlider) {
+      const stops = contextStops(contextLength ?? DEFAULT_CONTEXT_MAX);
+      const value = opts[field.key];
+      // A typed value between two stops shows at the lower one
+      const index = Math.max(0, stops.filter((s) => s <= value).length - 1);
+      return (
+        <input
+          type="range"
+          min={0}
+          max={stops.length - 1}
+          step={1}
+          value={index}
+          aria-valuetext={String(value)}
+          onChange={(e) => setOpt(field.key, stops[Number(e.target.value)])}
+          disabled={saving}
+        />
       );
     }
     if (field.slider) {
@@ -406,6 +426,11 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
                     </div>
                   )}
                 </div>
+                {field.contextSlider && contextLength !== null && opts[field.key] > contextLength && (
+                  <span className={styles.optionHint}>
+                    {baseModel} supports up to {contextLength} tokens, so Ollama uses {contextLength}.
+                  </span>
+                )}
               </div>
             ))}
           </div>

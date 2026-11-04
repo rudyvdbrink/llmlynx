@@ -250,7 +250,8 @@
   cursor: default;
 }
 
-.toolHint {
+.toolHint,
+.optionHint {
   margin: 0;
   font-size: 13px;
   color: #e0a458;

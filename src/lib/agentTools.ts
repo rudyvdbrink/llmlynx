@@ -67,5 +67,5 @@ export function validateMaxToolCalls(input: unknown): { ok: true; value: number 
   return { ok: true, value: input };
 }
 
-/** Which of its tools an agent can use with its base model, as returned by GET /api/tools. */
+/** Which of its tools an agent can use with its base model, as returned by GET /api/agents/base-model. */
 export type ToolAvailability = { name: AgentToolName; available: boolean; reason?: string };

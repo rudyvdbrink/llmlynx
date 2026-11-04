@@ -22,6 +22,7 @@ export const runtime = "nodejs";
 // `model` is a selection ("ollama:<name>" | "openai:<name>" | "openrouter:<name>")
 // or a plain Ollama model name. Each user's own Ollama server and API keys are used.
 // Responds with an NDJSON stream and the conversation id in X-Conversation-Id.
+// X-Tools is "1" when the model can call tools.
 
 type Target =
   | {
@@ -149,6 +150,7 @@ export async function POST(req: NextRequest) {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       "X-Conversation-Id": conversationId,
+      ...(tools.length ? { "X-Tools": "1" } : {}),
     },
   });
 }

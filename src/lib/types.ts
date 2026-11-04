@@ -1,6 +1,6 @@
 // Types shared by the client and the API routes.
 
-import type { ToolIcon } from "./agentTools";
+import type { ToolAvailability, ToolIcon } from "./agentTools";
 
 export type Role = "user" | "assistant" | "system";
 
@@ -52,4 +52,10 @@ export type AgentSummary = {
   systemPrompt?: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+// What an agent can have with its base model, as GET /api/agents/base-model returns it.
+export type BaseModelInfo = {
+  tools: ToolAvailability[];
+  contextLength: number | null; // the longest context window the model supports; null when unknown
 };

@@ -2,8 +2,8 @@
 // models or OpenAI / OpenRouter models get tools later, it changes here.
 
 import { validateAgentTools, type ToolAvailability } from "@/lib/agentTools";
+import { getOllamaModelInfo } from "@/server/chat/models";
 import { getToolServer } from "./config";
-import { getOllamaCapabilities } from "./capabilities";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./definitions";
 
 export type ToolRequest = {
@@ -31,13 +31,15 @@ export async function toolsFor({ agent, ollama }: ToolRequest): Promise<ToolDefi
   if (!agent || !ollama) return [];
   const checked = validateAgentTools(agent.tools);
   if (!checked.ok || checked.value.length === 0) return [];
-  const capabilities = await getOllamaCapabilities(ollama.baseUrl, ollama.model);
+  const capabilities = (await getOllamaModelInfo(ollama.baseUrl, ollama.model))?.capabilities ?? null;
   return TOOL_DEFINITIONS.filter((def) => checked.value.includes(def.name) && !unavailableReason(def, capabilities));
 }
 
-/** For the agents page: which tools an agent on this Ollama model could use, and why not. */
-export async function toolAvailability(baseUrl: string, model: string): Promise<ToolAvailability[]> {
-  const capabilities = await getOllamaCapabilities(baseUrl, model);
+/**
+ * For the agents page: which tools an agent could use on an Ollama model
+ * with `capabilities` (null: unknown), and why not.
+ */
+export function toolAvailability(capabilities: string[] | null): ToolAvailability[] {
   return TOOL_DEFINITIONS.map((def) => {
     const reason = unavailableReason(def, capabilities);
     return reason ? { name: def.name, available: false, reason } : { name: def.name, available: true };
