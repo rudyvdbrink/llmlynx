@@ -1,13 +1,19 @@
-# Production stack: the Next.js app in one container.
+# Production stack: the Next.js app, and the tools agents can use.
 #
-# Host networking, because Ollama on the server listens on 127.0.0.1 only, and
-# users' own Ollama servers on the LAN are reached the same way as bare metal.
-# The app listens on WEB_PORT (default 3000) on every interface.
+# Host networking for the app, because Ollama on the server listens on
+# 127.0.0.1 only, and users' own Ollama servers on the LAN are reached the same
+# way as bare metal. The app listens on WEB_PORT (default 3000) on every interface.
 #
 # Host state is bind-mounted, so the SQLite database stays a plain file on the
 # host (./data/llmlynx.db) that backups can copy. The image runs as uid 1000,
 # which owns these directories on the server. Secrets come from the gitignored
 # .env and .env.local at runtime and are never baked into the image.
+#
+# The agent tools (web search, page reading, screenshots) are in the "tools"
+# profile: they only run with COMPOSE_PROFILES=tools in .env, or when named on
+# the command line. They share the private "tools" network; only the two MCP
+# servers are published, on 127.0.0.1, where the app reaches them. Their
+# tokens must be in .env (not .env.local): compose fills ${...} from .env only.
 name: llmlynx
 
 services:
@@ -36,3 +42,81 @@ services:
       start_period: 20s
     init: true
     restart: unless-stopped
+
+  # Metasearch engine behind web_search. Not published: only mcp-searxng uses it.
+  searxng:
+    image: searxng/searxng:2026.11.2-cccbc9e15
+    profiles: [tools]
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-}
+      SEARXNG_BASE_URL: http://searxng:8080/
+      # settings.yml is mounted read-only
+      FORCE_OWNERSHIP: "false"
+    volumes:
+      - ./tools/searxng/settings.yml:/etc/searxng/settings.yml:ro
+      - searxng-cache:/var/cache/searxng
+    networks: [tools]
+    restart: unless-stopped
+
+  # MCP server for web_search and web_read (https://github.com/ihor-sokoliuk/mcp-searxng).
+  # Its URL reader blocks private and LAN addresses itself.
+  mcp-searxng:
+    image: isokoliuk/mcp-searxng:2.10.0
+    profiles: [tools]
+    environment:
+      SEARXNG_URL: http://searxng:8080
+      MCP_HTTP_PORT: "8080"
+      # Inside the container; the host side is 127.0.0.1 only
+      MCP_HTTP_HOST: 0.0.0.0
+      MCP_HTTP_HARDEN: "true"
+      MCP_HTTP_AUTH_TOKEN: ${SEARCH_MCP_TOKEN:-}
+      MCP_HTTP_STATELESS: "true"
+      # The Host header the app sends, port included
+      MCP_HTTP_ALLOWED_HOSTS: 127.0.0.1:${SEARCH_MCP_PORT:-8790},localhost:${SEARCH_MCP_PORT:-8790}
+      MCP_HTTP_ALLOWED_ORIGINS: http://127.0.0.1,http://localhost
+      # The app connects once per tool call (default: 20 per minute); it limits users itself
+      MCP_RATE_INIT_MAX: "300"
+    ports:
+      - 127.0.0.1:${SEARCH_MCP_PORT:-8790}:8080
+    depends_on: [searxng]
+    networks: [tools]
+    restart: unless-stopped
+
+  # MCP server for web_read_rendered and web_screenshot (tools/browser):
+  # headless Chromium, whose traffic all goes through the egress proxy.
+  browser:
+    image: llmlynx-browser
+    build: ./tools/browser
+    profiles: [tools]
+    environment:
+      MCP_AUTH_TOKEN: ${BROWSER_MCP_TOKEN:-}
+      EGRESS_PROXY: http://egress:3128
+      # The server also runs Ollama; one page at a time keeps memory in check
+      BROWSER_MAX_CONCURRENCY: ${BROWSER_MAX_CONCURRENCY:-1}
+    ports:
+      - 127.0.0.1:${BROWSER_MCP_PORT:-8791}:8080
+    # Docker's default profile plus the user namespaces Chromium's sandbox needs, so
+    # Chromium keeps its sandbox. From Playwright (utils/docker/seccomp_profile.json, v1.64.1).
+    security_opt:
+      - seccomp=./tools/browser/seccomp_profile.json
+    shm_size: 1gb
+    mem_limit: 1536m
+    init: true
+    depends_on: [egress]
+    networks: [tools]
+    restart: unless-stopped
+
+  # Egress proxy for the browser: refuses private, loopback and LAN addresses.
+  egress:
+    image: ubuntu/squid:6.6-24.04_edge
+    profiles: [tools]
+    volumes:
+      - ./tools/egress/squid.conf:/etc/squid/squid.conf:ro
+    networks: [tools]
+    restart: unless-stopped
+
+networks:
+  tools: {}
+
+volumes:
+  searxng-cache: {}

@@ -6,6 +6,8 @@ export const AGENT_SELECT = {
   baseModel: true,
   systemPrompt: true,
   settings: true,
+  tools: true,
+  maxToolCalls: true,
   createdAt: true,
   updatedAt: true,
 } as const;

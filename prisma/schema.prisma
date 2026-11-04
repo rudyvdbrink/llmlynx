@@ -73,12 +73,28 @@ model Message {
   setupId        String?       // assistant: what the model was given besides the conversation
   setup          RequestSetup? @relation(fields: [setupId], references: [id])
   // Anything else about the step, such as token usage, or data a provider needs
-  // back to continue the conversation (for example signed reasoning).
+  // back to continue the conversation (for example signed reasoning). Tool
+  // steps keep what the chat view shows of them: { label, icon, error }.
   metadata       Json?
   createdAt      DateTime      @default(now())
+  attachments    MessageAttachment[]
 
   @@index([conversationId, position])
   @@index([setupId])
+}
+
+// A file that belongs to a message, such as a screenshot a tool returned.
+// Stored in the database, so backups include it and deleting the
+// conversation deletes it.
+model MessageAttachment {
+  id        String   @id @default(uuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  mimeType  String
+  data      Bytes
+  createdAt DateTime @default(now())
+
+  @@index([messageId])
 }
 
 // What a model was given besides the conversation: the system prompt, the
@@ -131,6 +147,12 @@ model Agent {
   //   "min_p": number
   // }
   settings     Json
+
+  // Names of the tools turned on for the agent, e.g. ["web_search", "web_read"]
+  // (see lib/agentTools.ts). null or []: none, the default.
+  tools        Json?
+  // Most tool calls per reply; after that the agent answers with what it has
+  maxToolCalls Int      @default(7)
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt

@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/server/auth/session";
 import { AGENT_SELECT, agentNameError, DUPLICATE_NAME_MESSAGE } from "@/server/agents";
 import { jsonError, readJsonObject } from "@/server/http";
 import { validateAgentSettings } from "@/lib/agentSettings";
+import { validateAgentTools, validateMaxToolCalls } from "@/lib/agentTools";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -20,7 +21,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   return NextResponse.json({ agent });
 }
 
-// PATCH /api/agents/:id -> update name/baseModel/systemPrompt/settings
+// PATCH /api/agents/:id -> update name/baseModel/systemPrompt/settings/tools/maxToolCalls
 export async function PATCH(req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
   const user = await getCurrentUser();
@@ -51,6 +52,16 @@ export async function PATCH(req: Request, ctx: Ctx) {
     const settings = validateAgentSettings(body.settings);
     if (!settings.ok) return jsonError(settings.message, 400);
     data.settings = settings.value;
+  }
+  if (body.tools !== undefined) {
+    const tools = validateAgentTools(body.tools);
+    if (!tools.ok) return jsonError(tools.message, 400);
+    data.tools = tools.value;
+  }
+  if (body.maxToolCalls !== undefined) {
+    const maxToolCalls = validateMaxToolCalls(body.maxToolCalls);
+    if (!maxToolCalls.ok) return jsonError(maxToolCalls.message, 400);
+    data.maxToolCalls = maxToolCalls.value;
   }
 
   try {

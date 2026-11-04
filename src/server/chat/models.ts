@@ -31,6 +31,57 @@ export async function listOllamaModels(baseUrl: string): Promise<string[]> {
   return sortNames(list.map((m) => m?.name || m?.model || ""));
 }
 
+/** What Ollama's POST /api/show says about a model. */
+export type OllamaModelInfo = {
+  /** What the model can do, such as "tools" and "vision"; null when Ollama does not say. */
+  capabilities: string[] | null;
+  /** The longest context the model was trained for, in tokens; null when Ollama does not say. */
+  contextLength: number | null;
+};
+
+// Kept for a while, since every chat with an agent asks
+const INFO_CACHE_MS = 10 * 60 * 1000;
+const INFO_TIMEOUT_MS = 5000;
+
+const infoCache = new Map<string, { at: number; info: OllamaModelInfo }>();
+
+/** What the Ollama server at `baseUrl` says about `model`, or null when it cannot be reached or does not have it. */
+export async function getOllamaModelInfo(baseUrl: string, model: string): Promise<OllamaModelInfo | null> {
+  const key = `${baseUrl}\n${model}`;
+  const hit = infoCache.get(key);
+  if (hit && Date.now() - hit.at < INFO_CACHE_MS) return hit.info;
+
+  try {
+    const res = await fetch(`${baseUrl}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(INFO_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    const raw = (await res.json().catch(() => ({}))) as { capabilities?: unknown; model_info?: unknown };
+    const info: OllamaModelInfo = {
+      capabilities: Array.isArray(raw.capabilities)
+        ? raw.capabilities.filter((c): c is string => typeof c === "string")
+        : null,
+      contextLength: contextLengthOf(raw.model_info),
+    };
+    infoCache.set(key, { at: Date.now(), info });
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+// model_info names the field after the model's architecture, such as "qwen35.context_length"
+function contextLengthOf(modelInfo: unknown): number | null {
+  if (!modelInfo || typeof modelInfo !== "object") return null;
+  const fields = modelInfo as Record<string, unknown>;
+  const n = fields[`${fields["general.architecture"]}.context_length`];
+  return typeof n === "number" && Number.isInteger(n) && n > 0 ? n : null;
+}
+
 // OpenAI also lists models for embeddings, images, audio, and models that only
 // work with the Responses API. Keep the ones that can chat.
 const OPENAI_CHAT_MODEL = /^(gpt-|chatgpt-|o\d)/;

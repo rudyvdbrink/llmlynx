@@ -10,6 +10,7 @@ import rehypeHighlight from "rehype-highlight";
 import tableStyles from "../Table.module.css";
 import chatStyles from "../Chat.module.css";
 import CopyButton from "./CopyButton";
+import ImageLink from "./ImageLink";
 
 /**
  * Normalize TeX-style delimiters \( ... \) and \[ ... \] in the raw markdown
@@ -105,6 +106,7 @@ const COMPONENTS: Components = {
     </div>
   ),
   pre: PreWithCopy,
+  img: ImageLink,
 };
 
 const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkMath, remarkGfm, remarkBreaks];

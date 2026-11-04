@@ -4,6 +4,7 @@ import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { jsonError, optionalString, readJsonObject } from "@/server/http";
 import { deleteUnusedSetups } from "@/server/chat/setup";
+import { DISPLAY_MESSAGE_SELECT, toDisplayMessages } from "@/server/chat/display";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -22,17 +23,18 @@ export async function GET(_req: Request, ctx: Ctx) {
       pinnedAt: true,
       createdAt: true,
       updatedAt: true,
-      // The chat view shows the user's messages and the replies, not tool steps
+      // The user's messages and every step of the replies, tool steps included
       messages: {
-        where: { role: { in: ["user", "assistant"] } },
+        where: { role: { in: ["user", "assistant", "tool"] } },
         orderBy: { position: "asc" },
-        select: { id: true, role: true, content: true, reasoning: true, createdAt: true },
+        select: DISPLAY_MESSAGE_SELECT,
       },
     },
   });
   if (!conversation) return jsonError("Not found", 404);
 
-  return NextResponse.json({ conversation });
+  // A reply that used tools is shown as one message with its tool steps
+  return NextResponse.json({ conversation: { ...conversation, messages: toDisplayMessages(conversation.messages) } });
 }
 
 // PATCH /api/conversations/:id -> rename and/or pin the conversation

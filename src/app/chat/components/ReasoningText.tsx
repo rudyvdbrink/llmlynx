@@ -7,6 +7,7 @@ import remarkBreaks from "remark-breaks";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import tableStyles from "../Table.module.css";
+import ImageLink from "./ImageLink";
 
 // Reasoning is rendered as markdown, but it is written less carefully than a
 // reply: "11*23" means multiplication, "~5" means about five, "$5" a price.
@@ -89,6 +90,7 @@ const COMPONENTS: Components = {
       <table {...props} />
     </div>
   ),
+  img: ImageLink,
 };
 
 // Only $$…$$ is math: prepareMarkdown() decides what a single $ means. "~5" is not struck through.

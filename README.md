@@ -75,6 +75,48 @@ In the sidebar, the first dropdown picks the provider (or your agents) and the s
 
 The Account page is also where you change your password, log out, or delete your account.
 
+### 3c. Agent Tools (optional)
+
+Custom agents can search the web, read pages and take screenshots. Tools are off by default: on the **Agents** page, each tool has a checkbox. A tool is only offered when the agent's base model supports it (Ollama reports whether a model can call tools and see images).
+
+| Tool | What it does | Needs |
+|---|---|---|
+| Web search | Searches the web through a private SearXNG instance | a model that can call tools |
+| Read pages | Reads a page, PDF or text file as text, without running JavaScript | a model that can call tools |
+| Read pages with JavaScript | Opens the page in a browser, scrolls through it, and reads what it shows | a model that can call tools |
+| Screenshots | Opens the page in a browser and looks at one screen of it | a model that can call tools and see images, e.g. `qwen3.5:9b` |
+
+Below the checkboxes, a slider sets the most tool calls per reply (1 to 20, default 7). After that many, the agent answers with what it has found.
+
+While an agent works, one status line shows what it is doing: "Thinking…", or a tool's icon (a globe for the web tools, a spanner for the others) with what the tool does. Below it, the reasoning and each finished tool call appear in the order they happened, screenshots included. Once the answer starts, all of it folds away behind "Show thinking". Web pages take up a lot of context: give agents with tools a context window of 16384 tokens or more.
+
+The tools run in their own containers (see `docker-compose.yml`, profile `tools`):
+
+| Container | Purpose |
+|---|---|
+| `searxng` | Metasearch engine. Not reachable from outside the stack |
+| `mcp-searxng` | [mcp-searxng](https://github.com/ihor-sokoliuk/mcp-searxng): search and page reading, as an MCP server on `127.0.0.1:8790` |
+| `browser` | `tools/browser`: headless Chromium for reading rendered pages and screenshots, as an MCP server on `127.0.0.1:8791` |
+| `egress` | Proxy that all browser traffic goes through. It refuses private, loopback and LAN addresses |
+
+To use them, add these to `.env` (not `.env.local`: compose reads the tokens from `.env`), with secrets from `openssl rand -hex 32`:
+
+```dotenv
+SEARCH_MCP_URL=http://127.0.0.1:8790/mcp
+SEARCH_MCP_TOKEN=<secret>
+BROWSER_MCP_URL=http://127.0.0.1:8791/mcp
+BROWSER_MCP_TOKEN=<secret>
+SEARXNG_SECRET=<secret>
+```
+
+Then start the containers. When the app itself runs outside Docker (`npm start` or `npm run dev`):
+
+```bash
+docker compose up -d searxng mcp-searxng browser egress
+```
+
+In production, set `COMPOSE_PROFILES=tools` in `.env` as well, so that deploys build and start them with the app (see below). Restart the app after changing `.env`.
+
 ### 4. Create the Database
 
 ```bash
@@ -129,6 +171,8 @@ The server's checkout is only for deploying: every deploy discards edits to trac
 
 The container uses the host network, so it reaches an Ollama server on the same machine at `http://localhost:11434`. It listens on port 3000, or on `WEB_PORT` if it is set in `.env`. The compose file overrides `DATABASE_URL` and `AUTH_LOG_DIR` from the env files with the paths above.
 
+**Agent tools:** with `COMPOSE_PROFILES=tools` and the tool settings from section 3c in `.env`, every deploy also builds the `browser` image and starts the four tool containers. Without it, deploys run the app alone. The first deploy with tools is slow: the Playwright base image of `browser` is about 2 GB. The deploy only waits for the app to become healthy, so a tool container that fails does not stop a deploy; agents then report that the tool did not answer. Check them with `docker compose ps`. Update the Playwright version in `tools/browser` (Dockerfile and package.json) regularly, for example monthly: a pinned browser stops getting security fixes.
+
 Useful commands in the checkout: `docker compose ps`, `docker compose logs -f web`, `docker compose restart web`.
 
 ### One-time server setup
@@ -176,6 +220,8 @@ If a migration has to be undone as well, stop the app (`docker compose stop web`
 - **API keys** must stay readable to call the provider, so they cannot be hashed. Each user's keys are encrypted with AES-256-GCM under `SECRETS_KEY`, which lives only in `.env`. A copy of the database alone does not reveal them, and the page shows only the last four characters of a saved key.
 - **Changing the password** needs the current password and signs the account out on every other device. **Deleting the account** needs the password and removes all of its data.
 - Each user's **Ollama address** is contacted by the server, so any signed-in user can make the server send requests to addresses it can reach. Use `ALLOWED_SIGNUP_EMAILS` to limit who can sign up.
+- **Agent tools** only read: they cannot click, fill in forms, log in or keep cookies. Pages cannot reach the LAN, the server or other containers. The page reader blocks private addresses itself, redirects included. All browser traffic goes through the `egress` proxy, which refuses private, loopback and link-local addresses after resolving names itself. Chromium keeps its sandbox (with Playwright's seccomp profile) and runs as an unprivileged user, and downloads are off. The two MCP servers listen on `127.0.0.1` only and need bearer tokens. Tool calls are rate limited per user.
+- **Text from web pages** can try to instruct the model (prompt injection). Agents are told to treat it as information, every tool call is shown in the chat, and images in replies are shown as links, so a reply cannot make the browser fetch a URL by itself.
 
 ---
 
@@ -199,7 +245,7 @@ SYSTEM_PROMPT=You are the llynx.\nStay concise.\nIf unsure, say so.
 1. Client sends: `{ model | agentId, conversationId, messages: [ {role:"user", content:"..."} , ... ] }`, where `model` is `ollama:<name>`, `openai:<name>` or `openrouter:<name>`
 2. API route (`/api/chat`) stores the new user message and adds the system prompt.
 3. API proxies to the user's Ollama server (`/api/chat` with `"stream": true`). OpenAI and OpenRouter models are streamed with the user's API key and converted to the same format.
-4. The response is **newline-delimited JSON**: `{ message: { content } }` lines, then `{ done: true }`.
+4. The response is **newline-delimited JSON**: `{ message: { content } }` lines, then `{ done: true }`. When an agent uses a tool, a `{ tool: { id, name, icon, label, state: "running" } }` line announces the call, and a second one with the same `id` gives its outcome (`state` `"done"` or `"error"`, a new `label`, and `attachmentId` for a screenshot). The model then continues with the result, up to the agent's most tool calls per reply. Each step is stored as its own message.
 5. Client:
    - Parses each line.
    - Accumulates `assistant` content.
@@ -218,8 +264,9 @@ src/
   components/   UI shared by several pages (app shell, sidebar)
   hooks/        Client data hooks shared by several pages
   lib/          Code shared by client and server (types, selection strings, validation)
-  server/       Server-only code (auth, database, chat backends, config)
+  server/       Server-only code (auth, database, chat backends, agent tools, config)
 prisma/         Database schema and migrations
+tools/          Agent tool containers: SearXNG settings, the browser MCP server, the egress proxy
 ```
 
 

@@ -9,6 +9,8 @@ export type OptionField = {
   // Shown as a dropdown instead of slider + number box
   choices?: { value: number; label: string }[];
   slider?: { min: number; max: number; step: number };
+  // A slider over contextStops() instead of an even scale
+  contextSlider?: boolean;
   number?: { min?: number; max?: number; step: number };
   // Store 0 when the number box is cleared, instead of NaN
   zeroWhenEmpty?: boolean;
@@ -43,9 +45,11 @@ export const OPTION_FIELDS: OptionField[] = [
   {
     key: "num_ctx",
     label: "Context window (tokens)",
-    help: "Context window size in tokens. Default 2048.",
+    help:
+      "Context window size in tokens, up to what the base model supports. Larger windows need more GPU memory; " +
+      "when the model no longer fits, Ollama runs part of it on the CPU, which is much slower. Default 2048.",
     integer: true,
-    slider: { min: 256, max: 32768, step: 256 },
+    contextSlider: true,
     number: { min: 1, step: 1 },
     zeroWhenEmpty: true,
   },
@@ -110,6 +114,21 @@ export const OPTION_FIELDS: OptionField[] = [
     number: { min: 0, max: 1, step: 0.01 },
   },
 ];
+
+// The context window slider ends at the base model's context length, or here
+// while that is not known (or Ollama does not say).
+export const DEFAULT_CONTEXT_MAX = 32768;
+
+/**
+ * The values the context window slider stops at: powers of two from 256, then
+ * `max`, the most the base model supports (often a power of two itself).
+ * Evenly spaced stops keep the small windows as easy to pick as the large ones.
+ */
+export function contextStops(max: number): number[] {
+  const stops: number[] = [];
+  for (let n = 256; n < max; n *= 2) stops.push(n);
+  return [...stops, max];
+}
 
 export function parseOptionValue(field: OptionField, raw: string, fromNumberBox: boolean): number {
   const n = field.integer ? parseInt(raw, 10) : parseFloat(raw);
