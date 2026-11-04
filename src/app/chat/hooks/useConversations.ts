@@ -36,7 +36,7 @@ export function useConversations(selection: string, setSelection: (val: string) 
 
       setActiveConversationId(conversation.id);
       setSelection(normalizeSelection(conversation.model));
-      return conversation.messages.map((m) => ({ role: m.role, content: m.content, reasoning: m.reasoning ?? undefined }));
+      return conversation.messages.map((m) => ({ role: m.role, content: m.content, trace: m.trace }));
     },
     [setSelection]
   );

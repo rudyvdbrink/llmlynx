@@ -4,6 +4,7 @@ import { getCurrentUser } from "@/server/auth/session";
 import { AGENT_SELECT, agentNameError, DUPLICATE_NAME_MESSAGE } from "@/server/agents";
 import { jsonError, optionalString, readJsonObject } from "@/server/http";
 import { validateAgentSettings } from "@/lib/agentSettings";
+import { validateAgentTools, validateMaxToolCalls } from "@/lib/agentTools";
 
 // GET /api/agents -> list current user's agents
 export async function GET() {
@@ -27,7 +28,9 @@ export async function GET() {
 }
 
 // POST /api/agents -> create a new agent
-// body: { name: string, baseModel: string, systemPrompt?: string, settings?: AgentSettings }
+// body: { name: string, baseModel: string, systemPrompt?: string, settings?: AgentSettings,
+//        tools?: AgentToolName[], maxToolCalls?: number }
+// Tools are off unless the body turns them on.
 export async function POST(req: Request) {
   const user = await getCurrentUser();
   if (!user) return jsonError("Unauthorized", 401);
@@ -43,6 +46,10 @@ export async function POST(req: Request) {
 
   const settings = validateAgentSettings(body.settings);
   if (!settings.ok) return jsonError(settings.message, 400);
+  const tools = validateAgentTools(body.tools);
+  if (!tools.ok) return jsonError(tools.message, 400);
+  const maxToolCalls = validateMaxToolCalls(body.maxToolCalls);
+  if (!maxToolCalls.ok) return jsonError(maxToolCalls.message, 400);
 
   try {
     const agent = await prisma.agent.create({
@@ -52,6 +59,8 @@ export async function POST(req: Request) {
         baseModel,
         systemPrompt: optionalString(body.systemPrompt) ?? null,
         settings: settings.value,
+        tools: tools.value,
+        maxToolCalls: maxToolCalls.value,
       },
       select: AGENT_SELECT,
     });

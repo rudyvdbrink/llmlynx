@@ -184,6 +184,78 @@
   font-size: 14px;
 }
 
+/* Tools: a checkbox per tool, with what it does */
+.toolList {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 48px;
+}
+@media (max-width: 900px) {
+  .toolList {
+    grid-template-columns: 1fr;
+  }
+}
+.toolOption {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+.toolOption input[type="checkbox"] {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+  cursor: inherit;
+}
+.toolOptionUnavailable {
+  cursor: default;
+}
+.toolOptionUnavailable .toolOptionLabel,
+.toolOptionUnavailable .toolOptionHelp {
+  opacity: 0.55;
+}
+.toolOptionText {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.toolOptionLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--text);
+}
+.toolOptionIcon {
+  flex: none;
+  color: var(--muted);
+}
+.toolOptionHelp,
+.toolOptionReason {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.toolOptionReason {
+  color: #e0a458;
+}
+/* The max tool calls slider, greyed out while no tool is checked */
+.toolLimitOff {
+  opacity: 0.45;
+}
+.toolLimitOff input {
+  cursor: default;
+}
+
+.toolHint {
+  margin: 0;
+  font-size: 13px;
+  color: #e0a458;
+}
+
 /* Footer actions */
 .footerActions {
   margin-top: 16px;

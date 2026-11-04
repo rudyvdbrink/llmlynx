@@ -14,10 +14,12 @@ function MessageList({
   messages,
   isStreaming,
   replyStatus,
+  answering,
 }: {
   messages: DisplayMessage[];
   isStreaming: boolean;
   replyStatus: ReplyStatus | null;
+  answering: boolean; // the streaming reply's text is coming in (not thinking or using a tool)
 }) {
   const endRef = useAutoScroll(messages, isStreaming);
 
@@ -27,16 +29,14 @@ function MessageList({
         const isUser = msg.role === "user";
         // The reply that is still streaming
         const isReply = !isUser && isStreaming && idx === messages.length - 1;
-        // Until its text starts, the reply shows what the model is doing instead
-        const waiting = isReply && !msg.content && !msg.error;
+        // Until its text starts, and while it uses a tool, the reply shows what the model is doing
+        const waiting = isReply && !answering && !msg.error;
         // Hide the copy button on the reply that is still streaming
         const showCopy = !isUser && !isReply;
         return (
           <div key={idx} className={`${styles.messageRow} ${isUser ? styles.user : styles.bot}`}>
-            {(waiting || msg.reasoning) && (
-              <Thinking text={msg.reasoning ?? ""} status={waiting ? replyStatus : "done"} />
-            )}
-            {!waiting && (
+            {(waiting || !!msg.trace?.length) && <Thinking trace={msg.trace} status={waiting ? replyStatus : "done"} />}
+            {(!waiting || msg.content) && (
               <div className={styles.bubble}>
                 <MarkdownMessage content={msg.error ? msg.content + errorNote(msg.error) : msg.content} />
                 {showCopy && (

@@ -1,0 +1,21 @@
+{
+  "name": "llmlynx-browser",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCP server that lets llmlynx agents read rendered pages and take screenshots",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "playwright": "1.64.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24",
+    "typescript": "^5"
+  }
+}

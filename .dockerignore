@@ -8,6 +8,8 @@ out
 data
 logs
 scrap
+# Agent tool containers, built from their own directories
+tools
 *.db
 *.db-journal
 *.log

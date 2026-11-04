@@ -6,13 +6,27 @@ import AppShell from "@/components/AppShell";
 import { useConversationList } from "@/hooks/useConversationList";
 import { useAgentList, useLocalModels } from "@/hooks/useModelCatalog";
 import { DEFAULT_AGENT_SETTINGS, type AgentSettings } from "@/lib/agentSettings";
+import {
+  AGENT_TOOL_INFO,
+  AGENT_TOOLS,
+  DEFAULT_MAX_TOOL_CALLS,
+  MAX_TOOL_CALLS_LIMIT,
+  validateAgentTools,
+  validateMaxToolCalls,
+  type AgentToolName,
+} from "@/lib/agentTools";
 import { DEFAULT_SELECTION, parseSelection, toSelection } from "@/lib/selection";
 import type { AgentSummary, SessionUser } from "@/lib/types";
 import chatStyles from "../chat/Chat.module.css";
 import styles from "./Agents.module.css";
 import { OPTION_FIELDS, parseOptionValue, type OptionField } from "./optionFields";
+import { useToolAvailability } from "./useToolAvailability";
+import { ToolStepIcon } from "../chat/components/ToolLine";
 
 const DEFAULT_BASE_MODEL = parseSelection(DEFAULT_SELECTION).value;
+
+// Below this context window, web pages crowd out the conversation
+const MIN_TOOLS_NUM_CTX = 8192;
 
 type Status = { kind: "success" | "error"; msg: string };
 
@@ -34,6 +48,9 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
   const [baseModelPick, setBaseModelPick] = useState(DEFAULT_BASE_MODEL);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [opts, setOpts] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
+  // Tools are off until the user checks them
+  const [tools, setTools] = useState<AgentToolName[]>([]);
+  const [maxToolCalls, setMaxToolCalls] = useState(DEFAULT_MAX_TOOL_CALLS);
 
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
@@ -44,6 +61,12 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
     !agentId && availableModels.length > 0 && !availableModels.includes(baseModelPick)
       ? availableModels[0]
       : baseModelPick;
+
+  const toolAvailability = useToolAvailability(baseModel);
+
+  function toggleTool(name: AgentToolName, on: boolean) {
+    setTools((prev) => AGENT_TOOLS.filter((t) => (t === name ? on : prev.includes(t))));
+  }
 
   function setOpt(key: keyof AgentSettings, value: number) {
     setOpts((prev) => ({ ...prev, [key]: value }));
@@ -96,12 +119,21 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
         setBaseModelPick(a.baseModel ?? baseModel);
         setSystemPrompt(a.systemPrompt ?? "");
         setOpts({ ...DEFAULT_AGENT_SETTINGS, ...(a.settings as Partial<AgentSettings>) });
+        const savedTools = validateAgentTools(a.tools);
+        setTools(savedTools.ok ? savedTools.value : []);
+        const savedMax = validateMaxToolCalls(a.maxToolCalls);
+        setMaxToolCalls(savedMax.ok ? savedMax.value : DEFAULT_MAX_TOOL_CALLS);
       } catch (err) {
         setStatus({ kind: "error", msg: (err as Error)?.message || "Failed to load agent" });
         setAgentId(null);
       }
     } else if (kind === "ollama") {
       setBaseModelPick(value);
+      // Leaving a saved agent for a plain base model starts a new agent without tools
+      if (agentId) {
+        setTools([]);
+        setMaxToolCalls(DEFAULT_MAX_TOOL_CALLS);
+      }
       setAgentId(null); // new agent (Save)
     }
   }
@@ -118,6 +150,8 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
         baseModel: baseModel.trim(),
         systemPrompt,
         settings: { ...opts },
+        tools,
+        maxToolCalls,
       }),
     });
     const data = await res.json().catch(() => ({}));
@@ -271,6 +305,84 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
             onChange={(e) => setSystemPrompt(e.target.value)}
             disabled={saving}
           />
+        </section>
+
+        <section className={styles.section}>
+          <h2 className={styles.sectionTitle}>Tools</h2>
+          <div className={styles.toolList}>
+            {AGENT_TOOLS.map((name) => {
+              const info = AGENT_TOOL_INFO[name];
+              const unavailable = toolAvailability?.find((t) => t.name === name && !t.available);
+              const checked = tools.includes(name);
+              return (
+                <label
+                  key={name}
+                  className={`${styles.toolOption} ${unavailable ? styles.toolOptionUnavailable : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => toggleTool(name, e.target.checked)}
+                    // A tool that cannot be used can still be turned off
+                    disabled={saving || (!!unavailable && !checked)}
+                  />
+                  <span className={styles.toolOptionText}>
+                    <span className={styles.toolOptionLabel}>
+                      <ToolStepIcon icon={info.icon} className={styles.toolOptionIcon} />
+                      {info.label}
+                    </span>
+                    <span className={styles.toolOptionHelp}>{info.help}</span>
+                    {unavailable?.reason && <span className={styles.toolOptionReason}>{unavailable.reason}</span>}
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+          <div className={`${styles.grid} ${tools.length === 0 ? styles.toolLimitOff : ""}`}>
+            <div className={styles.optionRow}>
+              <label className={styles.optionLabel} htmlFor="max-tool-calls">
+                Max tool calls per reply
+              </label>
+              <div className={styles.optionControls}>
+                <input
+                  id="max-tool-calls"
+                  type="range"
+                  min={1}
+                  max={MAX_TOOL_CALLS_LIMIT}
+                  step={1}
+                  value={maxToolCalls}
+                  onChange={(e) => setMaxToolCalls(Number(e.target.value))}
+                  disabled={saving || tools.length === 0}
+                />
+                <div>
+                  <input
+                    type="number"
+                    min={1}
+                    max={MAX_TOOL_CALLS_LIMIT}
+                    step={1}
+                    value={maxToolCalls}
+                    aria-label="Max tool calls per reply"
+                    onChange={(e) => {
+                      // Typed values are kept within 1 to 20; a cleared box keeps the last value
+                      const n = Math.round(Number(e.target.value));
+                      if (e.target.value !== "" && Number.isFinite(n)) {
+                        setMaxToolCalls(Math.min(MAX_TOOL_CALLS_LIMIT, Math.max(1, n)));
+                      }
+                    }}
+                    disabled={saving || tools.length === 0}
+                  />
+                </div>
+              </div>
+              <span className={styles.toolOptionHelp}>
+                After this many tool calls, the agent answers with what it has found.
+              </span>
+            </div>
+          </div>
+          {tools.length > 0 && opts.num_ctx < MIN_TOOLS_NUM_CTX && (
+            <p className={styles.toolHint}>
+              Web pages need room: set the context window to 16384 tokens or more, or pages get cut short.
+            </p>
+          )}
         </section>
 
         <section className={styles.section}>

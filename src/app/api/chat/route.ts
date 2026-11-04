@@ -4,11 +4,14 @@ import { getCurrentUser } from "@/server/auth/session";
 import { getDefaultSystemPrompt } from "@/server/config";
 import { getApiConfig, getOllamaUrl } from "@/server/providers";
 import { createAssistantReply, loadHistory, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
-import { streamOllamaChat } from "@/server/chat/ollama";
+import { streamOllamaChat, toOllamaTools } from "@/server/chat/ollama";
 import { streamOpenAIChat } from "@/server/chat/openai";
 import type { RequestSetupInput } from "@/server/chat/setup";
+import { textBudget } from "@/server/tools/definitions";
+import { toolGuidance, toolsFor } from "@/server/tools/policy";
 import { normalizeSelection, parseSelection, toSelection } from "@/lib/selection";
 import { PROVIDER_LABELS, type KeyProviderId } from "@/lib/providers";
+import { DEFAULT_MAX_TOOL_CALLS } from "@/lib/agentTools";
 
 export const runtime = "nodejs";
 
@@ -21,7 +24,15 @@ export const runtime = "nodejs";
 // Responds with an NDJSON stream and the conversation id in X-Conversation-Id.
 
 type Target =
-  | { kind: "ollama"; modelKey: string; model: string; baseUrl: string; systemPrompt: string; options?: unknown }
+  | {
+      kind: "ollama";
+      modelKey: string;
+      model: string;
+      baseUrl: string;
+      systemPrompt: string;
+      options?: unknown;
+      agent: { tools: unknown; maxToolCalls: number } | null; // set when the user chats with an agent
+    }
   | { kind: KeyProviderId; modelKey: string; model: string };
 
 /** Works out which backend and model to use. Returns null if the agent is not the user's. */
@@ -36,6 +47,7 @@ async function resolveTarget(userId: string, model: unknown, agentId: unknown): 
       baseUrl: await getOllamaUrl(userId),
       systemPrompt: agent.systemPrompt?.trim() || getDefaultSystemPrompt(),
       options: agent.settings,
+      agent: { tools: agent.tools, maxToolCalls: agent.maxToolCalls },
     };
   }
 
@@ -49,6 +61,7 @@ async function resolveTarget(userId: string, model: unknown, agentId: unknown): 
     model: value,
     baseUrl: await getOllamaUrl(userId),
     systemPrompt: getDefaultSystemPrompt(),
+    agent: null,
   };
 }
 
@@ -87,9 +100,22 @@ export async function POST(req: NextRequest) {
   // The conversation so far, ending with the new message. Like the system
   // prompt, it comes from the server, never from the client.
   const history = await loadHistory(conversationId);
+  // The tools the model can call: only agents get them, see server/tools/policy.ts
+  const tools =
+    target.kind === "ollama"
+      ? await toolsFor({ agent: target.agent, ollama: { baseUrl: target.baseUrl, model: target.model } })
+      : [];
+  const systemPrompt =
+    target.kind === "ollama" && tools.length ? `${target.systemPrompt}\n\n${toolGuidance(tools)}` : undefined;
   // Everything the model gets besides the conversation, which is stored with the reply
   const setup: RequestSetupInput =
-    target.kind === "ollama" ? { systemPrompt: target.systemPrompt, options: target.options } : {};
+    target.kind === "ollama"
+      ? {
+          systemPrompt: systemPrompt ?? target.systemPrompt,
+          options: target.options,
+          ...(tools.length ? { tools: toOllamaTools(tools) } : {}),
+        }
+      : {};
   const reply = createAssistantReply({
     conversationId,
     userId: user.id,
@@ -106,8 +132,14 @@ export async function POST(req: NextRequest) {
           {
             baseUrl: target.baseUrl,
             model: target.model,
-            messages: [{ role: "system", content: target.systemPrompt }, ...history],
+            messages: [{ role: "system", content: setup.systemPrompt ?? target.systemPrompt }, ...history],
             options: target.options,
+            tools,
+            maxToolCalls: target.agent?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
+            toolContext: {
+              userId: user.id,
+              textBudget: textBudget((target.options as { num_ctx?: unknown } | undefined)?.num_ctx),
+            },
           },
           reply
         );

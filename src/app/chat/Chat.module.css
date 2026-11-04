@@ -457,6 +457,62 @@
   to { transform: rotate(1turn); }
 }
 
+/* ===== Tool calls: in the status line, and in the trace (ToolLine.tsx) ===== */
+
+/* A long label is cut off rather than wrapping the status line */
+.thinkingStatus { max-width: 100%; }
+
+/* A tool call between the reasoning: icon, label, and a screenshot's thumbnail
+   below the label. A little brighter than the reasoning, as a marker in it. */
+.toolStep {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: center;
+  min-height: 22px;
+  margin: 0.25em 0 0.6em;
+  color: color-mix(in srgb, var(--text) 75%, var(--muted));
+}
+.thinkingText > .toolStep:first-child { margin-top: 0; }
+.toolStepFailed { opacity: 0.6; }
+
+/* In the spinner's place, and as tall as its box */
+.toolIcon { flex: none; }
+.toolIconRunning { animation: toolPulse 1.2s ease-in-out infinite; }
+@keyframes toolPulse {
+  50% { opacity: 0.35; }
+}
+
+.toolLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolShot {
+  grid-column: 2;
+  display: block;
+  width: fit-content;
+  max-width: 100%;
+  margin: 4px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.12s ease;
+}
+.toolShot:hover,
+.toolShot:focus-visible {
+  border-color: var(--muted);
+  outline: none;
+}
+.toolShot img {
+  display: block;
+  width: 200px;
+  max-width: 100%;
+  height: auto;
+}
+
 /* Folds open and shut by growing or shrinking its one grid row */
 .thinkingPanel {
   display: grid;

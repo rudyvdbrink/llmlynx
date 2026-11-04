@@ -1,0 +1,23 @@
+# SearXNG for agent web search: private and API only. mcp-searxng is its only
+# client; the port is not published. The secret comes from SEARXNG_SECRET.
+use_default_settings: true
+
+general:
+  instance_name: llmlynx search
+
+server:
+  # A private instance needs no bot protection, and the limiter would also need Valkey
+  limiter: false
+  public_instance: false
+  image_proxy: false
+
+search:
+  # mcp-searxng reads results as JSON
+  formats:
+    - html
+    - json
+  safe_search: 0
+  autocomplete: ""
+
+ui:
+  static_use_hash: true
