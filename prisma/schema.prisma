@@ -107,7 +107,7 @@ model RequestSetup {
   userId       String
   user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   hash         String    // SHA-256 of the fields below, see server/chat/setup.ts
-  systemPrompt String?   // null: the model got none (OpenAI and OpenRouter)
+  systemPrompt String?   // null: the model got none (plain OpenAI and OpenRouter models)
   options      Json?     // generation options, such as an agent's settings
   tools        Json?     // tool definitions the model could call
   createdAt    DateTime  @default(now())
@@ -125,27 +125,16 @@ model Agent {
   // Display name shown in UI; unique per user
   name         String
 
-  // Base model name (e.g., "gemma3:1b", "mistral")
+  // Base model: a selection such as "openrouter:<model>" (see lib/selection.ts).
+  // Older agents hold a plain Ollama model name (e.g., "gemma3:1b", "mistral")
   baseModel    String
 
   // Optional custom system prompt
   systemPrompt String?
 
-  // Generation settings as JSON for flexibility
-  // {
-  //   "mirostat": 0|1|2,
-  //   "mirostat_eta": number,
-  //   "mirostat_tau": number,
-  //   "num_ctx": number,
-  //   "repeat_last_n": number,
-  //   "repeat_penalty": number,
-  //   "temperature": number,
-  //   "seed": number,
-  //   "num_predict": number,
-  //   "top_k": number,
-  //   "top_p": number,
-  //   "min_p": number
-  // }
+  // Generation settings as JSON, see lib/agentSettings.ts. Which options there
+  // are depends on the provider: Ollama agents have all of its options, OpenAI
+  // and OpenRouter agents only those the user set.
   settings     Json
 
   // Names of the tools turned on for the agent, e.g. ["web_search", "web_read"]

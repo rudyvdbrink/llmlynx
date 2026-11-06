@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { prisma, isUniqueConstraintError } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
-import { AGENT_SELECT, agentNameError, DUPLICATE_NAME_MESSAGE } from "@/server/agents";
+import { AGENT_SELECT, agentNameError, DUPLICATE_NAME_MESSAGE, storedBaseModel } from "@/server/agents";
 import { jsonError, readJsonObject } from "@/server/http";
-import { validateAgentSettings } from "@/lib/agentSettings";
+import { optionFamily, validateAgentSettings } from "@/lib/agentSettings";
 import { validateAgentTools, validateMaxToolCalls } from "@/lib/agentTools";
+import { parseBaseModel } from "@/lib/selection";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -27,8 +28,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
   const user = await getCurrentUser();
   if (!user) return jsonError("Unauthorized", 401);
 
-  const owned = await prisma.agent.findFirst({ where: { id, userId: user.id }, select: { id: true } });
+  const owned = await prisma.agent.findFirst({ where: { id, userId: user.id }, select: { baseModel: true } });
   if (!owned) return jsonError("Not found", 404);
+  const oldProvider = parseBaseModel(owned.baseModel)?.provider ?? "ollama";
+  let provider = oldProvider;
 
   const body = await readJsonObject(req);
   const data: Prisma.AgentUpdateInput = {};
@@ -41,15 +44,17 @@ export async function PATCH(req: Request, ctx: Ctx) {
     data.name = name;
   }
   if (typeof body.baseModel === "string") {
-    const baseModel = body.baseModel.trim();
+    const baseModel = storedBaseModel(body.baseModel.trim());
     if (!baseModel) return jsonError("Base model cannot be empty", 400);
-    data.baseModel = baseModel;
+    data.baseModel = baseModel.value;
+    provider = baseModel.provider;
   }
   if (typeof body.systemPrompt === "string" || body.systemPrompt === null) {
     data.systemPrompt = body.systemPrompt;
   }
-  if (body.settings !== undefined) {
-    const settings = validateAgentSettings(body.settings);
+  // Options of another kind of provider mean nothing to the new one: without new ones, it starts from its defaults
+  if (body.settings !== undefined || optionFamily(provider) !== optionFamily(oldProvider)) {
+    const settings = validateAgentSettings(provider, body.settings);
     if (!settings.ok) return jsonError(settings.message, 400);
     data.settings = settings.value;
   }

@@ -60,7 +60,7 @@ Copy `.env.example` to `.env` and adjust it. The file documents every setting; t
 |---|---|
 | `DATABASE_URL` | SQLite database file (required), e.g. `file:./dev.db` |
 | `SECRETS_KEY` | Encrypts the users' API keys (required to save keys). Create one with `openssl rand -base64 32` |
-| `SYSTEM_PROMPT` | Default system prompt for Ollama models |
+| `SYSTEM_PROMPT` | Default system prompt for Ollama models and agents |
 | `OLLAMA_URL` | Default Ollama server, if it does not run on `http://localhost:11434`. Users can set their own |
 | `ALLOWED_SIGNUP_EMAILS` | Comma-separated emails that may sign up. Empty allows everyone |
 
@@ -75,9 +75,27 @@ In the sidebar, the first dropdown picks the provider (or your agents) and the s
 
 The Account page is also where you change your password, log out, or delete your account.
 
-### 3c. Agent Tools (optional)
+### 3c. Agents
 
-Custom agents can search the web, read pages and take screenshots. Tools are off by default: on the **Agents** page, each tool has a checkbox. A tool is only offered when the agent's base model supports it (Ollama reports whether a model can call tools and see images).
+On the **Agents** page you combine a base model from any connected provider with a system prompt, tools and generation options. All agents appear together under **Agents** in the sidebar.
+
+The generation options depend on the model, and open from the bar below the tools:
+
+| Provider | Which options | Where that comes from | Options you do not change |
+|---|---|---|---|
+| Ollama | The same for every model | Fixed list; Ollama does not report per model | Sent with llmlynx's default values |
+| OpenRouter | What the model takes | OpenRouter's public model list | Not sent, so the model's own default applies |
+| OpenAI | What the model takes | OpenRouter's public model list, as OpenAI does not publish this; options it still refuses are left out of the request | Not sent, so the model's own default applies |
+
+A model that is not in that list only offers its maximum output length. The list needs no key, and is loaded at most once an hour. The value an unchanged option shows is the model's own default where the list states it, otherwise the API's usual default.
+
+OpenAI agents on models that reason (or are not in the list) run on the Responses API, because from GPT-5.4 on Chat Completions refuses tools unless reasoning is off. That API has no seed, stop sequences or penalties, so these models do not offer them. Models that do not reason, such as `gpt-4o`, stay on Chat Completions. Replies are not stored at OpenAI (`store: false`).
+
+An agent is greyed out in the sidebar while its provider cannot be reached, its API key is missing or refused, or its base model is gone. Where a provider has announced a model's last day, the model lists show it. An agent whose model is gone keeps everything else: pick another base model on the Agents page.
+
+### 3d. Agent Tools (optional)
+
+Custom agents can search the web, read pages and take screenshots. Tools are off by default: on the **Agents** page, each tool has a checkbox. A tool is only offered when the agent's base model supports it (Ollama and the OpenRouter model list say whether a model can call tools and see images).
 
 | Tool | What it does | Needs |
 |---|---|---|
@@ -171,7 +189,7 @@ The server's checkout is only for deploying: every deploy discards edits to trac
 
 The container uses the host network, so it reaches an Ollama server on the same machine at `http://localhost:11434`. It listens on port 3000, or on `WEB_PORT` if it is set in `.env`. The compose file overrides `DATABASE_URL` and `AUTH_LOG_DIR` from the env files with the paths above.
 
-**Agent tools:** with `COMPOSE_PROFILES=tools` and the tool settings from section 3c in `.env`, every deploy also builds the `browser` image and starts the four tool containers. Without it, deploys run the app alone. The first deploy with tools is slow: the Playwright base image of `browser` is about 2 GB. The deploy only waits for the app to become healthy, so a tool container that fails does not stop a deploy; agents then report that the tool did not answer. Check them with `docker compose ps`. Update the Playwright version in `tools/browser` (Dockerfile and package.json) regularly, for example monthly: a pinned browser stops getting security fixes.
+**Agent tools:** with `COMPOSE_PROFILES=tools` and the tool settings from section 3d in `.env`, every deploy also builds the `browser` image and starts the four tool containers. Without it, deploys run the app alone. The first deploy with tools is slow: the Playwright base image of `browser` is about 2 GB. The deploy only waits for the app to become healthy, so a tool container that fails does not stop a deploy; agents then report that the tool did not answer. Check them with `docker compose ps`. Update the Playwright version in `tools/browser` (Dockerfile and package.json) regularly, for example monthly: a pinned browser stops getting security fixes.
 
 Useful commands in the checkout: `docker compose ps`, `docker compose logs -f web`, `docker compose restart web`.
 
@@ -228,8 +246,8 @@ If a migration has to be undone as well, stop the app (`docker compose stop web`
 ## System Prompt Handling
 
 - The **system prompt is never taken from the client**. System messages in a request are dropped.
-- For Ollama models, `src/app/api/chat/route.ts` adds the prompt to every request: the agent's own prompt if it has one, otherwise `SYSTEM_PROMPT`.
-- OpenAI and OpenRouter models get no system prompt.
+- For Ollama models and all agents, `src/app/api/chat/route.ts` adds the prompt to every request: the agent's own prompt if it has one, otherwise `SYSTEM_PROMPT`.
+- OpenAI and OpenRouter models chosen directly, not through an agent, get no system prompt.
 - Change it by editing `.env` and restarting the server.
 
 Supports multiline via escaped newlines:

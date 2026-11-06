@@ -38,3 +38,23 @@ export function parseSelection(sel: string | null | undefined): { kind: Selectio
     value: normalized.slice(sep + 1),
   };
 }
+
+/** The provider and model of an agent's base model. Stored as a selection; older agents hold a plain Ollama name. */
+export function parseBaseModel(baseModel: string | null | undefined): { provider: ProviderId; model: string } | null {
+  const { kind, value } = parseSelection(baseModel);
+  return kind === "agent" || !value ? null : { provider: kind, model: value };
+}
+
+/** Agents in the order the model lists show them: per provider, in the order of PROVIDERS, then by name. */
+export function sortAgents<T extends { name: string; baseModel: string }>(agents: T[]): T[] {
+  const rank = (agent: T) => {
+    const base = parseBaseModel(agent.baseModel);
+    return base ? PROVIDERS.indexOf(base.provider) : PROVIDERS.length;
+  };
+  return [...agents].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+/** A model's name without its first slash and what comes before it, such as the maker in "deepseek/deepseek-v4.1". */
+export function shortModelName(model: string): string {
+  return model.slice(model.indexOf("/") + 1);
+}

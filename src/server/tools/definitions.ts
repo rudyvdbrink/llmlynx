@@ -1,6 +1,6 @@
 // The tools agents can call, as the model sees them, and how each maps onto a
-// tool of an MCP server. The definitions are provider neutral: each chat
-// backend turns them into its own format (see toOllamaTools in chat/ollama.ts).
+// tool of an MCP server. The definitions are provider neutral: see
+// toFunctionTools for the format the chat backends send them in.
 // The model gets llmlynx's own short schemas rather than the servers' own,
 // which have more options than small local models handle well.
 
@@ -22,7 +22,7 @@ export type ToolDefinition = {
   description: string;
   parameters: { type: "object"; properties: Record<string, object>; required: string[] };
   server: ToolServerId;
-  /** What the base model must support (Ollama capabilities) for the tool to be offered. */
+  /** What the base model must support for the tool to be offered. */
   needs: ToolCapability[];
   /** How long a call may take, connecting included. */
   timeoutMs: number;
@@ -239,6 +239,25 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
 ];
+
+/** The tools in the format of the `tools` request field, which Ollama, Chat Completions and OpenRouter share. */
+export function toFunctionTools(tools: ToolDefinition[]) {
+  return tools.map((t) => ({
+    type: "function" as const,
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }));
+}
+
+/** The tools in the format of the `tools` request field of OpenAI's Responses API. */
+export function toResponsesTools(tools: ToolDefinition[]) {
+  return tools.map((t) => ({
+    type: "function" as const,
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+    strict: false,
+  }));
+}
 
 export function getToolDefinition(name: string): ToolDefinition | undefined {
   return TOOL_DEFINITIONS.find((d) => d.name === name);

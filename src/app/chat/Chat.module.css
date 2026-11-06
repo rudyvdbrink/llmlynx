@@ -573,6 +573,8 @@
   font-size: 13.5px;
   line-height: 1.5;
   overflow-wrap: anywhere;
+  /* The text does not move when it grows long enough to scroll */
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: var(--thinking-thumb) transparent;
   transition: --thinking-thumb 0.3s ease;

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/server/auth/session";
+import { getLastUsedSelection } from "@/server/chat/conversation";
 import AgentsClient from "./AgentsClient";
 
 // Server component: protect the Agents page
@@ -8,5 +9,5 @@ export default async function AgentsPage() {
   if (!user) {
     redirect("/login");
   }
-  return <AgentsClient initialUser={user} />;
+  return <AgentsClient initialUser={user} initialSelection={await getLastUsedSelection(user.id)} />;
 }

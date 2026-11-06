@@ -1,43 +1,40 @@
 // Which tools a chat gets. This is the one place that decides it: when plain
-// models or OpenAI / OpenRouter models get tools later, it changes here.
+// models get tools later, it changes here.
 
 import { validateAgentTools, type ToolAvailability } from "@/lib/agentTools";
-import { getOllamaModelInfo } from "@/server/chat/models";
 import { getToolServer } from "./config";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./definitions";
-
-export type ToolRequest = {
-  /** The agent the user chats with, with the tools checked for it; null for a plain model. */
-  agent: { tools: unknown } | null;
-  /** The Ollama server and model that run the chat; null for OpenAI and OpenRouter. */
-  ollama: { baseUrl: string; model: string } | null;
-};
 
 /** Why `def` cannot be used with a model that has `capabilities` (null: unknown), or null when it can. */
 function unavailableReason(def: ToolDefinition, capabilities: string[] | null): string | null {
   if (!getToolServer(def.server)) return "Not set up on this server";
-  if (!capabilities) return null; // Ollama did not say; the chat finds out
+  if (!capabilities) return null; // the provider did not say; the chat finds out
   if (!capabilities.includes("tools")) return "This model cannot use tools";
   if (def.needs.includes("vision") && !capabilities.includes("vision")) return "Needs a model that can see images";
   return null;
 }
 
+/** True when any tool is checked for the agent. */
+export function hasCheckedTools(agent: { tools: unknown }): boolean {
+  const checked = validateAgentTools(agent.tools);
+  return checked.ok && checked.value.length > 0;
+}
+
 /**
  * The tools a chat can call. Only custom agents get tools for now: an agent
  * gets the tools checked for it, minus those whose server is not set up and
- * those its base model cannot use.
+ * those its base model, with `capabilities` (null: unknown), cannot use.
  */
-export async function toolsFor({ agent, ollama }: ToolRequest): Promise<ToolDefinition[]> {
-  if (!agent || !ollama) return [];
+export function toolsFor(agent: { tools: unknown } | null, capabilities: string[] | null): ToolDefinition[] {
+  if (!agent) return [];
   const checked = validateAgentTools(agent.tools);
   if (!checked.ok || checked.value.length === 0) return [];
-  const capabilities = (await getOllamaModelInfo(ollama.baseUrl, ollama.model))?.capabilities ?? null;
   return TOOL_DEFINITIONS.filter((def) => checked.value.includes(def.name) && !unavailableReason(def, capabilities));
 }
 
 /**
- * For the agents page: which tools an agent could use on an Ollama model
- * with `capabilities` (null: unknown), and why not.
+ * For the agents page: which tools an agent could use on a model with
+ * `capabilities` (null: unknown), and why not.
  */
 export function toolAvailability(capabilities: string[] | null): ToolAvailability[] {
   return TOOL_DEFINITIONS.map((def) => {

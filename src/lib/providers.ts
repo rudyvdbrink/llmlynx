@@ -1,7 +1,7 @@
 // Model providers a user can connect on the account page. Shared by the
 // provider API routes, the account page and the model picker.
 
-export const PROVIDERS = ["ollama", "openai", "openrouter"] as const;
+export const PROVIDERS = ["ollama", "openrouter", "openai"] as const;
 
 export type ProviderId = (typeof PROVIDERS)[number];
 
@@ -39,4 +39,13 @@ export type ProviderSettings = {
 /** True when the provider can be used: Ollama always (it has a default server), others need a key. */
 export function isProviderReady(settings: ProviderSettings, provider: ProviderId): boolean {
   return provider === "ollama" || settings[provider].keyHint !== null;
+}
+
+// Ollama lists "llama3" as "llama3:latest".
+export const withOllamaTag = (name: string) => (/:[^/]*$/.test(name) ? name : `${name}:latest`);
+
+/** True when `models`, as `provider` lists them, include `model`. */
+export function hasModel(provider: ProviderId, models: string[], model: string): boolean {
+  if (provider !== "ollama") return models.includes(model);
+  return models.some((m) => withOllamaTag(m) === withOllamaTag(model));
 }

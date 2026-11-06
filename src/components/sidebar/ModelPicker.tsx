@@ -1,10 +1,22 @@
 "use client";
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useMemo, useRef, useState } from "react";
 import styles from "./Sidebar.module.css";
 import { isNarrowViewport } from "@/lib/viewport";
 
-export type PickerItem = { value: string; label: string; detail?: string };
+// A disabled item shows, greyed out, but cannot be picked. Items with the same
+// `group`, next to each other, show under that heading. An external item runs at
+// an outside provider, and shows in the color of links. `fullName` is for an item
+// whose label shortens it: it can be searched for, and shows on hover.
+export type PickerItem = {
+  value: string;
+  label: string;
+  detail?: string;
+  disabled?: boolean;
+  group?: string;
+  external?: boolean;
+  fullName?: string;
+};
 
 /**
  * A select-like button that opens a searchable list, for lists too long for a
@@ -24,6 +36,8 @@ export default function ModelPicker({
   emptyText,
   searchPlaceholder,
   disabled,
+  triggerClassName,
+  openAtTop,
 }: {
   label: string;
   items: PickerItem[];
@@ -38,6 +52,9 @@ export default function ModelPicker({
   emptyText: string;
   searchPlaceholder: string;
   disabled?: boolean;
+  triggerClassName?: string;
+  // Open at the start of the list, even when the current value is further down
+  openAtTop?: boolean;
 }) {
   const [query, setQuery] = useState("");
   // Item highlighted with the arrow keys or the mouse; null follows the defaults below.
@@ -53,15 +70,17 @@ export default function ModelPicker({
   const filtered = useMemo(() => {
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     return items.filter((item) => {
-      const text = `${item.label} ${item.detail ?? ""}`.toLowerCase();
+      const text = `${item.label} ${item.detail ?? ""} ${item.fullName ?? ""} ${item.group ?? ""}`.toLowerCase();
       return words.every((w) => text.includes(w));
     });
   }, [items, query]);
 
-  // Without a highlighted item: the current value, or the first match once the user types.
+  // Without a highlighted item: the current value, or the first usable match once the user types.
   const activeIndex = Math.max(
     0,
-    filtered.findIndex((item) => item.value === (activeValue ?? (query ? filtered[0]?.value : value)))
+    filtered.findIndex(
+      (item) => item.value === (activeValue ?? (query ? filtered.find((match) => !match.disabled)?.value : value))
+    )
   );
   const activeItem = filtered[activeIndex];
   const optionId = (index: number) => `${listId}-option-${index}`;
@@ -83,11 +102,12 @@ export default function ModelPicker({
     if (isOpen && !isNarrowViewport()) searchRef.current?.focus();
   }, [isOpen]);
 
-  // Keep the highlighted item in view.
+  // Keep the highlighted item in view, unless the list is to open at its start
+  const stayAtTop = !!openAtTop && !activeValue && !query;
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || stayAtTop) return;
     listRef.current?.querySelector('[data-active="true"]')?.scrollIntoView({ block: "nearest" });
-  }, [isOpen, activeIndex, filtered]);
+  }, [isOpen, stayAtTop, activeIndex, filtered]);
 
   // Close on outside click or Escape
   useEffect(() => {
@@ -109,7 +129,10 @@ export default function ModelPicker({
   function onSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     const move = (step: number) => {
       e.preventDefault();
-      const next = filtered[Math.min(filtered.length - 1, Math.max(0, activeIndex + step))];
+      // Disabled items are skipped, in the direction of the move
+      let index = Math.min(filtered.length - 1, Math.max(0, activeIndex + step));
+      while (filtered[index]?.disabled) index += Math.sign(step);
+      const next = filtered[index];
       if (next) setActiveValue(next.value);
     };
     if (e.key === "ArrowDown") move(1);
@@ -118,7 +141,7 @@ export default function ModelPicker({
     else if (e.key === "PageUp") move(-10);
     else if (e.key === "Enter") {
       e.preventDefault();
-      if (activeItem) pick(activeItem);
+      if (activeItem && !activeItem.disabled) pick(activeItem);
     } else if (e.key === "Tab") close(false);
   }
 
@@ -127,7 +150,7 @@ export default function ModelPicker({
       <button
         type="button"
         ref={triggerRef}
-        className={`${styles.modelSelect} ${styles.pickerTrigger}`}
+        className={`${styles.modelSelect} ${styles.pickerTrigger} ${triggerClassName ?? ""}`}
         aria-haspopup="listbox"
         aria-expanded={isOpen}
         aria-label={`${label}: ${valueLabel}`}
@@ -175,21 +198,33 @@ export default function ModelPicker({
 
           <ul className={styles.pickerList} id={listId} role="listbox" aria-label={label} ref={listRef}>
             {filtered.map((item, index) => (
-              <li
-                key={item.value}
-                id={optionId(index)}
-                role="option"
-                aria-selected={item.value === value}
-                data-active={index === activeIndex}
-                className={styles.pickerOption}
-                // Keep focus in the search field while clicking.
-                onMouseDown={(e) => e.preventDefault()}
-                onMouseMove={() => setActiveValue(item.value)}
-                onClick={() => pick(item)}
-              >
-                <span>{item.label}</span>
-                {item.detail && <span className={styles.pickerDetail}>{item.detail}</span>}
-              </li>
+              <Fragment key={item.value}>
+                {item.group && item.group !== filtered[index - 1]?.group && (
+                  <li role="presentation" className={styles.pickerGroup}>
+                    {item.group}
+                  </li>
+                )}
+                <li
+                  id={optionId(index)}
+                  role="option"
+                  aria-selected={item.value === value}
+                  aria-disabled={item.disabled || undefined}
+                  data-active={index === activeIndex && !item.disabled}
+                  className={`${styles.pickerOption} ${item.external ? styles.pickerOptionExternal : ""}`}
+                  title={item.fullName}
+                  // Keep focus in the search field while clicking.
+                  onMouseDown={(e) => e.preventDefault()}
+                  onMouseMove={() => {
+                    if (!item.disabled) setActiveValue(item.value);
+                  }}
+                  onClick={() => {
+                    if (!item.disabled) pick(item);
+                  }}
+                >
+                  <span>{item.label}</span>
+                  {item.detail && <span className={styles.pickerDetail}>{item.detail}</span>}
+                </li>
+              </Fragment>
             ))}
           </ul>
         </div>

@@ -101,14 +101,6 @@
   margin: 0 0 6px 0;
 }
 
-/* Title row for + New button */
-.sidebarTitleRow {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
 /* Account block */
 .userEmail {
   font-size: 13px;
@@ -127,21 +119,32 @@
   text-decoration: underline;
 }
 
-/* Small inline action button (e.g., + New) */
-.inlineLink {
-  background: transparent;
-  border: none;
+/* Like the chat's send button. Its center is on the same line as the select
+   chevrons (see .modelSelect) and the conversations' three dots (see .kebabBtn):
+   16px from the right edge. */
+.newConversationBtn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  margin-right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 0;
-  margin: 0;
-  font-size: 13px;
-  color: var(--accent);
-  text-decoration: none;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #1d2a44;
+  color: var(--text);
   cursor: pointer;
+  transition: background 0.12s ease, transform 0.02s ease;
 }
-.inlineLink:hover,
-.inlineLink:focus-visible {
-  color: var(--accent-hover);
-  text-decoration: underline;
+.newConversationBtn:hover { background: #223152; }
+.newConversationBtn:active { transform: translateY(1px); }
+/* The focus ring is drawn inside the border: the list clips anything outside it. */
+.newConversationBtn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 /* Divider */
@@ -177,7 +180,8 @@
   /* Chevron in var(--muted); a data URI cannot use CSS variables */
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239aa4b2' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 10px center;
+  /* Inside the 1px border: the chevron's center is 16px from the outer edge */
+  background-position: right 9px center;
   background-size: 12px 12px;
   color: var(--text);
   border: 1px solid var(--border);
@@ -264,6 +268,14 @@
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar) transparent;
 }
+.pickerGroup {
+  padding: 8px 9px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
 .pickerOption {
   display: flex;
   justify-content: space-between;
@@ -275,8 +287,13 @@
   overflow-wrap: anywhere;
   cursor: pointer;
 }
+.pickerOptionExternal { color: var(--link); }
 .pickerOption[data-active="true"] { background: var(--surface-hover); }
-.pickerOption[aria-selected="true"] { color: var(--accent); }
+.pickerOption[aria-selected="true"] { color: var(--amber); }
+.pickerOption[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
 .pickerDetail {
   flex: none;
   max-width: 45%;
@@ -324,10 +341,18 @@
   background: var(--panel);
   padding-bottom: 4px;
 }
+/* The search field, and the new conversation button beside it */
+.conversationSearchRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+}
 /* Search field with a magnifying glass inside, on the left */
 .conversationSearchBox {
   position: relative;
-  margin: 2px 0 0;
+  flex: 1;
+  min-width: 0;
 }
 .conversationSearchIcon {
   position: absolute;
@@ -426,13 +451,16 @@
   align-items: center;
   font-size: 13px;               /* keep the previous font size */
 }
+.conversationItem.pinned {
+  border-color: var(--accent);
+}
 .conversationItem:hover,
 .conversationItem:focus-within {
-  border-color: var(--accent);   /* outline effect without glow to avoid clip */
+  border-color: var(--amber);    /* outline effect without glow to avoid clip */
   background: #0d1424;
 }
 .conversationItem.active {
-  border-color: var(--accent);
+  border-color: var(--amber);
 }
 
 /* Inner main button (title area) */
@@ -457,9 +485,12 @@
   color: var(--muted);
   width: 28px;
   height: 28px;
+  /* Without padding, the dots are centered: they are wider than what padding leaves */
+  padding: 0;
   border-radius: 6px;
   cursor: pointer;
-  margin-right: 6px;
+  /* Its center is 16px from the item's right edge, in line with the select chevrons */
+  margin-right: 1px;
 }
 .kebabBtn:hover,
 .kebabBtn:focus-visible {

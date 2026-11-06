@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/server/auth/session";
+import { getLastUsedSelection } from "@/server/chat/conversation";
 import ChatClientPage from "./ChatClientPage";
 
 // `conversation` is set by the sidebar on other pages, to open that conversation here
@@ -13,5 +14,11 @@ export default async function ChatPage({ searchParams }: Props) {
   }
 
   const { conversation } = await searchParams;
-  return <ChatClientPage user={user} initialConversationId={typeof conversation === "string" ? conversation : null} />;
+  return (
+    <ChatClientPage
+      user={user}
+      initialConversationId={typeof conversation === "string" ? conversation : null}
+      initialSelection={await getLastUsedSelection(user.id)}
+    />
+  );
 }

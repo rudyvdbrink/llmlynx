@@ -22,10 +22,27 @@ function Icon({ size = 16, className, children }: IconProps & { children: React.
   );
 }
 
+export function CheckIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M20 6 9 17l-5-5" />
+    </Icon>
+  );
+}
+
 export function ChevronRightIcon(props: IconProps) {
   return (
     <Icon {...props}>
       <path d="m9 18 6-6-6-6" />
+    </Icon>
+  );
+}
+
+export function PlusIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M5 12h14" />
+      <path d="M12 5v14" />
     </Icon>
   );
 }
