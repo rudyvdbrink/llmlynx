@@ -4,8 +4,15 @@ import { useEffect, useState } from "react";
 import styles from "./Sidebar.module.css";
 import ModelPicker, { type PickerItem } from "./ModelPicker";
 import { useAgentList, useAgentStatuses, useProviderModels, useProviderSettings } from "@/hooks/useModelCatalog";
-import { DEFAULT_MODELS, isProviderReady, PROVIDER_LABELS, PROVIDERS } from "@/lib/providers";
-import { baseModelLabel, normalizeSelection, parseSelection, toSelection, type SelectionKind } from "@/lib/selection";
+import { DEFAULT_MODELS, isKeyProvider, isProviderReady, PROVIDER_LABELS, PROVIDERS } from "@/lib/providers";
+import {
+  normalizeSelection,
+  parseBaseModel,
+  parseSelection,
+  shortModelName,
+  toSelection,
+  type SelectionKind,
+} from "@/lib/selection";
 
 // The provider dropdown lists the model providers, then the user's agents.
 const KINDS: SelectionKind[] = [...PROVIDERS, "agent"];
@@ -58,18 +65,24 @@ export default function ModelSection({
     ? agents.map((a) => {
         const status = statuses[a.id];
         const until = status?.expiresOn ? `until ${status.expiresOn}` : null;
+        const base = parseBaseModel(a.baseModel);
         return {
           value: a.id,
           label: a.name,
-          detail: status?.unavailable ?? until ?? baseModelLabel(a.baseModel),
+          detail: status?.unavailable ?? until ?? (base ? shortModelName(base.model) : undefined),
           disabled: !!status?.unavailable,
+          external: !!base && isKeyProvider(base.provider),
+          group: base ? PROVIDER_LABELS[base.provider] : undefined,
+          fullName: base?.model,
         };
       })
-    : models.map((m) => ({ value: m, label: m }));
+    : models.map((m) => ({ value: m, label: shortModelName(m), external: current.kind !== "ollama", fullName: m }));
 
   // The current selection stays visible even when it is not in the list
   // (still loading, an uninstalled model, or a deleted agent).
-  const valueLabel = isAgent ? (agents.find((a) => a.id === current.value)?.name ?? "Unknown agent") : current.value;
+  const valueLabel = isAgent
+    ? (agents.find((a) => a.id === current.value)?.name ?? "Unknown agent")
+    : shortModelName(current.value);
 
   // When Ollama cannot be reached, the list holds common model names instead.
   const notice = error && models.length > 0 ? `${error}. Showing common models.` : error;

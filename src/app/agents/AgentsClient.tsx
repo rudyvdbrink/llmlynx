@@ -1,12 +1,19 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
-import ModelPicker from "@/components/sidebar/ModelPicker";
+import { CheckIcon } from "@/components/icons";
+import ModelPicker, { type PickerItem } from "@/components/sidebar/ModelPicker";
 import sidebarStyles from "@/components/sidebar/Sidebar.module.css";
 import { useConversationList } from "@/hooks/useConversationList";
-import { useAgentList, useAgentStatuses, useProviderModels, useProviderSettings } from "@/hooks/useModelCatalog";
+import {
+  notifyAgentsChanged,
+  useAgentList,
+  useAgentStatuses,
+  useProviderModels,
+  useProviderSettings,
+} from "@/hooks/useModelCatalog";
 import { DEFAULT_SETTINGS, optionFamily, type AgentSettings, type OptionFamily, type OptionValue } from "@/lib/agentSettings";
 import {
   AGENT_TOOL_INFO,
@@ -18,7 +25,7 @@ import {
   type AgentToolName,
 } from "@/lib/agentTools";
 import { DEFAULT_MODELS, hasModel, isProviderReady, PROVIDER_LABELS, PROVIDERS, type ProviderId } from "@/lib/providers";
-import { baseModelLabel, DEFAULT_SELECTION, parseBaseModel, toSelection } from "@/lib/selection";
+import { DEFAULT_SELECTION, parseBaseModel, toSelection } from "@/lib/selection";
 import type { AgentSummary, SessionUser } from "@/lib/types";
 import chatStyles from "../chat/Chat.module.css";
 import styles from "./Agents.module.css";
@@ -26,29 +33,38 @@ import OptionsPanel from "./OptionsPanel";
 import { useBaseModelInfo } from "./useBaseModelInfo";
 import { ToolStepIcon } from "../chat/components/ToolLine";
 
-// The value of the agent dropdown while creating a new agent
-const NEW_AGENT = "";
+// In the base model list, entries for agents are selections of agents, so they
+// cannot be mistaken for a model. This one starts a new agent.
+const NEW_AGENT = toSelection("agent", "new");
+const AGENT_PREFIX = toSelection("agent", "");
 
 // Below this context window, web pages crowd out the conversation
 const MIN_TOOLS_NUM_CTX = 8192;
 
-type Status = { kind: "success" | "error"; msg: string };
+// How long the check mark stays after saving
+const SAVED_MS = 1500;
 
 // Each kind of provider keeps its own values, so trying another provider loses nothing
 const newOptions = (): Record<OptionFamily, AgentSettings> => ({ ollama: DEFAULT_SETTINGS.ollama, api: DEFAULT_SETTINGS.api });
 
-export default function AgentsClient({ initialUser }: { initialUser: SessionUser }) {
+export default function AgentsClient({
+  initialUser,
+  initialSelection,
+}: {
+  initialUser: SessionUser;
+  initialSelection: string | null;
+}) {
   const router = useRouter();
 
   // Sidebar state (auth ensured by server)
   const conversationList = useConversationList();
-  const [sidebarSelection, setSidebarSelection] = useState(DEFAULT_SELECTION);
+  const [sidebarSelection, setSidebarSelection] = useState(initialSelection ?? DEFAULT_SELECTION);
   const goToChat = () => router.push("/chat");
   const openInChat = (id: string) => router.push(`/chat?conversation=${encodeURIComponent(id)}`);
 
   // Agent form state (UI)
-  const [agents, setAgents] = useAgentList();
-  const { statuses, refresh: refreshStatuses } = useAgentStatuses();
+  const [agents] = useAgentList();
+  const { statuses } = useAgentStatuses();
   const providerSettings = useProviderSettings();
   // Set while editing a saved agent; null while creating a new one.
   const [agentId, setAgentId] = useState<string | null>(null);
@@ -63,7 +79,8 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
   const [maxToolCalls, setMaxToolCalls] = useState(DEFAULT_MAX_TOOL_CALLS);
 
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<Status | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   // The model last picked per provider, so switching back restores it
   const lastModelRef = useRef<Partial<Record<ProviderId, string>>>({});
 
@@ -85,10 +102,17 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
       ? `${modelsError}. Showing common models.`
       : modelsError
     : modelGone
-      ? `${baseModel} is no longer available on ${providerLabel}. Pick another model; the rest of this agent stays as it is.`
+      ? `${baseModel} ${provider === "ollama" ? "is not on your Ollama server" : `is no longer available on ${providerLabel}`}. Pick another model; the rest of this agent stays as it is.`
       : expiresOn
         ? `${providerLabel} retires ${baseModel} on ${expiresOn}. Pick another model before then to keep this agent working.`
         : null;
+
+  // The check mark after saving goes away by itself
+  useEffect(() => {
+    if (!saved) return;
+    const timer = setTimeout(() => setSaved(false), SAVED_MS);
+    return () => clearTimeout(timer);
+  }, [saved]);
 
   function toggleTool(name: AgentToolName, on: boolean) {
     setTools((prev) => AGENT_TOOLS.filter((t) => (t === name ? on : prev.includes(t))));
@@ -109,25 +133,17 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
     setModelPick(lastModelRef.current[next] ?? DEFAULT_MODELS[next]);
   }
 
+  // Keeps the provider and model: only what makes up the agent is cleared
   function startNewAgent() {
     setAgentId(null);
     setAgentName("");
-    setProvider("ollama");
-    setModelPick(DEFAULT_MODELS.ollama);
     setSystemPrompt("");
     setOpts(newOptions());
     setTools([]);
     setMaxToolCalls(DEFAULT_MAX_TOOL_CALLS);
-    lastModelRef.current = {};
   }
 
-  async function onChangeAgent(e: React.ChangeEvent<HTMLSelectElement>) {
-    const id = e.target.value;
-    setStatus(null);
-    if (id === NEW_AGENT) {
-      startNewAgent();
-      return;
-    }
+  async function loadAgent(id: string) {
     try {
       const res = await fetch(`/api/agents/${id}`);
       if (!res.ok) throw new Error("Failed to load agent");
@@ -140,7 +156,6 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
       setAgentName(a.name ?? "");
       setProvider(base.provider);
       setModelPick(base.model);
-      lastModelRef.current = {};
       setSystemPrompt(a.systemPrompt ?? "");
       setOpts({
         ...newOptions(),
@@ -151,8 +166,16 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
       const savedMax = validateMaxToolCalls(a.maxToolCalls);
       setMaxToolCalls(savedMax.ok ? savedMax.value : DEFAULT_MAX_TOOL_CALLS);
     } catch (err) {
-      setStatus({ kind: "error", msg: (err as Error)?.message || "Failed to load agent" });
+      setError((err as Error)?.message || "Failed to load agent");
     }
+  }
+
+  function onPickBaseModel(value: string) {
+    setError(null);
+    if (value === NEW_AGENT) startNewAgent();
+    else if (value.startsWith(AGENT_PREFIX)) loadAgent(value.slice(AGENT_PREFIX.length));
+    // While editing an agent, another model is that agent's new base model
+    else setModelPick(value);
   }
 
   const isEditingExisting = !!agentId;
@@ -169,7 +192,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
     );
   }
 
-  // Sends the form to the API. Returns the saved agent, or null after showing an error.
+  // Sends the form to the API. Returns the saved agent; throws with what went wrong.
   async function submitAgent(url: string, method: "POST" | "PATCH", failLabel: string) {
     const res = await fetch(url, {
       method,
@@ -189,63 +212,77 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
   }
 
   async function onSave() {
-    setStatus(null);
+    setError(null);
+    setSaved(false);
     if (!agentName.trim()) {
-      setStatus({ kind: "error", msg: "Please enter an agent name." });
+      setError("Please enter an agent name.");
       return;
     }
     if (!baseModel.trim()) {
-      setStatus({ kind: "error", msg: "Please select a base model." });
+      setError("Please select a base model.");
       return;
     }
 
     setSaving(true);
     try {
-      const created = await submitAgent("/api/agents", "POST", "Save");
-      if (created?.id) {
-        const { id, name, baseModel, systemPrompt, createdAt, updatedAt } = created;
-        setAgents((prev) =>
-          prev.some((a) => a.id === id) ? prev : [{ id, name, baseModel, systemPrompt, createdAt, updatedAt }, ...prev]
-        );
-        // Switch to editing the newly-created agent
-        setModelPick(parseBaseModel(baseModel)?.model ?? modelPick);
-        setAgentId(id);
-        refreshStatuses();
+      const agent = isEditingExisting
+        ? await submitAgent(`/api/agents/${agentId}`, "PATCH", "Update")
+        : await submitAgent("/api/agents", "POST", "Save");
+      // Switch to editing the newly-created agent
+      if (!isEditingExisting && agent?.id) {
+        setModelPick(baseModel);
+        setAgentId(agent.id);
       }
-      setStatus({ kind: "success", msg: "Agent saved." });
+      notifyAgentsChanged();
+      setSaved(true);
     } catch (e) {
-      setStatus({ kind: "error", msg: (e as Error)?.message || "Save failed." });
+      setError((e as Error)?.message || "Save failed.");
     } finally {
       setSaving(false);
     }
   }
 
-  async function onUpdate() {
+  async function onDelete() {
     if (!agentId) return;
-    setStatus(null);
+    setError(null);
+    setSaved(false);
+    const ok = window.confirm(`Delete the agent "${agentName.trim()}"? This cannot be undone. Its conversations stay.`);
+    if (!ok) return;
+
     setSaving(true);
     try {
-      await submitAgent(`/api/agents/${agentId}`, "PATCH", "Update");
-      setAgents((prev) =>
-        prev.map((a) =>
-          a.id === agentId
-            ? {
-                ...a,
-                name: agentName.trim() || a.name,
-                baseModel: selection,
-                updatedAt: new Date().toISOString(),
-              }
-            : a
-        )
-      );
-      refreshStatuses();
-      setStatus({ kind: "success", msg: "Agent updated." });
+      const res = await fetch(`/api/agents/${agentId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+      if (sidebarSelection === toSelection("agent", agentId)) setSidebarSelection(DEFAULT_SELECTION);
+      startNewAgent();
+      notifyAgentsChanged();
     } catch (e) {
-      setStatus({ kind: "error", msg: (e as Error)?.message || "Update failed." });
+      setError((e as Error)?.message || "Delete failed.");
     } finally {
       setSaving(false);
     }
   }
+
+  // The provider's agents come first in the base model list; picking one opens it.
+  const providerAgents = agents.filter((a) => parseBaseModel(a.baseModel)?.provider === provider);
+  const modelItems: PickerItem[] = models.map((m) => ({
+    value: m,
+    label: m,
+    detail: expiries[m] ? `until ${expiries[m]}` : undefined,
+  }));
+  const pickerItems: PickerItem[] =
+    providerAgents.length === 0 && !isEditingExisting
+      ? modelItems
+      : [
+          ...(isEditingExisting ? [{ value: NEW_AGENT, label: "New agent", group: "Agents" }] : []),
+          ...providerAgents.map((a) => ({
+            value: toSelection("agent", a.id),
+            label: a.name,
+            detail: statuses[a.id]?.unavailable ?? parseBaseModel(a.baseModel)?.model,
+            group: "Agents",
+          })),
+          ...modelItems.map((item) => ({ ...item, group: "Base models" })),
+        ];
 
   const headerSelect = `${sidebarStyles.modelSelect} ${styles.headerControl}`;
 
@@ -265,40 +302,8 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
       }}
     >
       <div className={`${chatStyles.chatArea} ${styles.agentsArea}`}>
-        {/* Feedback banner */}
-        {status && (
-          <div
-            role="status"
-            aria-live="polite"
-            className={`${styles.status} ${status.kind === "success" ? styles.statusSuccess : styles.statusError}`}
-          >
-            {status.msg}
-          </div>
-        )}
-
         {/* Header inputs */}
         <section className={styles.headerRow}>
-          <div className={styles.fieldGroup}>
-            <h2 className={styles.sectionTitle}>Agent</h2>
-            <select
-              className={headerSelect}
-              aria-label="Agent"
-              value={agentId ?? NEW_AGENT}
-              onChange={onChangeAgent}
-              disabled={saving}
-            >
-              <option value={NEW_AGENT}>New agent</option>
-              {agents.map((a) => {
-                const problem = statuses[a.id]?.unavailable;
-                return (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({problem ?? baseModelLabel(a.baseModel)})
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-
           <div className={styles.fieldGroup}>
             <h2 className={styles.sectionTitle}>Agent name</h2>
             <input
@@ -312,18 +317,6 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
             />
           </div>
 
-          <div className={styles.actionsBlock}>
-            <button
-              type="button"
-              className={`${styles.primaryBtn} ${styles.headerControl}`}
-              onClick={isEditingExisting ? onUpdate : onSave}
-              disabled={saving}
-              title={isEditingExisting ? "Update this agent" : "Create a new agent"}
-            >
-              {saving ? (isEditingExisting ? "Updating..." : "Saving...") : isEditingExisting ? "Update" : "Save agent"}
-            </button>
-          </div>
-
           <div className={styles.fieldGroup}>
             <h2 className={styles.sectionTitle}>Provider</h2>
             <select
@@ -334,9 +327,11 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
               disabled={saving}
             >
               {PROVIDERS.map((p) => {
-                const noKey = p !== provider && !!providerSettings && !isProviderReady(providerSettings, p);
+                const noKey = !!providerSettings && !isProviderReady(providerSettings, p);
+                // Agents on a provider without a key must stay reachable, to fix or delete them
+                const hasAgents = agents.some((a) => parseBaseModel(a.baseModel)?.provider === p);
                 return (
-                  <option key={p} value={p} disabled={noKey}>
+                  <option key={p} value={p} disabled={noKey && !hasAgents && p !== provider}>
                     {PROVIDER_LABELS[p]}
                     {noKey ? " (no API key)" : ""}
                   </option>
@@ -345,29 +340,62 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
             </select>
           </div>
 
-          <div className={`${styles.fieldGroup} ${styles.modelField}`}>
+          <div className={styles.fieldGroup}>
             <h2 className={styles.sectionTitle}>Base model</h2>
             <ModelPicker
               label="Base model"
-              items={models.map((m) => ({ value: m, label: m, detail: expiries[m] ? `until ${expiries[m]}` : undefined }))}
+              items={pickerItems}
               value={baseModel}
               valueLabel={baseModel || "No model selected"}
               open={modelPickerOpen}
               onOpenChange={setModelPickerOpen}
-              onPick={setModelPick}
+              onPick={onPickBaseModel}
               loading={modelsLoading}
               notice={modelsError}
               noticeIsError={!!modelsError && models.length === 0}
               emptyText="No models available"
-              searchPlaceholder="Search models…"
+              searchPlaceholder={providerAgents.length > 0 ? "Search agents and models…" : "Search models…"}
               disabled={saving}
               triggerClassName={styles.headerControl}
+              // The agents come first, out of sight above the current model otherwise
+              openAtTop={!!pickerItems[0]?.group}
             />
           </div>
+
+          <div className={styles.actionsBlock}>
+            {saved && (
+              <span className={styles.savedMark} role="status" aria-label={isEditingExisting ? "Agent saved" : "Saved"}>
+                <CheckIcon size={18} />
+              </span>
+            )}
+            {isEditingExisting && (
+              <button
+                type="button"
+                className={`${styles.dangerBtn} ${styles.headerControl}`}
+                onClick={onDelete}
+                disabled={saving}
+                title="Delete this agent"
+              >
+                Delete
+              </button>
+            )}
+            <button
+              type="button"
+              className={`${styles.primaryBtn} ${styles.headerControl}`}
+              onClick={onSave}
+              disabled={saving}
+              title={isEditingExisting ? "Update this agent" : "Create a new agent"}
+            >
+              {saving ? (isEditingExisting ? "Updating..." : "Saving...") : isEditingExisting ? "Update" : "Save agent"}
+            </button>
+          </div>
         </section>
-        {/* Always takes a line, so that a notice does not move the page when the model changes */}
-        <p className={styles.modelNotice} role={modelNotice ? "status" : undefined}>
-          {modelNotice}
+        {/* Always takes room, so that a notice or an error does not move the page */}
+        <p
+          className={`${styles.modelNotice} ${error ? styles.modelNoticeError : ""}`}
+          role={error || modelNotice ? "status" : undefined}
+        >
+          {error ?? modelNotice}
         </p>
 
         <section className={styles.section}>
@@ -472,7 +500,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
           onChange={setOpt}
           onReset={(optionsFamily) => {
             setOpts((prev) => ({ ...prev, [optionsFamily]: DEFAULT_SETTINGS[optionsFamily] }));
-            setStatus(null);
+            setError(null);
           }}
           disabled={saving}
         />

@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import styles from "./Chat.module.css";
 import AppShell from "@/components/AppShell";
-import { DEFAULT_SELECTION } from "@/lib/selection";
+import { useProviderModels } from "@/hooks/useModelCatalog";
+import { DEFAULT_MODELS, hasModel } from "@/lib/providers";
+import { toSelection } from "@/lib/selection";
 import type { SessionUser } from "@/lib/types";
 import { useConversations } from "./hooks/useConversations";
 import { useChat } from "./hooks/useChat";
@@ -13,12 +15,22 @@ import Composer from "./components/Composer";
 export default function ChatClientPage({
   user,
   initialConversationId,
+  initialSelection,
 }: {
   user: SessionUser;
   initialConversationId: string | null;
+  // What the user chatted with last; null when they have not chatted yet
+  initialSelection: string | null;
 }) {
   // Selection can be "ollama:<name>", "openai:<name>", "openrouter:<name>" or "agent:<id>"
-  const [selection, setSelection] = useState<string>(DEFAULT_SELECTION);
+  const [picked, setSelection] = useState<string | null>(initialSelection);
+  // Until there is a choice: an Ollama model that is on the user's server
+  const { models: ollamaModels } = useProviderModels(picked ? null : "ollama");
+  const firstModel =
+    ollamaModels.length > 0 && !hasModel("ollama", ollamaModels, DEFAULT_MODELS.ollama)
+      ? ollamaModels[0]
+      : DEFAULT_MODELS.ollama;
+  const selection = picked ?? toSelection("ollama", firstModel);
   // Bumped to remount the composer, which clears its draft.
   const [composerKey, setComposerKey] = useState(0);
 

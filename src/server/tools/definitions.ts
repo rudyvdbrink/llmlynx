@@ -240,11 +240,22 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
   },
 ];
 
-/** The tools in the format of the `tools` request field, which Ollama, OpenAI and OpenRouter share. */
+/** The tools in the format of the `tools` request field, which Ollama, Chat Completions and OpenRouter share. */
 export function toFunctionTools(tools: ToolDefinition[]) {
   return tools.map((t) => ({
     type: "function" as const,
     function: { name: t.name, description: t.description, parameters: t.parameters },
+  }));
+}
+
+/** The tools in the format of the `tools` request field of OpenAI's Responses API. */
+export function toResponsesTools(tools: ToolDefinition[]) {
+  return tools.map((t) => ({
+    type: "function" as const,
+    name: t.name,
+    description: t.description,
+    parameters: t.parameters,
+    strict: false,
   }));
 }
 

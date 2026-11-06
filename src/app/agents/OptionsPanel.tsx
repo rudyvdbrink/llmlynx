@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useEffect, useId, useRef, useState } from "react";
-import { DEFAULT_SETTINGS, optionFamily, type AgentSettings, type OptionFamily, type OptionValue } from "@/lib/agentSettings";
+import { optionFamily, type AgentSettings, type OptionFamily, type OptionValue } from "@/lib/agentSettings";
 import type { ProviderId } from "@/lib/providers";
 import { parseBaseModel } from "@/lib/selection";
 import type { BaseModelInfo } from "@/lib/types";
@@ -9,9 +9,9 @@ import {
   contextStops,
   currentValue,
   DEFAULT_CONTEXT_MAX,
+  defaultValueOf,
   optionGroupsFor,
   parseOptionValue,
-  reasoningLabel,
   reasoningOptions,
   type OptionField,
   type OptionGroup,
@@ -30,6 +30,48 @@ function useContentHeight() {
     return () => observer.disconnect();
   }, []);
   return [ref, height] as const;
+}
+
+/**
+ * The number box of an option. It shows the value, or the default while the
+ * option is not set; while the user types, it shows what they typed, so that
+ * clearing the box to type a new number does not bring the default back.
+ */
+function NumberBox({
+  id,
+  field,
+  value,
+  shown,
+  onChange,
+  disabled,
+}: {
+  id: string;
+  field: OptionField;
+  value: number | undefined;
+  shown: number | undefined;
+  onChange: (value: number | undefined) => void;
+  disabled: boolean;
+}) {
+  const [typed, setTyped] = useState<string | null>(null);
+  // Moving the slider while the box has focus changes the value without typing
+  const stillTyped = typed !== null && parseOptionValue(field, typed) === value;
+  return (
+    <input
+      id={id}
+      className={field.key === "seed" ? styles.seedNumber : undefined}
+      type="number"
+      {...field.number}
+      placeholder={field.noDefault}
+      aria-label={field.label}
+      value={stillTyped ? typed : (shown ?? "")}
+      onChange={(e) => {
+        setTyped(e.target.value);
+        onChange(parseOptionValue(field, e.target.value));
+      }}
+      onBlur={() => setTyped(null)}
+      disabled={disabled}
+    />
+  );
 }
 
 /** One option: its label, its controls, and a way back to its default. */
@@ -51,10 +93,8 @@ function OptionRow({
   disabled: boolean;
 }) {
   const id = useId();
-  const defaultValue = DEFAULT_SETTINGS[family][field.key];
-  const modelDefault = info?.defaults[field.key];
-  const numeric = typeof value === "number" ? value : undefined;
-  const isSet = value !== undefined && value !== defaultValue;
+  const shown = value ?? defaultValueOf(field, family, info);
+  const numeric = typeof shown === "number" ? shown : undefined;
   const limit = !field.doublingSliderTo
     ? null
     : field.doublingSliderTo === "contextLength"
@@ -77,19 +117,17 @@ function OptionRow({
     }
     if (field.choices || field.reasoningChoices) {
       const choices = field.choices ?? reasoningOptions(info?.reasoning ?? null);
-      const known = modelDefault !== undefined ? ` (${reasoningLabel(modelDefault)})` : "";
+      // The default shows as the choice it is; only an unknown default gets its own entry
+      const selected = choices.find((c) => String(c.value) === String(shown));
       return (
         <select
           id={id}
           className={styles.inlineSelect}
-          value={value === undefined ? "" : String(value)}
-          onChange={(e) => {
-            const choice = choices.find((c) => String(c.value) === e.target.value);
-            onChange(choice?.value);
-          }}
+          value={selected ? String(selected.value) : ""}
+          onChange={(e) => onChange(choices.find((c) => String(c.value) === e.target.value)?.value)}
           disabled={disabled}
         >
-          {defaultValue === undefined && <option value="">Model default{known}</option>}
+          {!selected && <option value="">Model default</option>}
           {choices.map((c) => (
             <option key={c.value} value={c.value}>
               {c.label}
@@ -100,35 +138,30 @@ function OptionRow({
     }
     if (field.doublingSliderTo) {
       const stops = contextStops(limit ?? DEFAULT_CONTEXT_MAX);
-      const position = numeric ?? (typeof defaultValue === "number" ? defaultValue : stops[stops.length - 1]);
+      const position = numeric ?? stops[stops.length - 1];
       // A typed value between two stops shows at the lower one
       const index = Math.max(0, stops.filter((s) => s <= position).length - 1);
       return (
         <input
           id={id}
-          className={numeric === undefined ? styles.sliderAtDefault : undefined}
           type="range"
           min={0}
           max={stops.length - 1}
           step={1}
           value={index}
-          aria-valuetext={numeric === undefined ? "Default" : String(numeric)}
+          aria-valuetext={String(position)}
           onChange={(e) => onChange(stops[Number(e.target.value)])}
           disabled={disabled}
         />
       );
     }
     if (field.slider) {
-      const { rest, ...range } = field.slider;
-      const position = numeric ?? (typeof modelDefault === "number" ? modelDefault : rest);
       return (
         <input
           id={id}
-          className={numeric === undefined ? styles.sliderAtDefault : undefined}
           type="range"
-          {...range}
-          value={position}
-          aria-valuetext={numeric === undefined ? "Default" : String(numeric)}
+          {...field.slider}
+          value={numeric ?? field.slider.min}
           onChange={(e) => onChange(parseOptionValue(field, e.target.value))}
           disabled={disabled}
         />
@@ -138,50 +171,59 @@ function OptionRow({
     return <div className={styles.controlPlaceholder} />;
   }
 
-  const placeholder = defaultValue ?? modelDefault ?? "Default";
+  const hasMainControl = field.slider || field.doublingSliderTo || field.choices || field.reasoningChoices || field.lines;
+
+  const label = (
+    <label className={styles.optionLabel} htmlFor={hasMainControl ? id : `${id}-number`}>
+      {field.label}
+    </label>
+  );
 
   return (
     <div className={styles.optionRow}>
-      <div className={styles.optionLabelRow}>
-        <label className={styles.optionLabel} htmlFor={field.slider || field.doublingSliderTo || field.choices || field.reasoningChoices || field.lines ? id : `${id}-number`}>
-          {field.label}
-        </label>
-        {isSet && (
-          <button
-            type="button"
-            className={styles.optionReset}
-            onClick={() => onChange(defaultValue)}
-            disabled={disabled}
-            aria-label={`Set ${field.label} back to its default`}
-          >
-            Default
-          </button>
-        )}
-      </div>
+      {family === "ollama" ? (
+        label
+      ) : (
+        <div className={styles.optionLabelRow}>
+          {label}
+          {value !== undefined && (
+            <button
+              type="button"
+              className={styles.optionReset}
+              onClick={() => onChange(undefined)}
+              disabled={disabled}
+              aria-label={`Set ${field.label} back to its default`}
+            >
+              Default
+            </button>
+          )}
+        </div>
+      )}
       <div className={styles.optionControls}>
         {renderControl()}
         {field.number && (
           <div>
-            <input
+            <NumberBox
               id={`${id}-number`}
-              className={field.key === "seed" ? styles.seedNumber : undefined}
-              type="number"
-              {...field.number}
-              placeholder={String(placeholder)}
-              aria-label={field.label}
-              value={numeric ?? ""}
-              onChange={(e) => onChange(parseOptionValue(field, e.target.value))}
+              field={field}
+              value={typeof value === "number" ? value : undefined}
+              shown={numeric}
+              onChange={onChange}
               disabled={disabled}
             />
           </div>
         )}
       </div>
-      {limit !== null && numeric !== undefined && numeric > limit && field.limitHint && (
+      {limit !== null && typeof value === "number" && value > limit && field.limitHint && (
         <span className={styles.optionHint}>{field.limitHint(model, limit)}</span>
       )}
     </div>
   );
 }
+
+const DEFAULTS_HELP =
+  "The values you see at first are the defaults: the model's own where the provider says, otherwise the API's usual " +
+  "ones. An option you do not change is not sent, so the model's real default always applies.";
 
 const PROVIDER_HELP: Record<ProviderId, (model: string) => string> = {
   ollama: () =>
@@ -191,10 +233,9 @@ const PROVIDER_HELP: Record<ProviderId, (model: string) => string> = {
   openai: (model) =>
     `Only the options ${model} takes are listed, so the list changes with the model. OpenAI does not publish this ` +
     "per model: it comes from OpenRouter's public list of models. If OpenAI still refuses an option, the agent " +
-    "leaves it out and carries on. An option on Default uses the model's own setting.",
+    `leaves it out and carries on. ${DEFAULTS_HELP}`,
   openrouter: (model) =>
-    `Only the options OpenRouter reports for ${model} are listed, so the list changes with the model. An option on ` +
-    "Default uses the model's own setting, and OpenRouter sends no value for it.",
+    `Only the options OpenRouter reports for ${model} are listed, so the list changes with the model. ${DEFAULTS_HELP}`,
 };
 
 /** The help dialog: what the options listed for this model do, and what else depends on the model. */
@@ -221,9 +262,8 @@ function OptionsHelp({
         <div className={styles.helpBody}>
           <p className={styles.helpText}>{PROVIDER_HELP[provider](model)}</p>
           {groups.map((group) => (
-            <section key={group.title}>
-              <h4 className={styles.helpGroup}>{group.title}</h4>
-              {group.note && <p className={styles.helpText}>{group.note}</p>}
+            <section key={group.title ?? "options"}>
+              {group.title ? <h4 className={styles.helpGroup}>{group.title}</h4> : <div className={styles.helpGap} />}
               <dl className={styles.helpList}>
                 {group.fields.map((field) => (
                   <Fragment key={field.key}>
@@ -257,10 +297,11 @@ function OptionsHelp({
 }
 
 /**
- * The generation options, behind a bar that opens them. The options depend on
- * the model. When it changes, the previous model's options stay in place, dimmed,
- * until the new ones arrive and fade in. The bar says what is going on, also while
- * the panel is closed, and the panel eases to its new height.
+ * The generation options, behind a button that opens them, with a separate help
+ * button beside it. The options depend on the model. When it changes, the previous
+ * model's options stay in place, dimmed, until the new ones arrive and fade in, and
+ * the panel eases to its new height. A spinner on the button shows this also while
+ * the panel is closed.
  */
 export default function OptionsPanel({
   provider,
@@ -292,27 +333,11 @@ export default function OptionsPanel({
   const family = optionFamily(shownProvider);
   const info = shown?.info ?? null;
   const groups = shown ? optionGroupsFor(family, info) : [];
-  const fields = groups.flatMap((group) => group.fields);
   const settings = values[family];
-  const changed = fields.filter((f) => {
-    const value = currentValue(f, settings, info);
-    return value !== undefined && value !== DEFAULT_SETTINGS[family][f.key];
-  });
 
   // The basics only: the request failed, or the provider does not know the model
   const basicsOnly = !loading && family === "api" && !info?.options;
-  const noOptions = !loading && fields.length === 0;
-
-  let summary: string;
-  if (loading) {
-    summary = `Loading options for ${model}…`;
-  } else if (noOptions) {
-    summary = "None for this model";
-  } else {
-    const count = `${fields.length} ${fields.length === 1 ? "option" : "options"}`;
-    const state = changed.length > 0 ? `${changed.length} ${family === "api" ? "set" : "changed"}` : family === "api" ? "all on default" : null;
-    summary = state ? `${count}, ${state}` : count;
-  }
+  const noOptions = !loading && groups.length === 0;
 
   return (
     <section className={styles.optionsSection}>
@@ -337,17 +362,9 @@ export default function OptionsPanel({
             <polyline points="9 6 15 12 9 18" />
           </svg>
           <span className={styles.optionsTitle}>Generation options</span>
-          <span className={styles.optionsSummary} aria-live="polite">
-            {loading && <span className={styles.spinner} aria-hidden="true" />}
-            <span className={styles.optionsSummaryText}>{summary}</span>
-          </span>
+          {loading && <span className={styles.spinner} role="status" aria-label={`Loading options for ${model}`} />}
         </button>
-        <button
-          type="button"
-          className={styles.optionsHelpBtn}
-          onClick={() => helpRef.current?.showModal()}
-          aria-label="Help with these options"
-        >
+        <button type="button" className={styles.secondaryBtn} onClick={() => helpRef.current?.showModal()}>
           Help
         </button>
       </div>
@@ -377,9 +394,8 @@ export default function OptionsPanel({
               )}
               {noOptions && <p className={styles.optionsNote}>{model} has no options that can be set.</p>}
               {groups.map((group) => (
-                <div key={group.title} className={styles.optionGroup}>
-                  <h3 className={styles.optionGroupTitle}>{group.title}</h3>
-                  {group.note && <p className={styles.optionGroupNote}>{group.note}</p>}
+                <div key={group.title ?? "options"} className={styles.optionGroup}>
+                  {group.title && <h3 className={styles.optionGroupTitle}>{group.title}</h3>}
                   <div className={styles.grid}>
                     {group.fields.map((field) => (
                       <OptionRow

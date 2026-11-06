@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import styles from "./Sidebar.module.css";
-import { PencilIcon, PinIcon, PinOffIcon, SearchIcon, TrashIcon } from "@/components/icons";
+import { PencilIcon, PinIcon, PinOffIcon, PlusIcon, SearchIcon, TrashIcon } from "@/components/icons";
 import type { ConversationList } from "@/hooks/useConversationList";
 import { groupByDate } from "@/lib/dateGroups";
 
@@ -160,23 +160,29 @@ export default function ConversationsPanel({
     <div>
       {/* Stays at the top while the list scrolls */}
       <div className={styles.conversationsHeader}>
-        <div className={styles.sidebarTitleRow}>
-          <p className={styles.sidebarTitle}>Conversations</p>
-          <button type="button" className={styles.inlineLink} onClick={onNewConversation}>
-            + New
+        <p className={styles.sidebarTitle}>Conversations</p>
+        <div className={styles.conversationSearchRow}>
+          <div className={styles.conversationSearchBox}>
+            <SearchIcon className={styles.conversationSearchIcon} />
+            <input
+              type="search"
+              className={styles.conversationSearch}
+              aria-label="Search conversations"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </div>
+          <button
+            type="button"
+            className={styles.newConversationBtn}
+            onClick={onNewConversation}
+            aria-label="New conversation"
+            title="New conversation"
+          >
+            <PlusIcon size={14} />
           </button>
-        </div>
-        <div className={styles.conversationSearchBox}>
-          <SearchIcon className={styles.conversationSearchIcon} />
-          <input
-            type="search"
-            className={styles.conversationSearch}
-            aria-label="Search conversations"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoComplete="off"
-            spellCheck={false}
-          />
         </div>
       </div>
 
@@ -192,7 +198,7 @@ export default function ConversationsPanel({
                 return (
                   <li key={c.id}>
                     <div
-                      className={`${styles.conversationItem} ${isActive ? styles.active : ""}`}
+                      className={`${styles.conversationItem} ${c.pinnedAt ? styles.pinned : ""} ${isActive ? styles.active : ""}`}
                       data-menu-root={c.id}
                     >
                       <button

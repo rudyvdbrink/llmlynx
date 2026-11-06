@@ -14,6 +14,9 @@
   --link: #7bb3f9;
   --link-hover: #b4d4fc;
 
+  /* The complement of --link, for what must stand apart from it: the selected model, and the selected or hovered conversation */
+  --amber: #f9bf7b;
+
   /* Controls: inputs, buttons, list items, menus */
   --surface: #0b1220;
   --surface-hover: #0e1628;
@@ -34,6 +37,8 @@
 /* Base */
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+/* Room for the page's scrollbar also while it has none, so that the scrollbar appearing does not move the page */
+html { scrollbar-gutter: stable; }
 body {
   margin: 0;
   background: var(--bg);

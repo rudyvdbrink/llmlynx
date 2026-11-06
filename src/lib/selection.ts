@@ -4,7 +4,7 @@
 // "model:<name>" (Ollama), "remote:<name>" (OpenAI) or a plain Ollama model
 // name; these are read as the matching new selection.
 
-import { DEFAULT_MODELS, PROVIDER_LABELS, PROVIDERS, type ProviderId } from "./providers";
+import { DEFAULT_MODELS, PROVIDERS, type ProviderId } from "./providers";
 
 export type SelectionKind = ProviderId | "agent";
 
@@ -45,9 +45,16 @@ export function parseBaseModel(baseModel: string | null | undefined): { provider
   return kind === "agent" || !value ? null : { provider: kind, model: value };
 }
 
-/** An agent's base model as the UI shows it: the name, with the provider unless it is Ollama. */
-export function baseModelLabel(baseModel: string | null | undefined): string {
-  const base = parseBaseModel(baseModel);
-  if (!base) return "";
-  return base.provider === "ollama" ? base.model : `${PROVIDER_LABELS[base.provider]}: ${base.model}`;
+/** Agents in the order the model lists show them: per provider, in the order of PROVIDERS, then by name. */
+export function sortAgents<T extends { name: string; baseModel: string }>(agents: T[]): T[] {
+  const rank = (agent: T) => {
+    const base = parseBaseModel(agent.baseModel);
+    return base ? PROVIDERS.indexOf(base.provider) : PROVIDERS.length;
+  };
+  return [...agents].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+/** A model's name without its first slash and what comes before it, such as the maker in "deepseek/deepseek-v4.1". */
+export function shortModelName(model: string): string {
+  return model.slice(model.indexOf("/") + 1);
 }

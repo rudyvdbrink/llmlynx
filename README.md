@@ -87,7 +87,9 @@ The generation options depend on the model, and open from the bar below the tool
 | OpenRouter | What the model takes | OpenRouter's public model list | Not sent, so the model's own default applies |
 | OpenAI | What the model takes | OpenRouter's public model list, as OpenAI does not publish this; options it still refuses are left out of the request | Not sent, so the model's own default applies |
 
-A model that is not in that list only offers its maximum output length. The list needs no key, and is loaded at most once an hour.
+A model that is not in that list only offers its maximum output length. The list needs no key, and is loaded at most once an hour. The value an unchanged option shows is the model's own default where the list states it, otherwise the API's usual default.
+
+OpenAI agents on models that reason (or are not in the list) run on the Responses API, because from GPT-5.4 on Chat Completions refuses tools unless reasoning is off. That API has no seed, stop sequences or penalties, so these models do not offer them. Models that do not reason, such as `gpt-4o`, stay on Chat Completions. Replies are not stored at OpenAI (`store: false`).
 
 An agent is greyed out in the sidebar while its provider cannot be reached, its API key is missing or refused, or its base model is gone. Where a provider has announced a model's last day, the model lists show it. An agent whose model is gone keeps everything else: pick another base model on the Agents page.
 

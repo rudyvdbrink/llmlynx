@@ -1,5 +1,5 @@
 import type { AgentSettings, OptionFamily, OptionValue } from "@/lib/agentSettings";
-import { MAX_STOP_SEQUENCES } from "@/lib/agentSettings";
+import { DEFAULT_SETTINGS, MAX_STOP_SEQUENCES } from "@/lib/agentSettings";
 import type { BaseModelInfo } from "@/lib/types";
 
 // One row in the "Generation options" panel and its entry in the help dialog.
@@ -12,8 +12,7 @@ export type OptionField = {
   choices?: { value: OptionValue; label: string }[];
   // A dropdown with what the model's reasoning can be set to
   reasoningChoices?: boolean;
-  // `rest` is where the slider sits while the option is not set, and the model's default is not known
-  slider?: { min: number; max: number; step: number; rest: number };
+  slider?: { min: number; max: number; step: number };
   // A slider over contextStops(), up to this limit of the model, instead of an even scale
   doublingSliderTo?: "contextLength" | "maxOutput";
   // What to say when the value is above that limit
@@ -21,16 +20,47 @@ export type OptionField = {
   number?: { min?: number; max?: number; step: number };
   // A text box with one entry per line
   lines?: { placeholder: string };
+  // OpenAI and OpenRouter: the API's documented default, for models that do not state their own
+  usual?: OptionValue;
+  // What the number box says when there is no default value to show
+  noDefault?: string;
 };
 
-export type OptionGroup = { title: string; note?: string; fields: OptionField[] };
+export type OptionGroup = { title?: string; fields: OptionField[] };
 
 const MAX_TOKENS_HELP = "About 750 words is 1000 tokens. A reply that reaches the limit stops mid-sentence.";
 
+// One group without a title: Ollama's options keep their flat grid, in this order
 const OLLAMA_GROUPS: OptionGroup[] = [
   {
-    title: "Memory and length",
     fields: [
+      {
+        key: "mirostat",
+        label: "Mirostat",
+        help:
+          "Another way to control randomness: it keeps the text at a steady level of surprise, in place of Top-k, " +
+          "Top-p and Min-p. Most agents can leave it off. Turn it on as its first or newer second version. Default off.",
+        integer: true,
+        choices: [
+          { value: 0, label: "Off" },
+          { value: 1, label: "Mirostat" },
+          { value: 2, label: "Mirostat 2.0" },
+        ],
+      },
+      {
+        key: "mirostat_eta",
+        label: "Mirostat η",
+        help: "How quickly Mirostat reacts to the text so far. Higher reacts faster. Default 0.1.",
+        slider: { min: 0, max: 1, step: 0.01 },
+        number: { min: 0, max: 1, step: 0.01 },
+      },
+      {
+        key: "mirostat_tau",
+        label: "Mirostat τ",
+        help: "The level of surprise Mirostat aims for. Lower is more focused, higher more varied. Default 5.",
+        slider: { min: 0, max: 10, step: 0.1 },
+        number: { min: 0, max: 10, step: 0.1 },
+      },
       {
         key: "num_ctx",
         label: "Context window (tokens)",
@@ -44,74 +74,29 @@ const OLLAMA_GROUPS: OptionGroup[] = [
         number: { min: 1, step: 1 },
       },
       {
-        key: "num_predict",
-        label: "Max tokens to generate",
-        help: `The longest a reply can be. ${MAX_TOKENS_HELP} -1 means no limit. Default -1.`,
+        key: "repeat_last_n",
+        label: "Repetition lookback (last n)",
+        help: "How many of the latest tokens the repetition penalty looks at. 0 turns the penalty off; -1 looks at the whole context window. Default 64.",
         integer: true,
-        slider: { min: -1, max: 8192, step: 1, rest: -1 },
-        number: { step: 1 },
+        slider: { min: -1, max: 4096, step: 1 },
+        number: { min: -1, step: 1 },
       },
-    ],
-  },
-  {
-    title: "Creativity",
-    fields: [
+      {
+        key: "repeat_penalty",
+        label: "Repetition penalty",
+        help: "Makes words the model already used less likely to come back. 1 turns this off. Above 1 means less repetition; too high makes the text awkward. Default 1.1.",
+        slider: { min: 0, max: 3, step: 0.05 },
+        number: { min: 0, max: 3, step: 0.05 },
+      },
       {
         key: "temperature",
         label: "Temperature",
         help:
           "How predictable the replies are. Low values (up to 0.3) suit facts and code. High values (1 and up) " +
           "suit brainstorming and stories, but bring more mistakes. Default 0.8.",
-        slider: { min: 0, max: 2, step: 0.05, rest: 0.8 },
+        slider: { min: 0, max: 2, step: 0.05 },
         number: { min: 0, max: 2, step: 0.05 },
       },
-      {
-        key: "top_k",
-        label: "Top‑k",
-        help: "The model picks each next word from only this many of the likeliest ones. Lower is more predictable. 0 turns this off. Default 40.",
-        integer: true,
-        slider: { min: 0, max: 1000, step: 1, rest: 40 },
-        number: { min: 0, step: 1 },
-      },
-      {
-        key: "top_p",
-        label: "Top‑p",
-        help: "The model picks each next word from the likeliest ones that together reach this probability: 0.9 leaves out the unlikeliest tenth. Lower is more predictable. 1 turns this off. Default 0.9.",
-        slider: { min: 0, max: 1, step: 0.01, rest: 0.9 },
-        number: { min: 0, max: 1, step: 0.01 },
-      },
-      {
-        key: "min_p",
-        label: "Min‑p",
-        help: "Leaves out words far less likely than the likeliest one: 0.05 drops anything under 5% of its probability. 0 turns this off. Default 0.",
-        slider: { min: 0, max: 1, step: 0.01, rest: 0 },
-        number: { min: 0, max: 1, step: 0.01 },
-      },
-    ],
-  },
-  {
-    title: "Repetition",
-    fields: [
-      {
-        key: "repeat_penalty",
-        label: "Repetition penalty",
-        help: "Makes words the model already used less likely to come back. 1 turns this off. Above 1 means less repetition; too high makes the text awkward. Default 1.1.",
-        slider: { min: 0, max: 3, step: 0.05, rest: 1.1 },
-        number: { min: 0, max: 3, step: 0.05 },
-      },
-      {
-        key: "repeat_last_n",
-        label: "Repetition lookback (last n)",
-        help: "How many of the latest tokens the repetition penalty looks at. 0 turns the penalty off; -1 looks at the whole context window. Default 64.",
-        integer: true,
-        slider: { min: -1, max: 4096, step: 1, rest: 64 },
-        number: { min: -1, step: 1 },
-      },
-    ],
-  },
-  {
-    title: "Repeatable replies",
-    fields: [
       {
         key: "seed",
         label: "Random number seed",
@@ -119,36 +104,35 @@ const OLLAMA_GROUPS: OptionGroup[] = [
         integer: true,
         number: { step: 1 },
       },
-    ],
-  },
-  {
-    title: "Mirostat",
-    note: "Another way to control randomness: it keeps the text at a steady level of surprise, in place of Top-k, Top-p and Min-p. Most agents can leave it off.",
-    fields: [
       {
-        key: "mirostat",
-        label: "Mirostat",
-        help: "Turns Mirostat on, as its first or newer second version. Default off.",
+        key: "num_predict",
+        label: "Max tokens to generate",
+        help: `The longest a reply can be. ${MAX_TOKENS_HELP} -1 means no limit. Default -1.`,
         integer: true,
-        choices: [
-          { value: 0, label: "Off" },
-          { value: 1, label: "Mirostat" },
-          { value: 2, label: "Mirostat 2.0" },
-        ],
+        slider: { min: -1, max: 8192, step: 1 },
+        number: { step: 1 },
       },
       {
-        key: "mirostat_eta",
-        label: "Mirostat η",
-        help: "How quickly Mirostat reacts to the text so far. Higher reacts faster. Default 0.1.",
-        slider: { min: 0, max: 1, step: 0.01, rest: 0.1 },
+        key: "top_k",
+        label: "Top‑k",
+        help: "The model picks each next word from only this many of the likeliest ones. Lower is more predictable. 0 turns this off. Default 40.",
+        integer: true,
+        slider: { min: 0, max: 1000, step: 1 },
+        number: { min: 0, step: 1 },
+      },
+      {
+        key: "top_p",
+        label: "Top‑p",
+        help: "The model picks each next word from the likeliest ones that together reach this probability: 0.9 leaves out the unlikeliest tenth. Lower is more predictable. 1 turns this off. Default 0.9.",
+        slider: { min: 0, max: 1, step: 0.01 },
         number: { min: 0, max: 1, step: 0.01 },
       },
       {
-        key: "mirostat_tau",
-        label: "Mirostat τ",
-        help: "The level of surprise Mirostat aims for. Lower is more focused, higher more varied. Default 5.",
-        slider: { min: 0, max: 10, step: 0.1, rest: 5 },
-        number: { min: 0, max: 10, step: 0.1 },
+        key: "min_p",
+        label: "Min‑p",
+        help: "Leaves out words far less likely than the likeliest one: 0.05 drops anything under 5% of its probability. 0 turns this off. Default 0.",
+        slider: { min: 0, max: 1, step: 0.01 },
+        number: { min: 0, max: 1, step: 0.01 },
       },
     ],
   },
@@ -177,6 +161,7 @@ const API_GROUPS: OptionGroup[] = [
         doublingSliderTo: "maxOutput",
         limitHint: (model, limit) => `${model} writes at most ${limit} tokens per reply.`,
         number: { min: 1, step: 1 },
+        noDefault: "Model limit",
       },
       {
         key: "verbosity",
@@ -187,6 +172,7 @@ const API_GROUPS: OptionGroup[] = [
           { value: "medium", label: "Medium" },
           { value: "high", label: "High" },
         ],
+        usual: "medium",
       },
       {
         key: "stop",
@@ -205,37 +191,42 @@ const API_GROUPS: OptionGroup[] = [
         help:
           "How predictable the replies are. Low values (up to 0.3) suit facts and code. High values (1 and up) " +
           "suit brainstorming and stories, but bring more mistakes.",
-        slider: { min: 0, max: 2, step: 0.05, rest: 1 },
+        slider: { min: 0, max: 2, step: 0.05 },
         number: { min: 0, max: 2, step: 0.05 },
+        usual: 1,
       },
       {
         key: "top_p",
         label: "Top‑p",
         help: "The model picks each next word from the likeliest ones that together reach this probability: 0.9 leaves out the unlikeliest tenth. Lower is more predictable. Change this or Temperature, not both.",
-        slider: { min: 0, max: 1, step: 0.01, rest: 1 },
+        slider: { min: 0, max: 1, step: 0.01 },
         number: { min: 0, max: 1, step: 0.01 },
+        usual: 1,
       },
       {
         key: "top_k",
         label: "Top‑k",
         help: "The model picks each next word from only this many of the likeliest ones. Lower is more predictable. 0 turns this off.",
         integer: true,
-        slider: { min: 0, max: 1000, step: 1, rest: 0 },
+        slider: { min: 0, max: 1000, step: 1 },
         number: { min: 0, step: 1 },
+        usual: 0,
       },
       {
         key: "min_p",
         label: "Min‑p",
         help: "Leaves out words far less likely than the likeliest one: 0.05 drops anything under 5% of its probability. 0 turns this off.",
-        slider: { min: 0, max: 1, step: 0.01, rest: 0 },
+        slider: { min: 0, max: 1, step: 0.01 },
         number: { min: 0, max: 1, step: 0.01 },
+        usual: 0,
       },
       {
         key: "top_a",
         label: "Top‑a",
         help: "Keeps only words close in probability to the likeliest one, so the choice narrows when the model is sure. Higher is stricter. 0 turns this off.",
-        slider: { min: 0, max: 1, step: 0.01, rest: 0 },
+        slider: { min: 0, max: 1, step: 0.01 },
         number: { min: 0, max: 1, step: 0.01 },
+        usual: 0,
       },
     ],
   },
@@ -246,22 +237,25 @@ const API_GROUPS: OptionGroup[] = [
         key: "frequency_penalty",
         label: "Frequency penalty",
         help: "Makes a word less likely the more often it has appeared. Positive means less repetition, negative more. 0 turns this off.",
-        slider: { min: -2, max: 2, step: 0.05, rest: 0 },
+        slider: { min: -2, max: 2, step: 0.05 },
         number: { min: -2, max: 2, step: 0.05 },
+        usual: 0,
       },
       {
         key: "presence_penalty",
         label: "Presence penalty",
         help: "Makes any word that has appeared less likely, however often it did, which nudges the model toward new topics. Negative does the opposite. 0 turns this off.",
-        slider: { min: -2, max: 2, step: 0.05, rest: 0 },
+        slider: { min: -2, max: 2, step: 0.05 },
         number: { min: -2, max: 2, step: 0.05 },
+        usual: 0,
       },
       {
         key: "repetition_penalty",
         label: "Repetition penalty",
         help: "Makes words the model already used less likely to come back. 1 turns this off. Above 1 means less repetition; too high makes the text awkward.",
-        slider: { min: 0, max: 2, step: 0.05, rest: 1 },
+        slider: { min: 0, max: 2, step: 0.05 },
         number: { min: 0, max: 2, step: 0.05 },
+        usual: 1,
       },
     ],
   },
@@ -271,9 +265,10 @@ const API_GROUPS: OptionGroup[] = [
       {
         key: "seed",
         label: "Random number seed",
-        help: "The starting point of the model's random choices. The same seed, prompt and options should give about the same reply, though providers do not promise it.",
+        help: "The starting point of the model's random choices. The same seed, prompt and options should give about the same reply, though providers do not promise it. Without a seed, each reply starts somewhere else.",
         integer: true,
         number: { step: 1 },
+        noDefault: "Random",
       },
     ],
   },
@@ -299,6 +294,21 @@ export function currentValue(field: OptionField, settings: AgentSettings, info: 
   return known ? value : undefined;
 }
 
+/**
+ * The value an option has while it is not set: llmlynx's default for Ollama; for
+ * the others the model's own if its provider states it, otherwise the API's usual
+ * default. Undefined when there is none to show.
+ */
+export function defaultValueOf(field: OptionField, family: OptionFamily, info: BaseModelInfo | null) {
+  const known = DEFAULT_SETTINGS[family][field.key] ?? info?.defaults[field.key];
+  if (known !== undefined) return known;
+  if (field.doublingSliderTo === "maxOutput") {
+    const limit = info?.maxOutput ?? info?.contextLength;
+    if (limit) return limit;
+  }
+  return field.usual;
+}
+
 const REASONING_ORDER = ["none", "off", "on", "minimal", "low", "medium", "high", "xhigh", "max"];
 const REASONING_LABELS: Record<string, string> = {
   none: "None",
@@ -318,11 +328,6 @@ export function reasoningOptions(choices: string[] | null): { value: string; lab
     value,
     label: REASONING_LABELS[value],
   }));
-}
-
-/** The label of a reasoning level, or the level itself if it is unknown. */
-export function reasoningLabel(value: OptionValue): string {
-  return REASONING_LABELS[String(value)] ?? String(value);
 }
 
 // The doubling slider ends at this limit of the base model, or here while that

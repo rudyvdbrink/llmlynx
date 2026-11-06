@@ -17,7 +17,14 @@ export async function GET(req: NextRequest) {
   const base = parseBaseModel(req.nextUrl.searchParams.get("model")?.trim() || null);
   if (!base) return jsonError("model is required", 400);
 
-  const { capabilities, ...info } = await getModelInfo(user.id, base.provider, base.model);
-  const body: BaseModelInfo = { tools: toolAvailability(capabilities), ...info };
+  const info = await getModelInfo(user.id, base.provider, base.model);
+  const body: BaseModelInfo = {
+    tools: toolAvailability(info.capabilities),
+    contextLength: info.contextLength,
+    maxOutput: info.maxOutput,
+    options: info.options,
+    reasoning: info.reasoning,
+    defaults: info.defaults,
+  };
   return NextResponse.json(body);
 }

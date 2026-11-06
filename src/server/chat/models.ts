@@ -143,6 +143,8 @@ export type ModelInfo = {
   options: string[] | null;
   /** What its reasoning option can be set to; null when it has no such option. */
   reasoning: string[] | null;
+  /** Whether it can reason at all; null when unknown. */
+  reasons: boolean | null;
   /** Its own values for its options, as far as they are known. */
   defaults: AgentSettings;
 };
@@ -153,8 +155,23 @@ const UNKNOWN_MODEL: ModelInfo = {
   maxOutput: null,
   options: null,
   reasoning: null,
+  reasons: null,
   defaults: {},
 };
+
+// The options OpenAI's Responses API has: it has no seed, stop or penalties.
+export const RESPONSES_OPTIONS = ["temperature", "top_p", "max_tokens", "reasoning", "verbosity"];
+
+/**
+ * True when an agent on this model runs on OpenAI's Responses API. From GPT-5.4
+ * on, Chat Completions refuses function tools unless reasoning is off, so models
+ * that reason use Responses, and so do models the catalog does not know, which
+ * are likely new. Models known not to reason stay on Chat Completions, for the
+ * options only that API has.
+ */
+export function usesResponsesApi(provider: ProviderId, info: Pick<ModelInfo, "reasons"> | null): boolean {
+  return provider === "openai" && info?.reasons !== false;
+}
 
 // Shape of one entry in OpenRouter's GET /models response.
 type CatalogModel = {
@@ -165,7 +182,12 @@ type CatalogModel = {
   top_provider?: { max_completion_tokens?: number | null } | null;
   supported_parameters?: string[] | null;
   default_parameters?: Record<string, unknown> | null;
-  reasoning?: { mandatory?: boolean; supported_efforts?: string[] | null; default_effort?: string | null } | null;
+  reasoning?: {
+    mandatory?: boolean;
+    default_enabled?: boolean;
+    supported_efforts?: string[] | null;
+    default_effort?: string | null;
+  } | null;
 };
 
 // OpenRouter's name for a parameter, where it differs from the option's key
@@ -184,6 +206,15 @@ function reasoningChoices(model: CatalogModel, parameters: string[]): string[] |
   return parameters.includes("reasoning") && !model.reasoning?.mandatory ? ["off", "on"] : null;
 }
 
+// A model that reasons only when asked has default_enabled false. Its
+// default_effort is then the level it uses once asked, not its default.
+function reasoningDefault(model: CatalogModel, choices: string[] | null): string | undefined {
+  const { mandatory, default_enabled: enabled, default_effort: effort } = model.reasoning ?? {};
+  if (!choices) return undefined;
+  if (enabled === false && !mandatory) return choices.find((c) => c === "none" || c === "off") ?? effort ?? undefined;
+  return effort ?? (enabled && choices.includes("on") ? "on" : undefined);
+}
+
 function toModelInfo(model: CatalogModel): ModelInfo {
   if (!Array.isArray(model.supported_parameters)) return UNKNOWN_MODEL;
   const parameters = model.supported_parameters;
@@ -193,7 +224,8 @@ function toModelInfo(model: CatalogModel): ModelInfo {
   for (const [key, value] of Object.entries(model.default_parameters ?? {})) {
     if (typeof value === "number") defaults[key] = value;
   }
-  if (model.reasoning?.default_effort) defaults.reasoning = model.reasoning.default_effort;
+  const defaultReasoning = reasoningDefault(model, reasoning);
+  if (defaultReasoning) defaults.reasoning = defaultReasoning;
   return {
     capabilities: [
       ...(parameters.includes("tools") ? ["tools"] : []),
@@ -203,6 +235,7 @@ function toModelInfo(model: CatalogModel): ModelInfo {
     maxOutput: model.top_provider?.max_completion_tokens ?? null,
     options: OPTION_KEYS.api.filter((key) => (key === "reasoning" ? reasoning !== null : offered.has(key))),
     reasoning,
+    reasons: !!model.reasoning || parameters.includes("reasoning") || parameters.includes("reasoning_effort"),
     defaults,
   };
 }
@@ -260,8 +293,12 @@ function openAIModelInfo(models: Map<string, ModelInfo>, model: string): ModelIn
   const info = models.get(`openai/${model}`) ?? models.get(`openai/${model.replace(/-\d{4}-\d{2}-\d{2}$/, "")}`);
   if (!info) return UNKNOWN_MODEL;
   // OpenAI only takes reasoning levels, not on and off
-  if (!info.reasoning?.includes("on")) return info;
-  return { ...info, options: info.options?.filter((key) => key !== "reasoning") ?? null, reasoning: null };
+  const levelsOnly = info.reasoning?.includes("on") ? null : info.reasoning;
+  const options = info.options?.filter((key) => {
+    if (key === "reasoning" && !levelsOnly) return false;
+    return !usesResponsesApi("openai", info) || RESPONSES_OPTIONS.includes(key);
+  });
+  return { ...info, options: options ?? null, reasoning: levelsOnly };
 }
 
 /** What is known about `model` on `provider`. Never throws: what cannot be found out is reported as unknown. */

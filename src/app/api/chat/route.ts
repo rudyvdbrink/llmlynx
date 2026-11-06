@@ -5,7 +5,7 @@ import { getDefaultSystemPrompt } from "@/server/config";
 import { getApiConfig, getOllamaUrl } from "@/server/providers";
 import { stopAttempt, trackAttempt } from "@/server/chat/attempts";
 import { createAssistantReply, loadHistory, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
-import { getModelInfo } from "@/server/chat/models";
+import { getModelInfo, usesResponsesApi } from "@/server/chat/models";
 import { streamOllamaChat } from "@/server/chat/ollama";
 import { apiRequestParams, streamOpenAIChat } from "@/server/chat/openai";
 import type { RequestSetupInput } from "@/server/chat/setup";
@@ -152,6 +152,7 @@ export async function POST(req: NextRequest) {
             model: target.model,
             messages: [...system, ...history],
             params: apiParams,
+            useResponses: !!agent && usesResponsesApi(target.kind, modelInfo),
             toolContext: { userId: user.id, textBudget: textBudget(modelInfo?.contextLength ?? UNKNOWN_CONTEXT) },
           },
           apiConfig!,

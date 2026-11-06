@@ -1,7 +1,7 @@
 // Model providers a user can connect on the account page. Shared by the
 // provider API routes, the account page and the model picker.
 
-export const PROVIDERS = ["ollama", "openai", "openrouter"] as const;
+export const PROVIDERS = ["ollama", "openrouter", "openai"] as const;
 
 export type ProviderId = (typeof PROVIDERS)[number];
 

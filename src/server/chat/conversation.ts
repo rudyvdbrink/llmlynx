@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/prisma";
+import { parseSelection, toSelection } from "@/lib/selection";
 import type { ChatMessage } from "@/lib/types";
 import { saveRequestSetup, type RequestSetupInput } from "./setup";
 
@@ -32,6 +33,31 @@ export async function resolveConversation(
     select: { id: true },
   });
   return convo.id;
+}
+
+// How many conversations to look back through for an agent that still exists
+const LAST_USED_LOOKBACK = 20;
+
+/**
+ * What the user chatted with last, as a selection, or null if they have not
+ * chatted yet. Renaming or pinning a conversation does not change its updatedAt,
+ * so that always means sending a message. Agents they have since deleted are skipped.
+ */
+export async function getLastUsedSelection(userId: string): Promise<string | null> {
+  const [recent, agents] = await Promise.all([
+    prisma.conversation.findMany({
+      where: { userId, model: { not: null }, messages: { some: {} } },
+      orderBy: { updatedAt: "desc" },
+      take: LAST_USED_LOOKBACK,
+      select: { model: true },
+    }),
+    prisma.agent.findMany({ where: { userId }, select: { id: true } }),
+  ]);
+  for (const { model } of recent) {
+    const { kind, value } = parseSelection(model);
+    if (kind !== "agent" || agents.some((agent) => agent.id === value)) return toSelection(kind, value);
+  }
+  return null;
 }
 
 /** The position the next message of a conversation gets. */
