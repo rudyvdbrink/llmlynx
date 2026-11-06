@@ -55,10 +55,6 @@
 
 /* Mobile/tablet: enforce a minimum column width and scroll inside wrapper without expanding page */
 @media (max-width: 1024px) {
-  .mdTableWrapper {
-    contain: inline-size;
-  }
-
   .mdTableWrapper table {
     min-width: 100%;
   }

@@ -3,6 +3,7 @@ import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { getDefaultSystemPrompt } from "@/server/config";
 import { getApiConfig, getOllamaUrl } from "@/server/providers";
+import { stopAttempt, trackAttempt } from "@/server/chat/attempts";
 import { createAssistantReply, loadHistory, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
 import { streamOllamaChat, toOllamaTools } from "@/server/chat/ollama";
 import { streamOpenAIChat } from "@/server/chat/openai";
@@ -16,13 +17,17 @@ import { DEFAULT_MAX_TOOL_CALLS } from "@/lib/agentTools";
 export const runtime = "nodejs";
 
 // POST /api/chat
-// body: { message: string, model?: string, agentId?: string, conversationId?: string }
+// body: { message: string, model?: string, agentId?: string, conversationId?: string, requestId?: string }
 // `message` is the user's new message; the rest of the conversation is read from
 // the database, so the model always gets the conversation as stored.
 // `model` is a selection ("ollama:<name>" | "openai:<name>" | "openrouter:<name>")
 // or a plain Ollama model name. Each user's own Ollama server and API keys are used.
-// Responds with an NDJSON stream and the conversation id in X-Conversation-Id.
-// X-Tools is "1" when the model can call tools.
+// `requestId` (32 hex characters) identifies the send: a re-send with the same id
+// replaces the attempt before it, see server/chat/attempts.ts.
+// Responds with an NDJSON stream, which ends with an { end: true } line, and the
+// conversation id in X-Conversation-Id. X-Tools is "1" when the model can call tools.
+
+const REQUEST_ID = /^[0-9a-f]{32}$/;
 
 type Target =
   | {
@@ -97,7 +102,11 @@ export async function POST(req: NextRequest) {
   );
   if (!conversationId) return new Response("Conversation not found", { status: 404 });
 
-  await saveUserMessage(conversationId, message, target.modelKey);
+  const requestId = typeof body.requestId === "string" && REQUEST_ID.test(body.requestId) ? body.requestId : null;
+  const attemptKey = requestId && `${user.id}:${requestId}`;
+  if (attemptKey) await stopAttempt(attemptKey);
+
+  await saveUserMessage(conversationId, message, target.modelKey, requestId);
   // The conversation so far, ending with the new message. Like the system
   // prompt, it comes from the server, never from the client.
   const history = await loadHistory(conversationId);
@@ -145,7 +154,7 @@ export async function POST(req: NextRequest) {
           reply
         );
 
-  return new Response(stream, {
+  return new Response(trackAttempt(attemptKey, stream, req.signal), {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",

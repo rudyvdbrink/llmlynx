@@ -5,6 +5,8 @@
   flex-direction: column;
   gap: 12px;
   flex: 1;
+  /* Wide tables and code scroll in their own box instead of widening the page */
+  min-width: 0;
   max-width: 860px;
   margin: 0 auto;
   padding: 16px;
@@ -168,6 +170,30 @@
 .bubble p { margin: 0.35rem 0; }
 .bubble p:first-child { margin-top: 0; }
 .bubble p:last-child { margin-bottom: 0; }
+
+/* Links: a hairline underline that sits clear of the text and firms up under the
+   pointer. In the reasoning they are as quiet as its text. */
+.bubble a,
+.thinkingText a:not(.toolShot) {
+  color: var(--link);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-underline-offset: 0.2em;
+  transition: color 0.12s ease, text-decoration-color 0.12s ease;
+}
+.thinkingText a:not(.toolShot) { color: color-mix(in srgb, var(--link) 70%, var(--muted)); }
+.bubble a:hover,
+.thinkingText a:not(.toolShot):hover {
+  color: var(--link-hover);
+  text-decoration-color: currentColor;
+}
+.bubble a:focus-visible,
+.thinkingText a:not(.toolShot):focus-visible {
+  outline: 2px solid var(--link);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 
 /* Inline code spans: avoid vertical background bleed/overlap across lines */
 .bubble :not(pre) > code {

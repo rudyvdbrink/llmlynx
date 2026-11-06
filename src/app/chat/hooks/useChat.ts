@@ -18,6 +18,14 @@ const isToolLine = (value: unknown): value is Partial<ToolStep> & { id: string }
 const PREAMBLE_MAX = 300;
 const looksLikeAnswer = (text: string) => /\S\s*\n\s*\S/.test(text) || text.trim().length > PREAMBLE_MAX;
 
+// A failed connection is a TypeError, with wording of each browser's own ("Failed to fetch", "Load failed", ...)
+const SERVER_UNREACHABLE = "Could not reach the server. Check your connection and send your message again.";
+const CONNECTION_LOST = "The connection was lost before the reply finished. Send your message again to retry.";
+
+// crypto.randomUUID only exists on HTTPS and localhost, and the app is also used over plain HTTP
+const newRequestId = () =>
+  Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+
 export function useChat({
   selection,
   ensureConversation,
@@ -34,6 +42,9 @@ export function useChat({
   // True once the reply's answer shows, and again false while the model uses a tool
   const [answering, setAnswering] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  // The send that failed, if the last one did. Sending the same text again
+  // retries it under its request id, so the server does not store it twice.
+  const failedSendRef = useRef<{ content: string; requestId: string } | null>(null);
 
   // Patch the assistant reply that is being streamed (always the last message).
   const updateReply = useCallback((patch: Partial<DisplayMessage>) => {
@@ -57,6 +68,13 @@ export function useChat({
       const controller = new AbortController();
       abortRef.current = controller;
 
+      const failedSend = failedSendRef.current;
+      const requestId = failedSend?.content === content ? failedSend.requestId : newRequestId();
+      failedSendRef.current = null;
+      let failed = false;
+      let connected = false;
+      let ended = false;
+
       // The text of the current step: the answer, unless a tool call follows it
       let reply = "";
       // Whether that text shows as the answer yet. While the model can call
@@ -75,10 +93,12 @@ export function useChat({
           body: JSON.stringify({
             message: content,
             conversationId,
+            requestId,
             ...(kind === "agent" ? { agentId: value } : { model: selection }),
           }),
           signal: controller.signal,
         });
+        connected = true;
         if (!res.ok || !res.body) {
           throw new Error((await res.text().catch(() => "")) || `Request failed (status ${res.status})`);
         }
@@ -92,7 +112,9 @@ export function useChat({
             status?: unknown;
             tool?: unknown;
             error?: unknown;
+            end?: unknown;
           };
+          if (line?.end === true) ended = true;
           if (isReplyStatus(line?.status)) setReplyStatus(line.status);
           if (isToolLine(line?.tool)) {
             // Text written before a tool call is not the answer: it moves into the trace
@@ -117,13 +139,26 @@ export function useChat({
             if (shown) updateReply({ content: reply });
           }
           // Ollama and the OpenAI-compatible providers report a failed chat as an { error } line.
-          if (typeof line?.error === "string" && line.error) updateReply({ content: reply, error: line.error });
+          if (typeof line?.error === "string" && line.error) {
+            failed = true;
+            updateReply({ content: reply, error: line.error });
+          }
         });
+        // Some browsers report a cut-off stream as a normal end
+        if (!ended) {
+          failed = true;
+          updateReply({ error: CONNECTION_LOST });
+        }
 
         refreshConversations();
       } catch (err) {
-        if ((err as Error)?.name !== "AbortError") updateReply({ error: (err as Error)?.message || "Stream error" });
+        if ((err as Error)?.name !== "AbortError") {
+          failed = true;
+          const connectionError = connected ? CONNECTION_LOST : SERVER_UNREACHABLE;
+          updateReply({ error: err instanceof TypeError ? connectionError : (err as Error)?.message || "Stream error" });
+        }
       } finally {
+        if (failed) failedSendRef.current = { content, requestId };
         // Text still held back is the answer: no tool call followed it
         if (!shown && reply) updateReply({ content: reply });
         setIsStreaming(false);

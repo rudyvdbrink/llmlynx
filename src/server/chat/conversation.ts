@@ -44,11 +44,34 @@ async function nextPosition(tx: Prisma.TransactionClient, conversationId: string
   return last ? last.position + 1 : 0;
 }
 
-/** Stores a user message. The first message of a conversation also sets its title. */
-export async function saveUserMessage(conversationId: string, content: string, modelKey: string) {
+/**
+ * Stores a user message. The first message of a conversation also sets its title.
+ * A message with the `requestId` of the conversation's last user message is a
+ * re-send of it (see attempts.ts): the message stays, and what the attempt before
+ * stored of its reply goes, as this attempt writes the reply again.
+ */
+export async function saveUserMessage(
+  conversationId: string,
+  content: string,
+  modelKey: string,
+  requestId: string | null = null
+) {
   await prisma.$transaction(async (tx) => {
+    if (requestId) {
+      const last = await tx.message.findFirst({
+        where: { conversationId, role: "user" },
+        orderBy: { position: "desc" },
+        select: { position: true, metadata: true },
+      });
+      if ((last?.metadata as { requestId?: unknown } | null)?.requestId === requestId) {
+        await tx.message.deleteMany({ where: { conversationId, position: { gt: last!.position } } });
+        return;
+      }
+    }
     const position = await nextPosition(tx, conversationId);
-    await tx.message.create({ data: { conversationId, position, role: "user", content } });
+    await tx.message.create({
+      data: { conversationId, position, role: "user", content, ...(requestId ? { metadata: { requestId } } : {}) },
+    });
     await tx.conversation.update({
       where: { id: conversationId },
       data: { updatedAt: new Date(), model: modelKey, ...(position === 0 ? { title: makeTitleFrom(content) } : {}) },
