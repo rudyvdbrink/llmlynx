@@ -1,27 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/server/auth/session";
-import { getOllamaModelInfo } from "@/server/chat/models";
-import { getOllamaUrl } from "@/server/providers";
+import { getModelInfo } from "@/server/chat/models";
 import { jsonError } from "@/server/http";
 import { toolAvailability } from "@/server/tools/policy";
-import { parseSelection } from "@/lib/selection";
+import { parseBaseModel } from "@/lib/selection";
 import type { BaseModelInfo } from "@/lib/types";
 
-// GET /api/agents/base-model?model=<base model> -> BaseModelInfo
-// What an agent on this Ollama model can have: the agent tools it can use (a
-// tool is not available when its server is not set up, or the model cannot use
-// it), and the longest context window the model supports.
+// GET /api/agents/base-model?model=<selection or Ollama model name> -> BaseModelInfo
+// What an agent on this model can have: the agent tools it can use (a tool is
+// not available when its server is not set up, or the model cannot use it), the
+// generation options it takes, and its limits.
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
   if (!user) return jsonError("Unauthorized", 401);
 
-  const model = parseSelection(req.nextUrl.searchParams.get("model")?.trim() || null).value;
-  if (!model) return jsonError("model is required", 400);
+  const base = parseBaseModel(req.nextUrl.searchParams.get("model")?.trim() || null);
+  if (!base) return jsonError("model is required", 400);
 
-  const info = await getOllamaModelInfo(await getOllamaUrl(user.id), model);
-  const body: BaseModelInfo = {
-    tools: toolAvailability(info?.capabilities ?? null),
-    contextLength: info?.contextLength ?? null,
-  };
+  const { capabilities, ...info } = await getModelInfo(user.id, base.provider, base.model);
+  const body: BaseModelInfo = { tools: toolAvailability(capabilities), ...info };
   return NextResponse.json(body);
 }

@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FALLBACK_MODELS } from "@/lib/selection";
 import type { ProviderId, ProviderSettings } from "@/lib/providers";
-import type { AgentSummary } from "@/lib/types";
+import type { AgentStatus, AgentSummary } from "@/lib/types";
 
 // Loads `url` once on mount. `pick` extracts the value from the JSON body;
 // `fallback` is used when the request fails. Both must be stable references.
@@ -79,11 +79,41 @@ export function useProviderSettings(): ProviderSettings | null {
   return settings;
 }
 
-type ModelListResult = { provider: ProviderId; models: string[]; error: string | null };
+/**
+ * Whether each of the current user's agents can be used now, per agent id. Empty
+ * until known, so that agents are not greyed out while this loads. `refresh`
+ * asks again, as a provider that was down may be back.
+ */
+export function useAgentStatuses() {
+  const version = useProvidersVersion();
+  const [statuses, setStatuses] = useState<Record<string, AgentStatus>>({});
+  const latestRef = useRef(0);
+
+  const refresh = useCallback(() => {
+    const request = ++latestRef.current;
+    fetch("/api/agents/status")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then((data) => {
+        if (request === latestRef.current) setStatuses(data?.statuses ?? {});
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh, version]);
+
+  return { statuses, refresh };
+}
+
+type ModelListResult = { provider: ProviderId; models: string[]; expiries: Record<string, string>; error: string | null };
+
+const NO_EXPIRIES: Record<string, string> = {};
 
 /**
- * The models `provider` offers the current user, sorted by name. When Ollama
- * cannot be reached, a static fallback list comes back together with the error.
+ * The models `provider` offers the current user, sorted by name, and the
+ * announced last day of those that have one. When Ollama cannot be reached, a
+ * static fallback list comes back together with the error.
  */
 export function useProviderModels(provider: ProviderId | null) {
   const version = useProvidersVersion();
@@ -96,11 +126,18 @@ export function useProviderModels(provider: ProviderId | null) {
       .then(async (r) => {
         const data = await r.json().catch(() => null);
         if (!r.ok) throw new Error(data?.message || `Failed to load models (${r.status})`);
-        return Array.isArray(data?.models) ? (data.models as string[]) : [];
+        return {
+          models: Array.isArray(data?.models) ? (data.models as string[]) : [],
+          expiries: (data?.expiries as Record<string, string> | undefined) ?? NO_EXPIRIES,
+        };
       })
       .then(
-        (models) => ({ models, error: null }),
-        (err: Error) => ({ models: provider === "ollama" ? FALLBACK_MODELS : [], error: err.message })
+        (listing) => ({ ...listing, error: null }),
+        (err: Error) => ({
+          models: provider === "ollama" ? FALLBACK_MODELS : [],
+          expiries: NO_EXPIRIES,
+          error: err.message,
+        })
       )
       .then((list) => {
         if (active) setResult({ provider, ...list });
@@ -114,12 +151,8 @@ export function useProviderModels(provider: ProviderId | null) {
   const current = result?.provider === provider ? result : null;
   return {
     models: current?.models ?? NO_ITEMS,
+    expiries: current?.expiries ?? NO_EXPIRIES,
     loading: provider !== null && current === null,
     error: current?.error ?? null,
   };
-}
-
-/** Names of the models on the user's Ollama server, or a static fallback list if it is unreachable. */
-export function useLocalModels(): string[] {
-  return useProviderModels("ollama").models;
 }

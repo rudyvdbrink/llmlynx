@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma, isUniqueConstraintError } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
-import { AGENT_SELECT, agentNameError, DUPLICATE_NAME_MESSAGE } from "@/server/agents";
+import { AGENT_SELECT, agentNameError, DUPLICATE_NAME_MESSAGE, storedBaseModel } from "@/server/agents";
 import { jsonError, optionalString, readJsonObject } from "@/server/http";
 import { validateAgentSettings } from "@/lib/agentSettings";
 import { validateAgentTools, validateMaxToolCalls } from "@/lib/agentTools";
@@ -30,6 +30,7 @@ export async function GET() {
 // POST /api/agents -> create a new agent
 // body: { name: string, baseModel: string, systemPrompt?: string, settings?: AgentSettings,
 //        tools?: AgentToolName[], maxToolCalls?: number }
+// `baseModel` is a selection of a provider's model, or a plain Ollama model name.
 // Tools are off unless the body turns them on.
 export async function POST(req: Request) {
   const user = await getCurrentUser();
@@ -37,14 +38,14 @@ export async function POST(req: Request) {
 
   const body = await readJsonObject(req);
   const name = (optionalString(body.name) ?? "").trim();
-  const baseModel = (optionalString(body.baseModel) ?? "").trim();
+  const baseModel = storedBaseModel((optionalString(body.baseModel) ?? "").trim());
 
   if (!name) return jsonError("Name is required", 400);
   if (!baseModel) return jsonError("Base model is required", 400);
   const nameError = agentNameError(name);
   if (nameError) return jsonError(nameError, 400);
 
-  const settings = validateAgentSettings(body.settings);
+  const settings = validateAgentSettings(baseModel.provider, body.settings);
   if (!settings.ok) return jsonError(settings.message, 400);
   const tools = validateAgentTools(body.tools);
   if (!tools.ok) return jsonError(tools.message, 400);
@@ -56,7 +57,7 @@ export async function POST(req: Request) {
       data: {
         userId: user.id,
         name,
-        baseModel,
+        baseModel: baseModel.value,
         systemPrompt: optionalString(body.systemPrompt) ?? null,
         settings: settings.value,
         tools: tools.value,

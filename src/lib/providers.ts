@@ -40,3 +40,12 @@ export type ProviderSettings = {
 export function isProviderReady(settings: ProviderSettings, provider: ProviderId): boolean {
   return provider === "ollama" || settings[provider].keyHint !== null;
 }
+
+// Ollama lists "llama3" as "llama3:latest".
+export const withOllamaTag = (name: string) => (/:[^/]*$/.test(name) ? name : `${name}:latest`);
+
+/** True when `models`, as `provider` lists them, include `model`. */
+export function hasModel(provider: ProviderId, models: string[], model: string): boolean {
+  if (provider !== "ollama") return models.includes(model);
+  return models.some((m) => withOllamaTag(m) === withOllamaTag(model));
+}

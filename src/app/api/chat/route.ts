@@ -5,13 +5,14 @@ import { getDefaultSystemPrompt } from "@/server/config";
 import { getApiConfig, getOllamaUrl } from "@/server/providers";
 import { stopAttempt, trackAttempt } from "@/server/chat/attempts";
 import { createAssistantReply, loadHistory, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
-import { streamOllamaChat, toOllamaTools } from "@/server/chat/ollama";
-import { streamOpenAIChat } from "@/server/chat/openai";
+import { getModelInfo } from "@/server/chat/models";
+import { streamOllamaChat } from "@/server/chat/ollama";
+import { apiRequestParams, streamOpenAIChat } from "@/server/chat/openai";
 import type { RequestSetupInput } from "@/server/chat/setup";
-import { textBudget } from "@/server/tools/definitions";
-import { toolGuidance, toolsFor } from "@/server/tools/policy";
-import { normalizeSelection, parseSelection, toSelection } from "@/lib/selection";
-import { PROVIDER_LABELS, type KeyProviderId } from "@/lib/providers";
+import { textBudget, toFunctionTools } from "@/server/tools/definitions";
+import { hasCheckedTools, toolGuidance, toolsFor } from "@/server/tools/policy";
+import { normalizeSelection, parseBaseModel, parseSelection, toSelection } from "@/lib/selection";
+import { PROVIDER_LABELS, type ProviderId } from "@/lib/providers";
 import { DEFAULT_MAX_TOOL_CALLS } from "@/lib/agentTools";
 
 export const runtime = "nodejs";
@@ -29,44 +30,40 @@ export const runtime = "nodejs";
 
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 
-type Target =
-  | {
-      kind: "ollama";
-      modelKey: string;
-      model: string;
-      baseUrl: string;
-      systemPrompt: string;
-      options?: unknown;
-      agent: { tools: unknown; maxToolCalls: number } | null; // set when the user chats with an agent
-    }
-  | { kind: KeyProviderId; modelKey: string; model: string };
+// For the text budget of an agent's tools, when its provider does not say how long its context is
+const UNKNOWN_CONTEXT = 32768;
+
+type Target = {
+  kind: ProviderId;
+  modelKey: string;
+  model: string;
+  systemPrompt: string | null; // null: the model gets none (plain OpenAI and OpenRouter models)
+  agent: { settings: unknown; tools: unknown; maxToolCalls: number } | null; // set when the user chats with an agent
+};
 
 /** Works out which backend and model to use. Returns null if the agent is not the user's. */
 async function resolveTarget(userId: string, model: unknown, agentId: unknown): Promise<Target | null> {
   if (typeof agentId === "string" && agentId) {
     const agent = await prisma.agent.findFirst({ where: { id: agentId, userId } });
-    if (!agent) return null;
+    const base = parseBaseModel(agent?.baseModel);
+    if (!agent || !base) return null;
     return {
-      kind: "ollama",
+      kind: base.provider,
       modelKey: toSelection("agent", agent.id),
-      model: parseSelection(agent.baseModel).value,
-      baseUrl: await getOllamaUrl(userId),
+      model: base.model,
       systemPrompt: agent.systemPrompt?.trim() || getDefaultSystemPrompt(),
-      options: agent.settings,
-      agent: { tools: agent.tools, maxToolCalls: agent.maxToolCalls },
+      agent: { settings: agent.settings, tools: agent.tools, maxToolCalls: agent.maxToolCalls },
     };
   }
 
   const selection = normalizeSelection(typeof model === "string" ? model : undefined);
   const { kind, value } = parseSelection(selection);
   if (kind === "agent") return null; // agents are chosen with agentId
-  if (kind !== "ollama") return { kind, modelKey: selection, model: value };
   return {
-    kind: "ollama",
+    kind,
     modelKey: selection,
     model: value,
-    baseUrl: await getOllamaUrl(userId),
-    systemPrompt: getDefaultSystemPrompt(),
+    systemPrompt: kind === "ollama" ? getDefaultSystemPrompt() : null,
     agent: null,
   };
 }
@@ -110,22 +107,29 @@ export async function POST(req: NextRequest) {
   // The conversation so far, ending with the new message. Like the system
   // prompt, it comes from the server, never from the client.
   const history = await loadHistory(conversationId);
+  const { agent } = target;
+  // What the model can do decides its tools and, on OpenAI and OpenRouter, which options it gets
+  const modelInfo =
+    agent && (target.kind !== "ollama" || hasCheckedTools(agent))
+      ? await getModelInfo(user.id, target.kind, target.model)
+      : null;
   // The tools the model can call: only agents get them, see server/tools/policy.ts
-  const tools =
-    target.kind === "ollama"
-      ? await toolsFor({ agent: target.agent, ollama: { baseUrl: target.baseUrl, model: target.model } })
-      : [];
+  const tools = toolsFor(agent, modelInfo?.capabilities ?? null);
   const systemPrompt =
-    target.kind === "ollama" && tools.length ? `${target.systemPrompt}\n\n${toolGuidance(tools)}` : undefined;
+    target.systemPrompt !== null && tools.length
+      ? `${target.systemPrompt}\n\n${toolGuidance(tools)}`
+      : target.systemPrompt;
+  const system = systemPrompt !== null ? [{ role: "system" as const, content: systemPrompt }] : [];
+  const apiParams =
+    agent && target.kind !== "ollama"
+      ? apiRequestParams(target.kind, agent.settings, modelInfo)
+      : undefined;
   // Everything the model gets besides the conversation, which is stored with the reply
-  const setup: RequestSetupInput =
-    target.kind === "ollama"
-      ? {
-          systemPrompt: systemPrompt ?? target.systemPrompt,
-          options: target.options,
-          ...(tools.length ? { tools: toOllamaTools(tools) } : {}),
-        }
-      : {};
+  const setup: RequestSetupInput = {
+    ...(systemPrompt !== null ? { systemPrompt } : {}),
+    ...(agent ? { options: apiParams ?? agent.settings } : {}),
+    ...(tools.length ? { tools: toFunctionTools(tools) } : {}),
+  };
   const reply = createAssistantReply({
     conversationId,
     userId: user.id,
@@ -134,21 +138,35 @@ export async function POST(req: NextRequest) {
     setup,
   });
 
+  const toolRun = {
+    tools,
+    maxToolCalls: agent?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
+    forAgent: !!agent,
+  };
   const stream =
     target.kind !== "ollama"
-      // OpenAI and OpenRouter models get no system prompt at all
-      ? streamOpenAIChat({ model: target.model, messages: history }, apiConfig!, reply)
+      ? streamOpenAIChat(
+          {
+            ...toolRun,
+            provider: target.kind,
+            model: target.model,
+            messages: [...system, ...history],
+            params: apiParams,
+            toolContext: { userId: user.id, textBudget: textBudget(modelInfo?.contextLength ?? UNKNOWN_CONTEXT) },
+          },
+          apiConfig!,
+          reply
+        )
       : streamOllamaChat(
           {
-            baseUrl: target.baseUrl,
+            ...toolRun,
+            baseUrl: await getOllamaUrl(user.id),
             model: target.model,
-            messages: [{ role: "system", content: setup.systemPrompt ?? target.systemPrompt }, ...history],
-            options: target.options,
-            tools,
-            maxToolCalls: target.agent?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
+            messages: [...system, ...history],
+            options: agent?.settings,
             toolContext: {
               userId: user.id,
-              textBudget: textBudget((target.options as { num_ctx?: unknown } | undefined)?.num_ctx),
+              textBudget: textBudget((agent?.settings as { num_ctx?: unknown } | undefined)?.num_ctx),
             },
           },
           reply

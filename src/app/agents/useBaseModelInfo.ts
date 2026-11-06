@@ -3,26 +3,29 @@
 import { useEffect, useState } from "react";
 import type { BaseModelInfo } from "@/lib/types";
 
-/** What an agent on `baseModel` can have, from GET /api/agents/base-model; null until known. */
-export function useBaseModelInfo(baseModel: string): BaseModelInfo | null {
-  const [result, setResult] = useState<{ model: string; info: BaseModelInfo } | null>(null);
+/**
+ * What an agent on `selection` (a provider's model) can have, from GET
+ * /api/agents/base-model. While the answer for a new model loads, the previous
+ * model's answer stays available in `shown`, so the page can dim it rather than
+ * empty it. `info` is null in `shown` when the request failed.
+ */
+export function useBaseModelInfo(selection: string) {
+  const [shown, setShown] = useState<{ model: string; info: BaseModelInfo | null } | null>(null);
 
   useEffect(() => {
-    if (!baseModel) return;
     let cancelled = false;
-    fetch(`/api/agents/base-model?model=${encodeURIComponent(baseModel)}`)
+    fetch(`/api/agents/base-model?model=${encodeURIComponent(selection)}`)
       .then((res) => (res.ok ? res.json() : null))
+      .catch(() => null)
       .then((data) => {
-        if (cancelled || !Array.isArray(data?.tools)) return;
-        const contextLength = typeof data.contextLength === "number" ? data.contextLength : null;
-        setResult({ model: baseModel, info: { tools: data.tools, contextLength } });
-      })
-      .catch(() => {});
+        if (cancelled) return;
+        setShown({ model: selection, info: Array.isArray(data?.tools) ? (data as BaseModelInfo) : null });
+      });
     return () => {
       cancelled = true;
     };
-  }, [baseModel]);
+  }, [selection]);
 
-  // Until the new model's answer arrives, the previous model's does not apply
-  return result?.model === baseModel ? result.info : null;
+  const loading = shown?.model !== selection;
+  return { shown, loading, info: loading ? null : shown.info };
 }

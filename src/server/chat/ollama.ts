@@ -1,8 +1,9 @@
 import { createLineSplitter } from "@/lib/ndjson";
-import type { ChatMessage, ReplyStatus, ToolStep } from "@/lib/types";
-import type { ToolDefinition } from "@/server/tools/definitions";
-import { runTool, type ToolResult } from "@/server/tools/run";
-import type { AssistantReply, StoredToolCall } from "./conversation";
+import { withOllamaTag } from "@/lib/providers";
+import type { ChatMessage, ReplyStatus } from "@/lib/types";
+import { toFunctionTools, type ToolDefinition } from "@/server/tools/definitions";
+import type { AssistantReply } from "./conversation";
+import { runToolLoop, type ModelTurn } from "./toolLoop";
 
 // A message as Ollama's /api/chat takes it.
 export type OllamaMessage = {
@@ -24,31 +25,18 @@ export type OllamaChatRequest = {
   options?: unknown; // agent generation settings, passed through as Ollama options
   // The tools the model can call; with none, the chat is a single request
   tools?: ToolDefinition[];
-  // Most tool calls per reply. Calls after that are not run: the model is told
-  // to answer with what it has, and if it calls a tool again, the reply ends.
+  // Most tool calls per reply, see runToolLoop
   maxToolCalls?: number;
   toolContext?: { userId: string; textBudget: number };
+  // Set when the user chats with an agent, for the error when its model is gone
+  forAgent?: boolean;
 };
-
-const limitResult = (max: number): ToolResult => ({
-  text: `Error: not run. This reply has already called tools ${max} times, the most it may. Answer now with what you have, without calling tools.`,
-  images: [],
-  error: true,
-});
-
-/** The tools in the format of Ollama's `tools` request field. */
-export function toOllamaTools(tools: ToolDefinition[]) {
-  return tools.map((t) => ({
-    type: "function" as const,
-    function: { name: t.name, description: t.description, parameters: t.parameters },
-  }));
-}
 
 // Shape of one entry in Ollama's GET /api/ps response.
 type OllamaRunning = { name?: string; model?: string; context_length?: number };
 
-// Ollama lists "llama3" as "llama3:latest".
-const withTag = (name: string) => (/:[^/]*$/.test(name) ? name : `${name}:latest`);
+// Ollama's answer when it does not have a model, such as {"error":"model 'x' not found"}
+const MODEL_NOT_FOUND = /model ['"].*['"] not found/i;
 
 /**
  * True when Ollama has `model` in memory, ready for a chat with `options`. A
@@ -63,7 +51,7 @@ async function isLoaded(baseUrl: string, model: string, options: unknown, signal
   const numCtx = (options as { num_ctx?: unknown } | undefined)?.num_ctx;
   return running.some(
     (m) =>
-      withTag(m?.name || m?.model || "") === withTag(model) &&
+      withOllamaTag(m?.name || m?.model || "") === withOllamaTag(model) &&
       (typeof numCtx !== "number" || m.context_length === undefined || m.context_length === numCtx)
   );
 }
@@ -96,7 +84,7 @@ async function postChat(baseUrl: string, body: object, signal: AbortSignal): Pro
  * { error } line.
  */
 export function streamOllamaChat(
-  { baseUrl, model, messages, options, tools = [], maxToolCalls = 0, toolContext }: OllamaChatRequest,
+  { baseUrl, model, messages, options, tools = [], maxToolCalls = 0, toolContext, forAgent }: OllamaChatRequest,
   reply: AssistantReply
 ): ReadableStream<Uint8Array> {
   const abort = new AbortController();
@@ -110,11 +98,10 @@ export function streamOllamaChat(
         if (!cancelled) controller.enqueue(encoder.encode(line + "\n"));
       };
       const sendStatus = (status: ReplyStatus) => send(JSON.stringify({ status }));
-      const sendTool = (step: Partial<ToolStep> & { id: string }) => send(JSON.stringify({ tool: step }));
 
       /** Runs one request to Ollama, streaming it to the client. Returns what the model wrote and called. */
       async function chatTurn(conversation: OllamaMessage[], offered: ToolDefinition[]) {
-        const turn = { content: "", thinking: "", toolCalls: [] as OllamaToolCall[] };
+        const turn = { content: "", thinking: "", toolCalls: [] as OllamaToolCall[], calls: [] as ModelTurn["calls"] };
         const forward = (line: string) => {
           try {
             const obj = JSON.parse(line);
@@ -141,7 +128,7 @@ export function streamOllamaChat(
             model,
             messages: conversation,
             stream: true,
-            ...(offered.length ? { tools: toOllamaTools(offered) } : {}),
+            ...(offered.length ? { tools: toFunctionTools(offered) } : {}),
             ...opts,
           },
           abort.signal
@@ -155,32 +142,12 @@ export function streamOllamaChat(
           for (const line of lines.push(decoder.decode(value, { stream: true }))) forward(line);
         }
         for (const line of [...lines.push(decoder.decode()), ...lines.flush()]) forward(line);
+        turn.calls = turn.toolCalls.map((c) => ({
+          id: c.id,
+          name: c.function?.name ?? "",
+          arguments: c.function?.arguments && typeof c.function.arguments === "object" ? c.function.arguments : {},
+        }));
         return turn;
-      }
-
-      /** Runs one tool call (unless `overLimit`) and stores its result. Returns what the model gets back. */
-      async function callTool(call: StoredToolCall, overLimit: boolean): Promise<ToolResult> {
-        const def = tools.find((t) => t.name === call.name);
-        const icon = def?.icon ?? "spanner";
-        sendTool({ id: call.id, name: call.name, icon, label: def?.label(call.arguments, "running") ?? call.name, state: "running" });
-
-        const result: ToolResult = overLimit
-          ? limitResult(maxToolCalls)
-          : def
-            ? await runTool(def, call.arguments, { ...toolContext!, signal: abort.signal })
-            : { text: `Error: there is no tool named ${call.name}.`, images: [], error: true };
-        const state = result.error ? "error" : "done";
-        const label =
-          (def?.label(call.arguments, state) ?? `Could not use ${call.name}`) + (overLimit ? " (tool limit reached)" : "");
-        const [attachmentId] = await reply.saveToolResult({
-          call,
-          content: result.text,
-          label,
-          error: result.error,
-          images: result.images,
-        });
-        sendTool({ id: call.id, label, state, ...(attachmentId ? { attachmentId } : {}) });
-        return result;
       }
 
       try {
@@ -193,53 +160,51 @@ export function streamOllamaChat(
         sendStatus("thinking");
 
         const conversation = [...messages];
-        let callsLeft = maxToolCalls;
-        // Set once a call was refused; the model was told to answer
-        let toldToAnswer = false;
-        for (let round = 1; ; round++) {
+        await runToolLoop({
+          tools,
+          maxToolCalls,
+          toolContext,
+          reply,
+          signal: abort.signal,
+          isCancelled: () => cancelled,
+          sendTool: (step) => send(JSON.stringify({ tool: step })),
+          sendError: (error) => send(JSON.stringify({ error })),
           // The tools stay offered in every round: models such as gpt-oss call
           // them anyway once the conversation has tool calls in it
-          const turn = await chatTurn(conversation, tools);
-          if (turn.toolCalls.length === 0 || cancelled) break;
-          if (toldToAnswer) {
-            if (!turn.content.trim()) {
-              send(JSON.stringify({ error: `The agent reached its limit of ${maxToolCalls} tool calls without answering.` }));
-            }
-            break;
-          }
-
-          const calls: StoredToolCall[] = turn.toolCalls.map((c, i) => ({
-            id: c.id || `call_${round}_${i}`,
-            name: c.function?.name ?? "",
-            arguments: c.function?.arguments && typeof c.function.arguments === "object" ? c.function.arguments : {},
-          }));
-          await reply.saveToolCalls(calls);
-          conversation.push({
-            role: "assistant",
-            content: turn.content,
-            ...(turn.thinking ? { thinking: turn.thinking } : {}),
-            tool_calls: turn.toolCalls.map((c, i) => ({ ...c, id: calls[i].id })),
-          });
-          // One call at a time: the server may be small
-          for (const call of calls) {
-            const overLimit = callsLeft <= 0;
-            if (overLimit) toldToAnswer = true;
-            else callsLeft--;
-            const result = await callTool(call, overLimit);
+          nextTurn: () => chatTurn(conversation, tools),
+          addCalls(turn, calls) {
             conversation.push({
-              role: "tool",
-              tool_name: call.name,
-              tool_call_id: call.id,
-              content: result.text,
-              ...(result.images.length ? { images: result.images.map((i) => i.data) } : {}),
+              role: "assistant",
+              content: turn.content,
+              ...(turn.thinking ? { thinking: turn.thinking } : {}),
+              tool_calls: turn.toolCalls.map((c, i) => ({ ...c, id: calls[i].id })),
             });
-          }
-        }
+          },
+          addResults(results) {
+            for (const { call, result } of results) {
+              conversation.push({
+                role: "tool",
+                tool_name: call.name,
+                tool_call_id: call.id,
+                content: result.text,
+                ...(result.images.length ? { images: result.images.map((i) => i.data) } : {}),
+              });
+            }
+          },
+        });
         await reply.persist();
         if (!cancelled) controller.close();
       } catch (err) {
         await reply.persist();
-        send(JSON.stringify({ error: `Ollama error: ${err instanceof Error ? err.message : String(err)}` }));
+        const message = err instanceof Error ? err.message : String(err);
+        const hint = forAgent ? "Pick another base model for this agent on the agents page." : "Pick another model.";
+        send(
+          JSON.stringify({
+            error: MODEL_NOT_FOUND.test(message)
+              ? `${model} is no longer on your Ollama server. ${hint}`
+              : `Ollama error: ${message}`,
+          })
+        );
         if (!cancelled) controller.close();
       }
     },

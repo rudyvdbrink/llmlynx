@@ -1,5 +1,6 @@
 // Types shared by the client and the API routes.
 
+import type { AgentSettings } from "./agentSettings";
 import type { ToolAvailability, ToolIcon } from "./agentTools";
 
 export type Role = "user" | "assistant" | "system";
@@ -58,4 +59,14 @@ export type AgentSummary = {
 export type BaseModelInfo = {
   tools: ToolAvailability[];
   contextLength: number | null; // the longest context window the model supports; null when unknown
+  maxOutput: number | null; // the most tokens one reply can have; null when unknown
+  options: string[] | null; // the keys of the options the model takes (lib/agentSettings.ts); null when unknown
+  reasoning: string[] | null; // what its reasoning option can be set to; null when it has no such option
+  defaults: AgentSettings; // the model's own values for its options, as far as they are known
+};
+
+// Whether an agent can be used now, as GET /api/agents/status returns it per agent.
+export type AgentStatus = {
+  unavailable: string | null; // why it cannot be used now, such as "Ollama cannot be reached"
+  expiresOn: string | null; // YYYY-MM-DD when its provider has announced the end of its base model
 };

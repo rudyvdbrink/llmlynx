@@ -1,11 +1,13 @@
 "use client";
 
-import { Fragment, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
+import ModelPicker from "@/components/sidebar/ModelPicker";
+import sidebarStyles from "@/components/sidebar/Sidebar.module.css";
 import { useConversationList } from "@/hooks/useConversationList";
-import { useAgentList, useLocalModels } from "@/hooks/useModelCatalog";
-import { DEFAULT_AGENT_SETTINGS, type AgentSettings } from "@/lib/agentSettings";
+import { useAgentList, useAgentStatuses, useProviderModels, useProviderSettings } from "@/hooks/useModelCatalog";
+import { DEFAULT_SETTINGS, optionFamily, type AgentSettings, type OptionFamily, type OptionValue } from "@/lib/agentSettings";
 import {
   AGENT_TOOL_INFO,
   AGENT_TOOLS,
@@ -15,20 +17,25 @@ import {
   validateMaxToolCalls,
   type AgentToolName,
 } from "@/lib/agentTools";
-import { DEFAULT_SELECTION, parseSelection, toSelection } from "@/lib/selection";
+import { DEFAULT_MODELS, hasModel, isProviderReady, PROVIDER_LABELS, PROVIDERS, type ProviderId } from "@/lib/providers";
+import { baseModelLabel, DEFAULT_SELECTION, parseBaseModel, toSelection } from "@/lib/selection";
 import type { AgentSummary, SessionUser } from "@/lib/types";
 import chatStyles from "../chat/Chat.module.css";
 import styles from "./Agents.module.css";
-import { contextStops, DEFAULT_CONTEXT_MAX, OPTION_FIELDS, parseOptionValue, type OptionField } from "./optionFields";
+import OptionsPanel from "./OptionsPanel";
 import { useBaseModelInfo } from "./useBaseModelInfo";
 import { ToolStepIcon } from "../chat/components/ToolLine";
 
-const DEFAULT_BASE_MODEL = parseSelection(DEFAULT_SELECTION).value;
+// The value of the agent dropdown while creating a new agent
+const NEW_AGENT = "";
 
 // Below this context window, web pages crowd out the conversation
 const MIN_TOOLS_NUM_CTX = 8192;
 
 type Status = { kind: "success" | "error"; msg: string };
+
+// Each kind of provider keeps its own values, so trying another provider loses nothing
+const newOptions = (): Record<OptionFamily, AgentSettings> => ({ ollama: DEFAULT_SETTINGS.ollama, api: DEFAULT_SETTINGS.api });
 
 export default function AgentsClient({ initialUser }: { initialUser: SessionUser }) {
   const router = useRouter();
@@ -40,125 +47,127 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
   const openInChat = (id: string) => router.push(`/chat?conversation=${encodeURIComponent(id)}`);
 
   // Agent form state (UI)
-  const availableModels = useLocalModels();
   const [agents, setAgents] = useAgentList();
+  const { statuses, refresh: refreshStatuses } = useAgentStatuses();
+  const providerSettings = useProviderSettings();
   // Set while editing a saved agent; null while creating a new one.
   const [agentId, setAgentId] = useState<string | null>(null);
   const [agentName, setAgentName] = useState("");
-  const [baseModelPick, setBaseModelPick] = useState(DEFAULT_BASE_MODEL);
+  const [provider, setProvider] = useState<ProviderId>("ollama");
+  const [modelPick, setModelPick] = useState(DEFAULT_MODELS.ollama);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [systemPrompt, setSystemPrompt] = useState("");
-  const [opts, setOpts] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
+  const [opts, setOpts] = useState(newOptions);
   // Tools are off until the user checks them
   const [tools, setTools] = useState<AgentToolName[]>([]);
   const [maxToolCalls, setMaxToolCalls] = useState(DEFAULT_MAX_TOOL_CALLS);
 
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
-  const helpDialogRef = useRef<HTMLDialogElement | null>(null);
+  // The model last picked per provider, so switching back restores it
+  const lastModelRef = useRef<Partial<Record<ProviderId, string>>>({});
 
-  // The default model may not be installed; for a new agent, fall back to the first installed one.
-  const baseModel =
-    !agentId && availableModels.length > 0 && !availableModels.includes(baseModelPick)
-      ? availableModels[0]
-      : baseModelPick;
+  const { models, expiries, loading: modelsLoading, error: modelsError } = useProviderModels(provider);
 
-  const baseModelInfo = useBaseModelInfo(baseModel);
-  const toolAvailability = baseModelInfo?.tools ?? null;
-  const contextLength = baseModelInfo?.contextLength ?? null;
+  // The default model may not be on offer; for a new agent, fall back to the first one that is.
+  const baseModel = !agentId && models.length > 0 && !hasModel(provider, models, modelPick) ? models[0] : modelPick;
+  const selection = toSelection(provider, baseModel);
+
+  const { shown: shownInfo, loading: infoLoading, info } = useBaseModelInfo(selection);
+  const toolAvailability = shownInfo?.info?.tools ?? null;
+  const family = optionFamily(provider);
+
+  const providerLabel = PROVIDER_LABELS[provider];
+  const modelGone = !!agentId && !modelsLoading && !modelsError && !hasModel(provider, models, baseModel);
+  const expiresOn = expiries[baseModel];
+  const modelNotice = modelsError
+    ? models.length > 0
+      ? `${modelsError}. Showing common models.`
+      : modelsError
+    : modelGone
+      ? `${baseModel} is no longer available on ${providerLabel}. Pick another model; the rest of this agent stays as it is.`
+      : expiresOn
+        ? `${providerLabel} retires ${baseModel} on ${expiresOn}. Pick another model before then to keep this agent working.`
+        : null;
 
   function toggleTool(name: AgentToolName, on: boolean) {
     setTools((prev) => AGENT_TOOLS.filter((t) => (t === name ? on : prev.includes(t))));
   }
 
-  function setOpt(key: keyof AgentSettings, value: number) {
-    setOpts((prev) => ({ ...prev, [key]: value }));
+  function setOpt(optionsFamily: OptionFamily, key: string, value: OptionValue | undefined) {
+    setOpts((prev) => {
+      const next = { ...prev[optionsFamily] };
+      if (value === undefined) delete next[key];
+      else next[key] = value;
+      return { ...prev, [optionsFamily]: next };
+    });
   }
 
-  function renderControl(field: OptionField) {
-    if (field.choices) {
-      return (
-        <select
-          className={styles.inlineSelect}
-          value={opts[field.key]}
-          onChange={(e) => setOpt(field.key, parseOptionValue(field, e.target.value, false))}
-          disabled={saving}
-        >
-          {field.choices.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
-            </option>
-          ))}
-        </select>
-      );
-    }
-    if (field.contextSlider) {
-      const stops = contextStops(contextLength ?? DEFAULT_CONTEXT_MAX);
-      const value = opts[field.key];
-      // A typed value between two stops shows at the lower one
-      const index = Math.max(0, stops.filter((s) => s <= value).length - 1);
-      return (
-        <input
-          type="range"
-          min={0}
-          max={stops.length - 1}
-          step={1}
-          value={index}
-          aria-valuetext={String(value)}
-          onChange={(e) => setOpt(field.key, stops[Number(e.target.value)])}
-          disabled={saving}
-        />
-      );
-    }
-    if (field.slider) {
-      return (
-        <input
-          type="range"
-          {...field.slider}
-          value={opts[field.key]}
-          onChange={(e) => setOpt(field.key, parseOptionValue(field, e.target.value, false))}
-          disabled={saving}
-        />
-      );
-    }
-    // Keeps numeric-only rows right-aligned
-    return <div className={styles.controlPlaceholder} />;
+  function changeProvider(next: ProviderId) {
+    lastModelRef.current[provider] = baseModel;
+    setProvider(next);
+    setModelPick(lastModelRef.current[next] ?? DEFAULT_MODELS[next]);
   }
 
-  async function onChangeSelection(e: React.ChangeEvent<HTMLSelectElement>) {
-    const { kind, value } = parseSelection(e.target.value);
-    if (kind === "agent") {
-      try {
-        setStatus(null);
-        const res = await fetch(`/api/agents/${value}`);
-        if (!res.ok) throw new Error("Failed to load agent");
-        const data = await res.json();
-        const a = data?.agent;
-        if (!a) throw new Error("Invalid agent payload");
-        setAgentId(value);
-        setAgentName(a.name ?? "");
-        setBaseModelPick(a.baseModel ?? baseModel);
-        setSystemPrompt(a.systemPrompt ?? "");
-        setOpts({ ...DEFAULT_AGENT_SETTINGS, ...(a.settings as Partial<AgentSettings>) });
-        const savedTools = validateAgentTools(a.tools);
-        setTools(savedTools.ok ? savedTools.value : []);
-        const savedMax = validateMaxToolCalls(a.maxToolCalls);
-        setMaxToolCalls(savedMax.ok ? savedMax.value : DEFAULT_MAX_TOOL_CALLS);
-      } catch (err) {
-        setStatus({ kind: "error", msg: (err as Error)?.message || "Failed to load agent" });
-        setAgentId(null);
-      }
-    } else if (kind === "ollama") {
-      setBaseModelPick(value);
-      // Leaving a saved agent for a plain base model starts a new agent without tools
-      if (agentId) {
-        setTools([]);
-        setMaxToolCalls(DEFAULT_MAX_TOOL_CALLS);
-      }
-      setAgentId(null); // new agent (Save)
+  function startNewAgent() {
+    setAgentId(null);
+    setAgentName("");
+    setProvider("ollama");
+    setModelPick(DEFAULT_MODELS.ollama);
+    setSystemPrompt("");
+    setOpts(newOptions());
+    setTools([]);
+    setMaxToolCalls(DEFAULT_MAX_TOOL_CALLS);
+    lastModelRef.current = {};
+  }
+
+  async function onChangeAgent(e: React.ChangeEvent<HTMLSelectElement>) {
+    const id = e.target.value;
+    setStatus(null);
+    if (id === NEW_AGENT) {
+      startNewAgent();
+      return;
+    }
+    try {
+      const res = await fetch(`/api/agents/${id}`);
+      if (!res.ok) throw new Error("Failed to load agent");
+      const data = await res.json();
+      const a = data?.agent;
+      const base = parseBaseModel(a?.baseModel);
+      if (!a || !base) throw new Error("Invalid agent payload");
+      const savedFamily = optionFamily(base.provider);
+      setAgentId(id);
+      setAgentName(a.name ?? "");
+      setProvider(base.provider);
+      setModelPick(base.model);
+      lastModelRef.current = {};
+      setSystemPrompt(a.systemPrompt ?? "");
+      setOpts({
+        ...newOptions(),
+        [savedFamily]: { ...DEFAULT_SETTINGS[savedFamily], ...(a.settings as AgentSettings) },
+      });
+      const savedTools = validateAgentTools(a.tools);
+      setTools(savedTools.ok ? savedTools.value : []);
+      const savedMax = validateMaxToolCalls(a.maxToolCalls);
+      setMaxToolCalls(savedMax.ok ? savedMax.value : DEFAULT_MAX_TOOL_CALLS);
+    } catch (err) {
+      setStatus({ kind: "error", msg: (err as Error)?.message || "Failed to load agent" });
     }
   }
 
   const isEditingExisting = !!agentId;
+
+  // What the model does not take is left out; while that is not known, all is kept.
+  function settingsToSave(): AgentSettings {
+    const settings = opts[family];
+    if (family !== "api" || !info?.options) return settings;
+    const { options, reasoning } = info;
+    return Object.fromEntries(
+      Object.entries(settings).filter(
+        ([key, value]) => options.includes(key) && (key !== "reasoning" || !!reasoning?.includes(String(value)))
+      )
+    );
+  }
 
   // Sends the form to the API. Returns the saved agent, or null after showing an error.
   async function submitAgent(url: string, method: "POST" | "PATCH", failLabel: string) {
@@ -167,9 +176,9 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: agentName.trim(),
-        baseModel: baseModel.trim(),
+        baseModel: selection,
         systemPrompt,
-        settings: { ...opts },
+        settings: settingsToSave(),
         tools,
         maxToolCalls,
       }),
@@ -199,8 +208,9 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
           prev.some((a) => a.id === id) ? prev : [{ id, name, baseModel, systemPrompt, createdAt, updatedAt }, ...prev]
         );
         // Switch to editing the newly-created agent
-        setBaseModelPick(baseModel);
+        setModelPick(parseBaseModel(baseModel)?.model ?? modelPick);
         setAgentId(id);
+        refreshStatuses();
       }
       setStatus({ kind: "success", msg: "Agent saved." });
     } catch (e) {
@@ -222,12 +232,13 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
             ? {
                 ...a,
                 name: agentName.trim() || a.name,
-                baseModel: baseModel.trim() || a.baseModel,
+                baseModel: selection,
                 updatedAt: new Date().toISOString(),
               }
             : a
         )
       );
+      refreshStatuses();
       setStatus({ kind: "success", msg: "Agent updated." });
     } catch (e) {
       setStatus({ kind: "error", msg: (e as Error)?.message || "Update failed." });
@@ -236,8 +247,7 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
     }
   }
 
-  // The base model dropdown doubles as the agent picker.
-  const selectValue = agentId ? toSelection("agent", agentId) : toSelection("ollama", baseModel);
+  const headerSelect = `${sidebarStyles.modelSelect} ${styles.headerControl}`;
 
   return (
     <AppShell
@@ -269,10 +279,32 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
         {/* Header inputs */}
         <section className={styles.headerRow}>
           <div className={styles.fieldGroup}>
+            <h2 className={styles.sectionTitle}>Agent</h2>
+            <select
+              className={headerSelect}
+              aria-label="Agent"
+              value={agentId ?? NEW_AGENT}
+              onChange={onChangeAgent}
+              disabled={saving}
+            >
+              <option value={NEW_AGENT}>New agent</option>
+              {agents.map((a) => {
+                const problem = statuses[a.id]?.unavailable;
+                return (
+                  <option key={a.id} value={a.id}>
+                    {a.name} ({problem ?? baseModelLabel(a.baseModel)})
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          <div className={styles.fieldGroup}>
             <h2 className={styles.sectionTitle}>Agent name</h2>
             <input
-              className={styles.textInput}
+              className={`${styles.textInput} ${styles.headerControl}`}
               type="text"
+              aria-label="Agent name"
               placeholder="e.g. Research Copilot"
               value={agentName}
               onChange={(e) => setAgentName(e.target.value)}
@@ -280,32 +312,10 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
             />
           </div>
 
-          <div className={styles.fieldGroup}>
-            <h2 className={styles.sectionTitle}>Base model</h2>
-            <select className={styles.select} value={selectValue} onChange={onChangeSelection} disabled={saving}>
-              {agents.length > 0 && (
-                <optgroup label="Agents">
-                  {agents.map((a) => (
-                    <option key={a.id} value={toSelection("agent", a.id)}>
-                      {a.name} {a.baseModel ? `(${a.baseModel})` : ""}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              <optgroup label="Base models">
-                {availableModels.map((m) => (
-                  <option key={m} value={toSelection("ollama", m)}>
-                    {m}
-                  </option>
-                ))}
-              </optgroup>
-            </select>
-          </div>
-
           <div className={styles.actionsBlock}>
             <button
               type="button"
-              className={styles.primaryBtn}
+              className={`${styles.primaryBtn} ${styles.headerControl}`}
               onClick={isEditingExisting ? onUpdate : onSave}
               disabled={saving}
               title={isEditingExisting ? "Update this agent" : "Create a new agent"}
@@ -313,7 +323,52 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
               {saving ? (isEditingExisting ? "Updating..." : "Saving...") : isEditingExisting ? "Update" : "Save agent"}
             </button>
           </div>
+
+          <div className={styles.fieldGroup}>
+            <h2 className={styles.sectionTitle}>Provider</h2>
+            <select
+              className={headerSelect}
+              aria-label="Provider"
+              value={provider}
+              onChange={(e) => changeProvider(e.target.value as ProviderId)}
+              disabled={saving}
+            >
+              {PROVIDERS.map((p) => {
+                const noKey = p !== provider && !!providerSettings && !isProviderReady(providerSettings, p);
+                return (
+                  <option key={p} value={p} disabled={noKey}>
+                    {PROVIDER_LABELS[p]}
+                    {noKey ? " (no API key)" : ""}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          <div className={`${styles.fieldGroup} ${styles.modelField}`}>
+            <h2 className={styles.sectionTitle}>Base model</h2>
+            <ModelPicker
+              label="Base model"
+              items={models.map((m) => ({ value: m, label: m, detail: expiries[m] ? `until ${expiries[m]}` : undefined }))}
+              value={baseModel}
+              valueLabel={baseModel || "No model selected"}
+              open={modelPickerOpen}
+              onOpenChange={setModelPickerOpen}
+              onPick={setModelPick}
+              loading={modelsLoading}
+              notice={modelsError}
+              noticeIsError={!!modelsError && models.length === 0}
+              emptyText="No models available"
+              searchPlaceholder="Search models…"
+              disabled={saving}
+              triggerClassName={styles.headerControl}
+            />
+          </div>
         </section>
+        {/* Always takes a line, so that a notice does not move the page when the model changes */}
+        <p className={styles.modelNotice} role={modelNotice ? "status" : undefined}>
+          {modelNotice}
+        </p>
 
         <section className={styles.section}>
           <h2 className={styles.sectionTitle}>System prompt</h2>
@@ -329,9 +384,9 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
 
         <section className={styles.section}>
           <h2 className={styles.sectionTitle}>Tools</h2>
-          <div className={styles.toolList}>
+          <div className={`${styles.toolList} ${infoLoading ? styles.toolListLoading : ""}`}>
             {AGENT_TOOLS.map((name) => {
-              const info = AGENT_TOOL_INFO[name];
+              const toolInfo = AGENT_TOOL_INFO[name];
               const unavailable = toolAvailability?.find((t) => t.name === name && !t.available);
               const checked = tools.includes(name);
               return (
@@ -348,11 +403,14 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
                   />
                   <span className={styles.toolOptionText}>
                     <span className={styles.toolOptionLabel}>
-                      <ToolStepIcon icon={info.icon} className={styles.toolOptionIcon} />
-                      {info.label}
+                      <ToolStepIcon icon={toolInfo.icon} className={styles.toolOptionIcon} />
+                      {toolInfo.label}
                     </span>
-                    <span className={styles.toolOptionHelp}>{info.help}</span>
-                    {unavailable?.reason && <span className={styles.toolOptionReason}>{unavailable.reason}</span>}
+                    {/* The reason shows in place of the help text, so that a model change does not move the page */}
+                    <span className={styles.toolOptionDetail}>
+                      <span className={styles.toolOptionHelp}>{toolInfo.help}</span>
+                      {unavailable?.reason && <span className={styles.toolOptionReason}>{unavailable.reason}</span>}
+                    </span>
                   </span>
                 </label>
               );
@@ -398,92 +456,27 @@ export default function AgentsClient({ initialUser }: { initialUser: SessionUser
               </span>
             </div>
           </div>
-          {tools.length > 0 && opts.num_ctx < MIN_TOOLS_NUM_CTX && (
+          {provider === "ollama" && tools.length > 0 && Number(opts.ollama.num_ctx ?? 0) < MIN_TOOLS_NUM_CTX && (
             <p className={styles.toolHint}>
               Web pages need room: set the context window to 16384 tokens or more, or pages get cut short.
             </p>
           )}
         </section>
 
-        <section className={styles.section}>
-          <h2 className={styles.sectionTitle}>Generation options</h2>
-          <div className={styles.grid}>
-            {OPTION_FIELDS.map((field) => (
-              <div key={field.key} className={styles.optionRow}>
-                <label className={styles.optionLabel}>{field.label}</label>
-                <div className={styles.optionControls}>
-                  {renderControl(field)}
-                  {field.number && (
-                    <div>
-                      <input
-                        className={field.key === "seed" ? styles.seedNumber : undefined}
-                        type="number"
-                        {...field.number}
-                        value={opts[field.key]}
-                        onChange={(e) => setOpt(field.key, parseOptionValue(field, e.target.value, true))}
-                        disabled={saving}
-                      />
-                    </div>
-                  )}
-                </div>
-                {field.contextSlider && contextLength !== null && opts[field.key] > contextLength && (
-                  <span className={styles.optionHint}>
-                    {baseModel} supports up to {contextLength} tokens, so Ollama uses {contextLength}.
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className={styles.footerActions}>
-          <button
-            type="button"
-            className={styles.secondaryBtn}
-            onClick={() => helpDialogRef.current?.showModal()}
-            disabled={saving}
-          >
-            Help
-          </button>
-          <button
-            type="button"
-            className={styles.resetBtn}
-            onClick={() => {
-              setOpts(DEFAULT_AGENT_SETTINGS);
-              setStatus(null);
-            }}
-            disabled={saving}
-          >
-            Reset to defaults
-          </button>
-        </section>
+        <OptionsPanel
+          provider={provider}
+          model={baseModel}
+          shown={shownInfo}
+          loading={infoLoading}
+          values={opts}
+          onChange={setOpt}
+          onReset={(optionsFamily) => {
+            setOpts((prev) => ({ ...prev, [optionsFamily]: DEFAULT_SETTINGS[optionsFamily] }));
+            setStatus(null);
+          }}
+          disabled={saving}
+        />
       </div>
-
-      <dialog ref={helpDialogRef} className={styles.helpDialog}>
-        <div className={styles.helpContent}>
-          <div className={styles.helpHeader}>
-            <h3>Agent options</h3>
-            <button
-              type="button"
-              className={styles.closeBtn}
-              onClick={() => helpDialogRef.current?.close()}
-              aria-label="Close"
-            >
-              ×
-            </button>
-          </div>
-          <div className={styles.helpBody}>
-            <dl className={styles.helpList}>
-              {OPTION_FIELDS.map((field) => (
-                <Fragment key={field.key}>
-                  <dt>{field.label}</dt>
-                  <dd>{field.help}</dd>
-                </Fragment>
-              ))}
-            </dl>
-          </div>
-        </div>
-      </dialog>
     </AppShell>
   );
 }

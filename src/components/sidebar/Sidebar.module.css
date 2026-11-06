@@ -277,6 +277,10 @@
 }
 .pickerOption[data-active="true"] { background: var(--surface-hover); }
 .pickerOption[aria-selected="true"] { color: var(--accent); }
+.pickerOption[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: default;
+}
 .pickerDetail {
   flex: none;
   max-width: 45%;

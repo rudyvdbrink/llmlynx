@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import styles from "./Sidebar.module.css";
 import ModelPicker, { type PickerItem } from "./ModelPicker";
-import { useAgentList, useProviderModels, useProviderSettings } from "@/hooks/useModelCatalog";
+import { useAgentList, useAgentStatuses, useProviderModels, useProviderSettings } from "@/hooks/useModelCatalog";
 import { DEFAULT_MODELS, isProviderReady, PROVIDER_LABELS, PROVIDERS } from "@/lib/providers";
-import { normalizeSelection, parseSelection, toSelection, type SelectionKind } from "@/lib/selection";
+import { baseModelLabel, normalizeSelection, parseSelection, toSelection, type SelectionKind } from "@/lib/selection";
 
 // The provider dropdown lists the model providers, then the user's agents.
 const KINDS: SelectionKind[] = [...PROVIDERS, "agent"];
@@ -30,8 +30,14 @@ export default function ModelSection({
 
   const settings = useProviderSettings();
   const [agents] = useAgentList();
+  const { statuses, refresh: refreshStatuses } = useAgentStatuses();
   const { models, loading, error } = useProviderModels(current.kind === "agent" ? null : current.kind);
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  // A provider that was down may be back by the time the user opens the list
+  useEffect(() => {
+    if (pickerOpen && isAgent) refreshStatuses();
+  }, [pickerOpen, isAgent, refreshStatuses]);
 
   function unavailableReason(kind: SelectionKind): string | null {
     if (kind === "agent") return agents.length > 0 ? null : "none yet";
@@ -41,14 +47,24 @@ export default function ModelSection({
 
   function changeKind(kind: SelectionKind) {
     lastUsed.set(current.kind, current.value);
-    const next = lastUsed.get(kind) ?? (kind === "agent" ? agents[0]?.id : DEFAULT_MODELS[kind]);
+    const firstAgent = agents.find((a) => !statuses[a.id]?.unavailable) ?? agents[0];
+    const next = lastUsed.get(kind) ?? (kind === "agent" ? firstAgent?.id : DEFAULT_MODELS[kind]);
     if (!next) return;
     onChangeModel(toSelection(kind, next));
     setPickerOpen(true);
   }
 
   const items: PickerItem[] = isAgent
-    ? agents.map((a) => ({ value: a.id, label: a.name, detail: a.baseModel }))
+    ? agents.map((a) => {
+        const status = statuses[a.id];
+        const until = status?.expiresOn ? `until ${status.expiresOn}` : null;
+        return {
+          value: a.id,
+          label: a.name,
+          detail: status?.unavailable ?? until ?? baseModelLabel(a.baseModel),
+          disabled: !!status?.unavailable,
+        };
+      })
     : models.map((m) => ({ value: m, label: m }));
 
   // The current selection stays visible even when it is not in the list
@@ -57,6 +73,9 @@ export default function ModelSection({
 
   // When Ollama cannot be reached, the list holds common model names instead.
   const notice = error && models.length > 0 ? `${error}. Showing common models.` : error;
+
+  // A conversation can reopen with an agent that cannot be used now
+  const currentProblem = isAgent ? statuses[current.value]?.unavailable : null;
 
   return (
     <div className={styles.modelBlock}>
@@ -93,6 +112,11 @@ export default function ModelSection({
         searchPlaceholder={isAgent ? "Search agents…" : "Search models…"}
         disabled={disabled}
       />
+      {currentProblem && (
+        <p className={`${styles.pickerNote} ${styles.pickerNoteError}`} role="status">
+          This agent cannot be used now: {currentProblem}.
+        </p>
+      )}
     </div>
   );
 }
