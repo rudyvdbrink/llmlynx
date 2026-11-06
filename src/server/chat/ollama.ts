@@ -1,9 +1,10 @@
+import { DEFAULT_MAX_TOOL_CALLS } from "@/lib/agentTools";
 import { createLineSplitter } from "@/lib/ndjson";
 import { withOllamaTag } from "@/lib/providers";
 import type { ChatMessage, ReplyStatus } from "@/lib/types";
 import { toFunctionTools, type ToolDefinition } from "@/server/tools/definitions";
 import type { AssistantReply } from "./conversation";
-import { runToolLoop, type ModelTurn } from "./toolLoop";
+import { addToLastMessage, runToolLoop, type ModelTurn } from "./toolLoop";
 
 // A message as Ollama's /api/chat takes it.
 export type OllamaMessage = {
@@ -25,7 +26,7 @@ export type OllamaChatRequest = {
   options?: unknown; // agent generation settings, passed through as Ollama options
   // The tools the model can call; with none, the chat is a single request
   tools?: ToolDefinition[];
-  // Most tool calls per reply, see runToolLoop
+  // Most tool calls per reply (0: no limit), see runToolLoop
   maxToolCalls?: number;
   toolContext?: { userId: string; textBudget: number };
   // Set when the user chats with an agent, for the error when its model is gone
@@ -84,7 +85,7 @@ async function postChat(baseUrl: string, body: object, signal: AbortSignal): Pro
  * { error } line.
  */
 export function streamOllamaChat(
-  { baseUrl, model, messages, options, tools = [], maxToolCalls = 0, toolContext, forAgent }: OllamaChatRequest,
+  { baseUrl, model, messages, options, tools = [], maxToolCalls = DEFAULT_MAX_TOOL_CALLS, toolContext, forAgent }: OllamaChatRequest,
   reply: AssistantReply
 ): ReadableStream<Uint8Array> {
   const abort = new AbortController();
@@ -172,6 +173,7 @@ export function streamOllamaChat(
           // The tools stay offered in every round: models such as gpt-oss call
           // them anyway once the conversation has tool calls in it
           nextTurn: () => chatTurn(conversation, tools),
+          plainTurn: (note) => chatTurn(addToLastMessage(messages, note), []),
           addCalls(turn, calls) {
             conversation.push({
               role: "assistant",

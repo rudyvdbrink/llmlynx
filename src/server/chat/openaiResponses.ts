@@ -6,7 +6,7 @@
 
 import { toResponsesTools } from "@/server/tools/definitions";
 import { isStreamingUnsupported, parseArguments, withoutRefusedParams, type ApiChat, type ApiChatContext } from "./openaiShared";
-import type { ModelTurn } from "./toolLoop";
+import { addToLastMessage, type ModelTurn } from "./toolLoop";
 
 type OutputItem = {
   type?: string;
@@ -47,18 +47,22 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
     .filter((m) => m.role === "system")
     .map((m) => m.content)
     .join("\n\n");
-  const input: unknown[] = messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role, content: m.content }));
+  const toInput = (list: typeof messages): unknown[] =>
+    list.filter((m) => m.role !== "system").map((m) => ({ role: m.role, content: m.content }));
+  const input = toInput(messages);
   const accepted: Record<string, unknown> = { include: ["reasoning.encrypted_content"], ...ctx.params };
 
-  function request(stream: boolean) {
+  type TurnRequest = { items: unknown[]; offered: typeof tools; toolChoice?: "none" };
+
+  function request(stream: boolean, { items, offered, toolChoice }: TurnRequest) {
     return withoutRefusedParams(accepted, () =>
       client.responses.create(
         {
           model,
-          input,
+          input: items,
           store: false,
           ...(instructions ? { instructions } : {}),
-          ...(tools.length ? { tools: toResponsesTools(tools) } : {}),
+          ...(offered.length ? { tools: toResponsesTools(offered), ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}),
           ...(stream ? { stream: true } : {}),
           ...accepted,
         } as never,
@@ -85,7 +89,7 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
   }
 
   /** Runs one request, streaming it to the client. Returns what the model wrote and called. */
-  async function nextTurn(): Promise<ResponsesTurn> {
+  async function runTurn(req: TurnRequest): Promise<ResponsesTurn> {
     const turn: ResponsesTurn = { content: "", calls: [], output: [] };
     const addContent = (text: string) => {
       turn.content += text;
@@ -93,7 +97,7 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
     };
     try {
       // First attempt: true streaming
-      const events = (await request(true)) as unknown as AsyncIterable<StreamEvent>;
+      const events = (await request(true, req)) as unknown as AsyncIterable<StreamEvent>;
       const items: OutputItem[] = [];
       let response: ResponseBody | null = null;
       let summaryPart: string | null = null;
@@ -133,7 +137,7 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
       if (ctx.isCancelled() || !isStreamingUnsupported(err)) throw err;
 
       // Fallback: non-streaming request, return as a single message (no fake chunking)
-      const response = (await request(false)) as unknown as ResponseBody;
+      const response = (await request(false, req)) as unknown as ResponseBody;
       const output = response.output ?? [];
       const parts = output.flatMap((item) => item.summary?.map((s) => s.text ?? "") ?? []);
       if (parts.length) writeThinking(parts.join(SUMMARY_BREAK));
@@ -148,7 +152,8 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
   }
 
   return {
-    nextTurn,
+    nextTurn: (mayCallTools) => runTurn({ items: input, offered: tools, ...(mayCallTools ? {} : { toolChoice: "none" }) }),
+    plainTurn: (note) => runTurn({ items: toInput(addToLastMessage(messages, note)), offered: [] }),
     addCalls(turn) {
       input.push(...turn.output);
     },

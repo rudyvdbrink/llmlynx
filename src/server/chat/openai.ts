@@ -1,7 +1,9 @@
+import { setTimeout as sleep } from "node:timers/promises";
 import OpenAI from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 import type { ApiConfig } from "@/server/providers";
 import { stopSequences, validateAgentSettings, type AgentSettings } from "@/lib/agentSettings";
+import { DEFAULT_MAX_TOOL_CALLS } from "@/lib/agentTools";
 import { PROVIDER_LABELS, type KeyProviderId } from "@/lib/providers";
 import type { ChatMessage } from "@/lib/types";
 import { toFunctionTools, type ToolDefinition } from "@/server/tools/definitions";
@@ -15,7 +17,12 @@ import {
   type ApiChat,
   type ApiChatContext,
 } from "./openaiShared";
-import { runToolLoop, type ModelTurn } from "./toolLoop";
+import { addToLastMessage, runToolLoop, type ModelTurn } from "./toolLoop";
+
+// How long to wait before each new try when a provider behind OpenRouter is rate
+// limited. Free models share a limit at their provider, which often clears soon.
+const RATE_LIMIT_WAITS_MS = [5_000, 15_000, 30_000];
+const MAX_RATE_LIMIT_WAIT_MS = 60_000;
 
 // OpenAI has none of these; OpenRouter takes them for the models that have them.
 const OPENROUTER_ONLY = ["top_k", "min_p", "top_a", "repetition_penalty"];
@@ -102,10 +109,62 @@ function addReasoningDetails(details: ReasoningDetail[], delta: unknown) {
   }
 }
 
+type ProviderError = {
+  message?: string;
+  status?: number;
+  headers?: Headers;
+  error?: { message?: string; code?: number | string; metadata?: { raw?: unknown; provider_name?: unknown } };
+};
+
+// What the provider behind OpenRouter said, as text or as JSON, such as
+// {"error":{"message":"..."}}. OpenRouter's own message is then only "Provider returned error".
+function upstreamMessage(raw: unknown): string | null {
+  let value = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return raw.trim() || null;
+    }
+  }
+  const body = value as { error?: { message?: unknown }; message?: unknown } | null;
+  const text = body?.error?.message ?? body?.message;
+  if (typeof text === "string" && text.trim()) return text.trim();
+  return value ? JSON.stringify(value) : null;
+}
+
 // The provider's own explanation, such as "The model `gpt-4` has been deprecated".
 function errorMessage(err: unknown): string {
-  const e = err as { message?: string; error?: { message?: string } } | null;
+  const e = err as ProviderError | null;
+  const upstream = upstreamMessage(e?.error?.metadata?.raw);
+  if (upstream) {
+    const name = e?.error?.metadata?.provider_name;
+    return typeof name === "string" && name ? `${name}: ${upstream}` : upstream;
+  }
   return e?.error?.message || e?.message || String(err);
+}
+
+/** True when the provider behind OpenRouter is rate limited. OpenRouter's own limits, such as its daily one, do not count. */
+function isUpstreamRateLimit(err: unknown): boolean {
+  const e = err as ProviderError | null;
+  return (e?.status ?? e?.error?.code) === 429 && !!e?.error?.metadata?.provider_name;
+}
+
+/**
+ * Runs `request`, and runs it again a few times while the provider behind
+ * OpenRouter is rate limited. `retrying` is true from the second run on: the
+ * OpenAI client's own quick retries have not helped by then.
+ */
+async function waitingOutRateLimit<T>(signal: AbortSignal, request: (retrying: boolean) => Promise<T>): Promise<T> {
+  for (let tries = 0; ; tries++) {
+    try {
+      return await request(tries > 0);
+    } catch (err) {
+      if (tries >= RATE_LIMIT_WAITS_MS.length || !isUpstreamRateLimit(err)) throw err;
+      const retryAfter = Number((err as ProviderError).headers?.get("retry-after")) * 1000;
+      await sleep(retryAfter > 0 ? Math.min(retryAfter, MAX_RATE_LIMIT_WAIT_MS) : RATE_LIMIT_WAITS_MS[tries], undefined, { signal });
+    }
+  }
 }
 
 // OpenAI: code model_not_found. OpenRouter: "x is not a valid model ID" or "No endpoints found for x".
@@ -122,24 +181,30 @@ type StreamedCall = { index?: number; id?: string; function?: { name?: string; a
 /** A chat on the Chat Completions API, which OpenRouter and OpenAI's models without reasoning use. */
 function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
   const { client, model, messages, tools, signal, writeContent, writeThinking, sendDone } = ctx;
-  const conversation: ChatCompletionMessageParam[] = messages.map((m) => ({ role: m.role, content: m.content }));
+  const toParams = (list: typeof messages): ChatCompletionMessageParam[] =>
+    list.map((m) => ({ role: m.role, content: m.content }));
+  const conversation = toParams(messages);
   const accepted = { ...ctx.params };
 
+  type TurnRequest = { items: ChatCompletionMessageParam[]; offered: typeof tools; toolChoice?: "none" };
+
   /** One request to the API, without what it refuses. */
-  function request(stream: boolean) {
+  function request(stream: boolean, { items, offered, toolChoice }: TurnRequest) {
     const body = {
       model,
-      messages: conversation,
-      ...(tools.length ? { tools: toFunctionTools(tools) } : {}),
+      messages: items,
+      ...(offered.length ? { tools: toFunctionTools(offered), ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}),
       ...(stream ? { stream: true as const } : {}),
     };
-    return withoutRefusedParams(accepted, () =>
-      client.chat.completions.create({ ...body, ...accepted } as never, { signal })
+    return waitingOutRateLimit(signal, (retrying) =>
+      withoutRefusedParams(accepted, () =>
+        client.chat.completions.create({ ...body, ...accepted } as never, { signal, ...(retrying ? { maxRetries: 0 } : {}) })
+      )
     );
   }
 
   /** Runs one request, streaming it to the client. Returns what the model wrote and called. */
-  async function nextTurn(): Promise<CompletionsTurn> {
+  async function runTurn(req: TurnRequest): Promise<CompletionsTurn> {
     const turn: CompletionsTurn = { content: "", calls: [], reasoning: "", reasoningDetails: [] };
     const addContent = (text: string) => {
       turn.content += text;
@@ -156,7 +221,7 @@ function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
     };
     try {
       // First attempt: true streaming
-      const completion = (await request(true)) as unknown as AsyncIterable<{
+      const completion = (await request(true, req)) as unknown as AsyncIterable<{
         choices?: { delta?: { content?: string | null; tool_calls?: StreamedCall[] }; finish_reason?: string | null }[];
       }>;
       for await (const part of completion) {
@@ -183,7 +248,7 @@ function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
       if (ctx.isCancelled() || !isStreamingUnsupported(err)) throw err;
 
       // Fallback: non-streaming request, return as a single message (no fake chunking)
-      const completion = (await request(false)) as unknown as {
+      const completion = (await request(false, req)) as unknown as {
         choices?: { message?: { content?: string | null; tool_calls?: StreamedCall[] } }[];
       };
       const message = completion.choices?.[0]?.message;
@@ -203,7 +268,8 @@ function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
   }
 
   return {
-    nextTurn,
+    nextTurn: (mayCallTools) => runTurn({ items: conversation, offered: tools, ...(mayCallTools ? {} : { toolChoice: "none" }) }),
+    plainTurn: (note) => runTurn({ items: toParams(addToLastMessage(messages, note)), offered: [] }),
     addCalls(turn, calls) {
       conversation.push({
         role: "assistant",
@@ -271,7 +337,7 @@ export type ApiChatRequest = {
  * fails). Cancelling the stream aborts the request.
  */
 export function streamOpenAIChat(
-  { provider, model, messages, params = {}, tools = [], maxToolCalls = 0, toolContext, forAgent, useResponses }: ApiChatRequest,
+  { provider, model, messages, params = {}, tools = [], maxToolCalls = DEFAULT_MAX_TOOL_CALLS, toolContext, forAgent, useResponses }: ApiChatRequest,
   config: ApiConfig,
   reply: AssistantReply
 ): ReadableStream<Uint8Array> {

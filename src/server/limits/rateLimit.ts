@@ -21,8 +21,8 @@ const LIMITS = {
   // 10 password checks on the account page (change password, delete account) per 10 minutes per IP
   account: { windowMs: 10 * 60 * 1000, max: 10 },
 
-  // 60 agent tool calls (web search, page reads, screenshots) per 10 minutes per user
-  tools: { windowMs: 10 * 60 * 1000, max: 60 },
+  // 600 agent tool calls (web search, page reads, screenshots) per 10 minutes per user
+  tools: { windowMs: 10 * 60 * 1000, max: 600 },
 } satisfies Record<string, RateLimitConfig>;
 
 export type RateLimitKind = keyof typeof LIMITS;

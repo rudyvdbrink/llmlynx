@@ -140,7 +140,7 @@ model Agent {
   // Names of the tools turned on for the agent, e.g. ["web_search", "web_read"]
   // (see lib/agentTools.ts). null or []: none, the default.
   tools        Json?
-  // Most tool calls per reply; after that the agent answers with what it has
+  // Most tool calls per reply (0: no limit); after that the agent answers with what it has
   maxToolCalls Int      @default(7)
 
   createdAt    DateTime @default(now())

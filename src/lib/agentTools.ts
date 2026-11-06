@@ -54,15 +54,15 @@ export function validateAgentTools(
   return { ok: true, value: AGENT_TOOLS.filter((name) => input.includes(name)) };
 }
 
-// Most tool calls an agent may make for one reply (the slider on the agents page)
+// Most tool calls an agent may make for one reply (the slider on the agents page); 0 means no limit
 export const DEFAULT_MAX_TOOL_CALLS = 7;
-export const MAX_TOOL_CALLS_LIMIT = 20;
+export const MAX_TOOL_CALLS_LIMIT = 50;
 
-/** The agent's most tool calls per reply: a whole number from 1 to 20; undefined means the default. */
+/** The agent's most tool calls per reply: a whole number from 0 (no limit) to 50; undefined means the default. */
 export function validateMaxToolCalls(input: unknown): { ok: true; value: number } | { ok: false; message: string } {
   if (input === undefined || input === null) return { ok: true, value: DEFAULT_MAX_TOOL_CALLS };
-  if (typeof input !== "number" || !Number.isInteger(input) || input < 1 || input > MAX_TOOL_CALLS_LIMIT) {
-    return { ok: false, message: `maxToolCalls must be a whole number from 1 to ${MAX_TOOL_CALLS_LIMIT}` };
+  if (typeof input !== "number" || !Number.isInteger(input) || input < 0 || input > MAX_TOOL_CALLS_LIMIT) {
+    return { ok: false, message: `maxToolCalls must be a whole number from 0 to ${MAX_TOOL_CALLS_LIMIT}` };
   }
   return { ok: true, value: input };
 }
