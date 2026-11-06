@@ -115,9 +115,10 @@ export async function POST(req: NextRequest) {
       : null;
   // The tools the model can call: only agents get them, see server/tools/policy.ts
   const tools = toolsFor(agent, modelInfo?.capabilities ?? null);
+  const maxToolCalls = agent?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
   const systemPrompt =
     target.systemPrompt !== null && tools.length
-      ? `${target.systemPrompt}\n\n${toolGuidance(tools)}`
+      ? `${target.systemPrompt}\n\n${toolGuidance(tools, maxToolCalls)}`
       : target.systemPrompt;
   const system = systemPrompt !== null ? [{ role: "system" as const, content: systemPrompt }] : [];
   const apiParams =
@@ -140,7 +141,7 @@ export async function POST(req: NextRequest) {
 
   const toolRun = {
     tools,
-    maxToolCalls: agent?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS,
+    maxToolCalls,
     forAgent: !!agent,
   };
   const stream =

@@ -104,7 +104,7 @@ Custom agents can search the web, read pages and take screenshots. Tools are off
 | Read pages with JavaScript | Opens the page in a browser, scrolls through it, and reads what it shows | a model that can call tools |
 | Screenshots | Opens the page in a browser and looks at one screen of it | a model that can call tools and see images, e.g. `qwen3.5:9b` |
 
-Below the checkboxes, a slider sets the most tool calls per reply (1 to 20, default 7). After that many, the agent answers with what it has found.
+Below the checkboxes, a slider sets the most tool calls per reply (0 to 50, default 7; 0 means no limit). The model is told how many it has, and each result says how many are left. After that many, the agent answers with what it has found.
 
 While an agent works, one status line shows what it is doing: "Thinking…", or a tool's icon (a globe for the web tools, a spanner for the others) with what the tool does. Below it, the reasoning and each finished tool call appear in the order they happened, screenshots included. Once the answer starts, all of it folds away behind "Show thinking". Web pages take up a lot of context: give agents with tools a context window of 16384 tokens or more.
 

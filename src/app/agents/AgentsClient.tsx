@@ -453,7 +453,7 @@ export default function AgentsClient({
                 <input
                   id="max-tool-calls"
                   type="range"
-                  min={1}
+                  min={0}
                   max={MAX_TOOL_CALLS_LIMIT}
                   step={1}
                   value={maxToolCalls}
@@ -463,16 +463,16 @@ export default function AgentsClient({
                 <div>
                   <input
                     type="number"
-                    min={1}
+                    min={0}
                     max={MAX_TOOL_CALLS_LIMIT}
                     step={1}
                     value={maxToolCalls}
                     aria-label="Max tool calls per reply"
                     onChange={(e) => {
-                      // Typed values are kept within 1 to 20; a cleared box keeps the last value
+                      // Typed values are kept within the slider's range; a cleared box keeps the last value
                       const n = Math.round(Number(e.target.value));
                       if (e.target.value !== "" && Number.isFinite(n)) {
-                        setMaxToolCalls(Math.min(MAX_TOOL_CALLS_LIMIT, Math.max(1, n)));
+                        setMaxToolCalls(Math.min(MAX_TOOL_CALLS_LIMIT, Math.max(0, n)));
                       }
                     }}
                     disabled={saving || tools.length === 0}
@@ -480,7 +480,7 @@ export default function AgentsClient({
                 </div>
               </div>
               <span className={styles.toolOptionHelp}>
-                After this many tool calls, the agent answers with what it has found.
+                After this many tool calls, the agent answers with what it has found. 0 means no limit.
               </span>
             </div>
           </div>

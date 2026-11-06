@@ -23,7 +23,8 @@ export type ApiChatContext = {
 
 /** One OpenAI API: how to run a request, and how to add what happened to the next one. */
 export type ApiChat<Turn extends ModelTurn> = {
-  nextTurn: () => Promise<Turn>;
+  nextTurn: (mayCallTools: boolean) => Promise<Turn>;
+  plainTurn: (note: string) => Promise<Turn>;
   addCalls: (turn: Turn, calls: StoredToolCall[]) => void;
   addResults: (results: ToolCallResult[]) => void;
 };
