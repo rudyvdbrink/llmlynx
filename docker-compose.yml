@@ -9,11 +9,11 @@
 # which owns these directories on the server. Secrets come from the gitignored
 # .env and .env.local at runtime and are never baked into the image.
 #
-# The agent tools (web search, page reading, screenshots) are in the "tools"
-# profile: they only run with COMPOSE_PROFILES=tools in .env, or when named on
-# the command line. They share the private "tools" network; only the two MCP
-# servers are published, on 127.0.0.1, where the app reaches them. Their
-# tokens must be in .env (not .env.local): compose fills ${...} from .env only.
+# The agent tools (web search, page reading, screenshots, files) are in the
+# "tools" profile: they only run with COMPOSE_PROFILES=tools in .env, or when
+# named on the command line. The web tools share the private "tools" network;
+# only the MCP servers are published, on 127.0.0.1, where the app reaches them.
+# Their tokens must be in .env (not .env.local): compose fills ${...} from .env only.
 name: llmlynx
 
 services:
@@ -115,8 +115,34 @@ services:
     networks: [tools]
     restart: unless-stopped
 
+  # MCP server for the file tools and for reading attached files (tools/files).
+  # Files come and go in the calls: it keeps nothing and fetches nothing, so
+  # it runs read-only, on a network of its own.
+  files:
+    image: llmlynx-files
+    build: ./tools/files
+    profiles: [tools]
+    environment:
+      MCP_AUTH_TOKEN: ${FILES_MCP_TOKEN:-}
+      # Files converted at once; each can take a few hundred MB
+      FILES_MAX_CONCURRENCY: ${FILES_MAX_CONCURRENCY:-2}
+      HOME: /tmp
+    ports:
+      - 127.0.0.1:${FILES_MCP_PORT:-8792}:8080
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1536m
+    init: true
+    networks: [files]
+    restart: unless-stopped
+
 networks:
   tools: {}
+  files: {}
 
 volumes:
   searxng-cache: {}

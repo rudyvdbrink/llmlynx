@@ -6,10 +6,27 @@ import type { ToolServer } from "./config";
 
 export type ToolImage = { mimeType: string; data: string }; // data: base64
 
-/** What a tool returned: its text, any images, and whether it reported an error. */
-export type ToolOutput = { text: string; images: ToolImage[]; isError: boolean };
+/** A file a tool made, such as a document the model asked for. */
+export type ToolFile = { name: string; mimeType: string; data: string }; // data: base64
 
-type ContentItem = { type?: string; text?: unknown; data?: unknown; mimeType?: unknown };
+/** What a tool returned: its text, any images and files, and whether it reported an error. */
+export type ToolOutput = { text: string; images: ToolImage[]; files: ToolFile[]; isError: boolean };
+
+type ContentItem = {
+  type?: string;
+  text?: unknown;
+  data?: unknown;
+  mimeType?: unknown;
+  resource?: { uri?: unknown; mimeType?: unknown; blob?: unknown };
+};
+
+/** A file sent as an embedded resource, named by the last part of its URI ("file:///report.docx"). */
+function toFile(item: ContentItem): ToolFile | null {
+  const { uri, mimeType, blob } = item.resource ?? {};
+  if (item.type !== "resource" || typeof uri !== "string" || typeof mimeType !== "string" || typeof blob !== "string") return null;
+  const name = decodeURIComponent(uri.split("/").pop() ?? "");
+  return name ? { name, mimeType, data: blob } : null;
+}
 
 /**
  * Calls the tool `name` on `server`. Each call has a connection of its own:
@@ -38,6 +55,7 @@ export async function callMcpTool(
       images: content
         .filter((c) => c.type === "image" && typeof c.data === "string" && typeof c.mimeType === "string")
         .map((c) => ({ mimeType: c.mimeType as string, data: c.data as string })),
+      files: content.map(toFile).filter((f): f is ToolFile => f !== null),
       isError: result.isError === true,
     };
   } finally {

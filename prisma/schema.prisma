@@ -83,8 +83,9 @@ model Message {
   @@index([setupId])
 }
 
-// A file that belongs to a message, such as a screenshot a tool returned.
-// Stored in the database, so backups include it and deleting the
+// A file that belongs to a message: one the user attached (user message), one
+// a file tool created (tool step), or a screenshot a tool returned (tool step,
+// no name). Stored in the database, so backups include it and deleting the
 // conversation deletes it.
 model MessageAttachment {
   id        String   @id @default(uuid())
@@ -92,9 +93,19 @@ model MessageAttachment {
   message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
   mimeType  String
   data      Bytes
+  name      String?  // the file name; null for a screenshot
+  size      Int?     // bytes of data
+  text      String?  // the file as the model reads it (markdown); null until converted
+  info      Json?    // what converting it found, such as { pages, textlessPages } of a PDF, or { error }
+  // Set on an image made from another attachment for the model, such as a
+  // scanned PDF page or a smaller copy of a photo. The chat view does not show these.
+  parentId  String?
+  parent    MessageAttachment?  @relation("Derived", fields: [parentId], references: [id], onDelete: Cascade)
+  derived   MessageAttachment[] @relation("Derived")
   createdAt DateTime @default(now())
 
   @@index([messageId])
+  @@index([parentId])
 }
 
 // What a model was given besides the conversation: the system prompt, the

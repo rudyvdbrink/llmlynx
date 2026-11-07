@@ -6,17 +6,32 @@
 
 import { AGENT_TOOL_INFO, type AgentToolName, type ToolIcon } from "@/lib/agentTools";
 import type { ToolServerId } from "./config";
+import { checkStart, shorten, toInteger } from "./args";
+import { FILE_TOOLS } from "./fileTools";
+import type { ToolFile, ToolImage } from "./mcp";
 
 export type ToolCapability = "tools" | "vision";
 
 export type ToolState = "running" | "done" | "error";
 
-type Args = Record<string, unknown>;
+export type Args = Record<string, unknown>;
+
+/** What a tool call gives the model, and the files it made for the user. */
+export type ToolResult = { text: string; images: ToolImage[]; files: ToolFile[]; error: boolean };
+
+/** What a call gets besides its arguments. `textBudget` is the most characters of text its result may have. */
+export type ToolCallContext = {
+  userId: string;
+  textBudget: number;
+  conversationId: string;
+  vision: boolean; // the model can see images
+  signal: AbortSignal;
+};
 
 /** The tool to call on the MCP server, or an error text for the model when its arguments are unusable. */
-type McpCall = { name: string; arguments: Args } | { error: string };
+export type McpCall = { name: string; arguments: Args } | { error: string };
 
-export type ToolDefinition = {
+type ToolBase = {
   name: AgentToolName;
   icon: ToolIcon;
   description: string;
@@ -28,21 +43,27 @@ export type ToolDefinition = {
   timeoutMs: number;
   /** What the chat view shows for a call while it runs and after. */
   label(args: Args, state: ToolState): string;
-  /** `textBudget` is the most characters of text the result may have. */
-  toMcpCall(args: Args, textBudget: number): McpCall;
-  /** Rewrites a successful result's text before the model gets it. */
-  finish?(text: string, args: Args, textBudget: number): string;
 };
 
+/**
+ * A tool is one call to its MCP server (`toMcpCall`), or does more and runs
+ * itself (`run`, which may call the server), such as the file tools, which
+ * first look up the conversation's files.
+ */
+export type ToolDefinition = ToolBase &
+  (
+    | {
+        toMcpCall(args: Args, textBudget: number): McpCall;
+        /** Rewrites a successful result's text before the model gets it. */
+        finish?(text: string, args: Args, textBudget: number): string;
+        run?: never;
+      }
+    | { run(args: Args, ctx: ToolCallContext): Promise<ToolResult>; toMcpCall?: never; finish?: never }
+  );
+
 const MAX_QUERY_LENGTH = 400;
-const MAX_LABEL_LENGTH = 60;
 const MAX_SECTION = 10;
 const TIME_RANGES = ["day", "week", "month", "year"];
-
-function shorten(text: string, max = MAX_LABEL_LENGTH): string {
-  const oneLine = text.replace(/\s+/g, " ").trim();
-  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}…` : oneLine;
-}
 
 /** "https://www.example.com/a/b?c" -> "example.com/a/b", for labels. */
 function shortUrl(raw: unknown): string {
@@ -54,13 +75,6 @@ function shortUrl(raw: unknown): string {
   } catch {
     return shorten(raw, 48);
   }
-}
-
-/** Models sometimes send numbers as strings. Returns undefined when `raw` is absent. */
-function toInteger(raw: unknown): number | undefined | null {
-  if (raw === undefined || raw === null || raw === "") return undefined;
-  const n = typeof raw === "string" ? Number(raw.trim()) : raw;
-  return typeof n === "number" && Number.isInteger(n) ? n : null;
 }
 
 /** The URL to give a tool, or an error text. The MCP servers block private addresses themselves. */
@@ -75,12 +89,6 @@ function checkUrl(raw: unknown): { url: string } | { error: string } {
   if (url.protocol !== "http:" && url.protocol !== "https:") return { error: "Only http and https URLs can be opened." };
   if (url.username || url.password) return { error: "URLs with a user name or password cannot be opened." };
   return { url: url.href };
-}
-
-function checkStart(raw: unknown): { start: number } | { error: string } {
-  const start = toInteger(raw);
-  if (start === null || (start !== undefined && start < 0)) return { error: "start must be a whole number, 0 or more." };
-  return { start: start ?? 0 };
 }
 
 /**
@@ -101,7 +109,7 @@ const startParameter = {
   description: "For long pages: the character to start reading at, as the previous result says. Default 0",
 };
 
-export const TOOL_DEFINITIONS: ToolDefinition[] = [
+const WEB_TOOLS: ToolDefinition[] = [
   {
     name: "web_search",
     icon: AGENT_TOOL_INFO.web_search.icon,
@@ -239,6 +247,8 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
 ];
+
+export const TOOL_DEFINITIONS: ToolDefinition[] = [...WEB_TOOLS, ...FILE_TOOLS];
 
 /** The tools in the format of the `tools` request field, which Ollama, Chat Completions and OpenRouter share. */
 export function toFunctionTools(tools: ToolDefinition[]) {

@@ -17,7 +17,7 @@ import {
   type ApiChat,
   type ApiChatContext,
 } from "./openaiShared";
-import { addToLastMessage, runToolLoop, type ModelTurn } from "./toolLoop";
+import { addToLastMessage, runToolLoop, type ChatToolContext, type ModelTurn } from "./toolLoop";
 
 // How long to wait before each new try when a provider behind OpenRouter is rate
 // limited. Free models share a limit at their provider, which often clears soon.
@@ -181,8 +181,22 @@ type StreamedCall = { index?: number; id?: string; function?: { name?: string; a
 /** A chat on the Chat Completions API, which OpenRouter and OpenAI's models without reasoning use. */
 function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
   const { client, model, messages, tools, signal, writeContent, writeThinking, sendDone } = ctx;
+  // A message's images go in content parts after its text
   const toParams = (list: typeof messages): ChatCompletionMessageParam[] =>
-    list.map((m) => ({ role: m.role, content: m.content }));
+    list.map((m) =>
+      m.role === "user" && m.images?.length
+        ? {
+            role: "user",
+            content: [
+              { type: "text" as const, text: m.content },
+              ...m.images.map((image) => ({
+                type: "image_url" as const,
+                image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+              })),
+            ],
+          }
+        : ({ role: m.role, content: m.content } as ChatCompletionMessageParam)
+    );
   const conversation = toParams(messages);
   const accepted = { ...ctx.params };
 
@@ -321,7 +335,7 @@ export type ApiChatRequest = {
   // The tools the model can call; with none, the chat is a single request
   tools?: ToolDefinition[];
   maxToolCalls?: number;
-  toolContext?: { userId: string; textBudget: number };
+  toolContext?: ChatToolContext;
   // Set when the user chats with an agent, for the error when its model is gone
   forAgent?: boolean;
   // Run on OpenAI's Responses API instead of Chat Completions
@@ -381,6 +395,7 @@ export function streamOpenAIChat(
           signal: abort.signal,
           isCancelled: () => cancelled,
           sendTool: (step) => send({ tool: step }),
+          sendFiles: (files) => send({ files }),
           sendError: (error) => send({ error }),
         });
 

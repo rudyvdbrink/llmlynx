@@ -3,10 +3,25 @@
 import { useCallback, useRef, useState } from "react";
 import { readNdjson } from "@/lib/ndjson";
 import { parseSelection } from "@/lib/selection";
+import type { FileCard } from "@/lib/files";
 import { addReasoning, upsertToolStep } from "@/lib/trace";
 import type { DisplayMessage, ReplyStatus, ToolStep, TraceItem } from "@/lib/types";
 
-const isReplyStatus = (value: unknown): value is ReplyStatus => value === "loading" || value === "thinking";
+const isReplyStatus = (value: unknown): value is ReplyStatus =>
+  value === "reading" || value === "loading" || value === "thinking";
+
+const isFileList = (value: unknown): value is FileCard[] =>
+  Array.isArray(value) && value.every((f) => typeof f?.id === "string" && typeof f?.name === "string");
+
+/** Cards for files that are still being sent, which show from the browser's copy. */
+const localCards = (files: File[]): FileCard[] =>
+  files.map((file, i) => ({
+    id: `local-${i}`,
+    name: file.name,
+    mimeType: file.type,
+    size: file.size,
+    url: URL.createObjectURL(file),
+  }));
 
 // A { tool } line: a new step (with all fields), or an update of one (with its id)
 const isToolLine = (value: unknown): value is Partial<ToolStep> & { id: string } =>
@@ -42,9 +57,9 @@ export function useChat({
   // True once the reply's answer shows, and again false while the model uses a tool
   const [answering, setAnswering] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  // The send that failed, if the last one did. Sending the same text again
-  // retries it under its request id, so the server does not store it twice.
-  const failedSendRef = useRef<{ content: string; requestId: string } | null>(null);
+  // The send that failed, if the last one did. Sending the same text (and
+  // files) again retries it under its request id, so the server does not store it twice.
+  const failedSendRef = useRef<{ content: string; files: string; requestId: string } | null>(null);
 
   // Patch the assistant reply that is being streamed (always the last message).
   const updateReply = useCallback((patch: Partial<DisplayMessage>) => {
@@ -55,12 +70,26 @@ export function useChat({
     });
   }, []);
 
-  const send = useCallback(
-    async (text: string) => {
-      const content = text.trim();
-      if (!content || isStreaming) return;
+  // Patch the user message of the reply that is being streamed (the one before it).
+  const updateUserMessage = useCallback((patch: Partial<DisplayMessage>) => {
+    setMessages((prev) => {
+      const user = prev[prev.length - 2];
+      if (user?.role !== "user") return prev;
+      return [...prev.slice(0, -2), { ...user, ...patch }, prev[prev.length - 1]];
+    });
+  }, []);
 
-      setMessages((prev) => [...prev, { role: "user", content }, { role: "assistant", content: "" }]);
+  const send = useCallback(
+    async (text: string, files: File[] = []) => {
+      const content = text.trim();
+      if ((!content && !files.length) || isStreaming) return;
+
+      const cards = localCards(files);
+      setMessages((prev) => [
+        ...prev,
+        { role: "user", content, ...(cards.length ? { files: cards } : {}) },
+        { role: "assistant", content: "" },
+      ]);
       setIsStreaming(true);
       setReplyStatus(null);
       setAnswering(false);
@@ -69,7 +98,9 @@ export function useChat({
       abortRef.current = controller;
 
       const failedSend = failedSendRef.current;
-      const requestId = failedSend?.content === content ? failedSend.requestId : newRequestId();
+      const fileKey = files.map((f) => `${f.name}:${f.size}:${f.lastModified}`).join("|");
+      const requestId =
+        failedSend?.content === content && failedSend.files === fileKey ? failedSend.requestId : newRequestId();
       failedSendRef.current = null;
       let failed = false;
       let connected = false;
@@ -77,6 +108,7 @@ export function useChat({
 
       // The text of the current step: the answer, unless a tool call follows it
       let reply = "";
+      let replyFiles: FileCard[] = [];
       // Whether that text shows as the answer yet. While the model can call
       // tools, it is held back until it looks like an answer or the reply ends:
       // a model only says it calls a tool after the text before the call.
@@ -86,16 +118,25 @@ export function useChat({
         const conversationId = await ensureConversation();
         const { kind, value } = parseSelection(selection);
 
+        // Only the new message: the server reads the rest of the conversation from the database
+        const payload = JSON.stringify({
+          message: content,
+          conversationId,
+          requestId,
+          ...(kind === "agent" ? { agentId: value } : { model: selection }),
+        });
+        let body: BodyInit = payload;
+        if (files.length) {
+          const form = new FormData();
+          form.append("payload", payload);
+          for (const file of files) form.append("file", file, file.name);
+          body = form;
+        }
         const res = await fetch("/api/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // Only the new message: the server reads the rest of the conversation from the database
-          body: JSON.stringify({
-            message: content,
-            conversationId,
-            requestId,
-            ...(kind === "agent" ? { agentId: value } : { model: selection }),
-          }),
+          // FormData sets its own type, with the boundary
+          ...(files.length ? {} : { headers: { "Content-Type": "application/json" } }),
+          body,
           signal: controller.signal,
         });
         connected = true;
@@ -111,11 +152,23 @@ export function useChat({
             message?: { content?: unknown; thinking?: unknown };
             status?: unknown;
             tool?: unknown;
+            files?: unknown;
+            userFiles?: unknown;
             error?: unknown;
             end?: unknown;
           };
           if (line?.end === true) ended = true;
           if (isReplyStatus(line?.status)) setReplyStatus(line.status);
+          // The stored copies of the files the user sent replace the browser's
+          if (isFileList(line?.userFiles)) {
+            for (const card of cards) if (card.url) URL.revokeObjectURL(card.url);
+            updateUserMessage({ files: line.userFiles });
+          }
+          // Files the agent made show below its answer
+          if (isFileList(line?.files)) {
+            replyFiles = [...replyFiles, ...line.files];
+            updateReply({ files: replyFiles });
+          }
           if (isToolLine(line?.tool)) {
             // Text written before a tool call is not the answer: it moves into the trace
             trace = upsertToolStep(addReasoning(trace, reply, true), line.tool);
@@ -158,14 +211,14 @@ export function useChat({
           updateReply({ error: err instanceof TypeError ? connectionError : (err as Error)?.message || "Stream error" });
         }
       } finally {
-        if (failed) failedSendRef.current = { content, requestId };
+        if (failed) failedSendRef.current = { content, files: fileKey, requestId };
         // Text still held back is the answer: no tool call followed it
         if (!shown && reply) updateReply({ content: reply });
         setIsStreaming(false);
         abortRef.current = null;
       }
     },
-    [isStreaming, selection, ensureConversation, refreshConversations, updateReply]
+    [isStreaming, selection, ensureConversation, refreshConversations, updateReply, updateUserMessage]
   );
 
   const cancel = useCallback(() => {

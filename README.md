@@ -95,7 +95,7 @@ An agent is greyed out in the sidebar while its provider cannot be reached, its 
 
 ### 3d. Agent Tools (optional)
 
-Custom agents can search the web, read pages and take screenshots. Tools are off by default: on the **Agents** page, each tool has a checkbox. A tool is only offered when the agent's base model supports it (Ollama and the OpenRouter model list say whether a model can call tools and see images).
+Custom agents can search the web, read pages, take screenshots, and read, create and edit files. Tools are off by default: on the **Agents** page, each tool has a checkbox. A tool is only offered when the agent's base model supports it (Ollama and the OpenRouter model list say whether a model can call tools and see images).
 
 | Tool | What it does | Needs |
 |---|---|---|
@@ -103,10 +103,18 @@ Custom agents can search the web, read pages and take screenshots. Tools are off
 | Read pages | Reads a page, PDF or text file as text, without running JavaScript | a model that can call tools |
 | Read pages with JavaScript | Opens the page in a browser, scrolls through it, and reads what it shows | a model that can call tools |
 | Screenshots | Opens the page in a browser and looks at one screen of it | a model that can call tools and see images, e.g. `qwen3.5:9b` |
+| Read files | Reads attached files and files it created, also the parts of long files that did not fit in the message | a model that can call tools |
+| Look at PDF pages | Looks at PDF pages as images, for scanned pages, charts and layout | a model that can call tools and see images |
+| Create text files | Text, markdown, CSV, JSON and code files | a model that can call tools |
+| Edit files | Find-and-replace edits in text and code files, and in the text of Word, PowerPoint and Excel files, whose formatting stays; Excel cells can be set. Each edit gives a new version | a model that can call tools |
+| Create documents | Word, PDF and PowerPoint files, written by the model in markdown | a model that can call tools |
+| Create spreadsheets | Excel workbooks, with formulas | a model that can call tools |
 
 Below the checkboxes, a slider sets the most tool calls per reply (0 to 50, default 7; 0 means no limit). The model is told how many it has, and each result says how many are left. After that many, the agent answers with what it has found.
 
-While an agent works, one status line shows what it is doing: "Thinking…", or a tool's icon (a globe for the web tools, a spanner for the others) with what the tool does. Below it, the reasoning and each finished tool call appear in the order they happened, screenshots included. Once the answer starts, all of it folds away behind "Show thinking". Web pages take up a lot of context: give agents with tools a context window of 16384 tokens or more.
+While an agent works, one status line shows what it is doing: "Thinking…", or a tool's icon (a globe for the web tools, a page for the file tools, a spanner for screenshots) with what the tool does. Below it, the reasoning and each finished tool call appear in the order they happened, screenshots included. Once the answer starts, all of it folds away behind "Show thinking". Web pages take up a lot of context: give agents with tools a context window of 16384 tokens or more.
+
+**Files.** In a chat with an agent, the paperclip button left of Send attaches files (up to 10 per message, 20 MB each; pasting or dropping files works too): text and code files, markdown, CSV, JSON, PDF, Word, Excel, PowerPoint, and images for agents whose base model can see them. Before the model answers, each file is turned into text (scanned PDF pages, which have none, are sent as images to models that can see them, at most 5) and goes with the message, cut to about half of the context window; with Read files, the agent can read the rest. Files the agent creates or edits show as cards below its answer: a click downloads them, and images show in the chat. Attachments are stored in the database with the conversation. Only images are ever shown in the browser; every other file is only downloaded, so a file such as HTML cannot run in the app. Plain models (not agents) take no files.
 
 The tools run in their own containers (see `docker-compose.yml`, profile `tools`):
 
@@ -116,6 +124,7 @@ The tools run in their own containers (see `docker-compose.yml`, profile `tools`
 | `mcp-searxng` | [mcp-searxng](https://github.com/ihor-sokoliuk/mcp-searxng): search and page reading, as an MCP server on `127.0.0.1:8790` |
 | `browser` | `tools/browser`: headless Chromium for reading rendered pages and screenshots, as an MCP server on `127.0.0.1:8791` |
 | `egress` | Proxy that all browser traffic goes through. It refuses private, loopback and LAN addresses |
+| `files` | `tools/files`: reads, creates and edits files, as an MCP server on `127.0.0.1:8792`. Built on [MarkItDown](https://github.com/microsoft/markitdown) (documents to markdown), [pypdfium2](https://github.com/pypdfium2-team/pypdfium2) (PDF pages to images), [python-docx](https://github.com/python-openxml/python-docx), [python-pptx](https://github.com/scanny/python-pptx) and [openpyxl](https://openpyxl.readthedocs.io) (Office files), and [Pandoc](https://pandoc.org) with [Typst](https://typst.app) (documents from markdown). Files come and go in the calls: it keeps nothing and fetches nothing |
 
 To use them, add these to `.env` (not `.env.local`: compose reads the tokens from `.env`), with secrets from `openssl rand -hex 32`:
 
@@ -124,13 +133,15 @@ SEARCH_MCP_URL=http://127.0.0.1:8790/mcp
 SEARCH_MCP_TOKEN=<secret>
 BROWSER_MCP_URL=http://127.0.0.1:8791/mcp
 BROWSER_MCP_TOKEN=<secret>
+FILES_MCP_URL=http://127.0.0.1:8792/mcp
+FILES_MCP_TOKEN=<secret>
 SEARXNG_SECRET=<secret>
 ```
 
 Then start the containers. When the app itself runs outside Docker (`npm start` or `npm run dev`):
 
 ```bash
-docker compose up -d searxng mcp-searxng browser egress
+docker compose up -d searxng mcp-searxng browser egress files
 ```
 
 In production, set `COMPOSE_PROFILES=tools` in `.env` as well, so that deploys build and start them with the app (see below). Restart the app after changing `.env`.
@@ -189,7 +200,7 @@ The server's checkout is only for deploying: every deploy discards edits to trac
 
 The container uses the host network, so it reaches an Ollama server on the same machine at `http://localhost:11434`. It listens on port 3000, or on `WEB_PORT` if it is set in `.env`. The compose file overrides `DATABASE_URL` and `AUTH_LOG_DIR` from the env files with the paths above.
 
-**Agent tools:** with `COMPOSE_PROFILES=tools` and the tool settings from section 3d in `.env`, every deploy also builds the `browser` image and starts the four tool containers. Without it, deploys run the app alone. The first deploy with tools is slow: the Playwright base image of `browser` is about 2 GB. The deploy only waits for the app to become healthy, so a tool container that fails does not stop a deploy; agents then report that the tool did not answer. Check them with `docker compose ps`. Update the Playwright version in `tools/browser` (Dockerfile and package.json) regularly, for example monthly: a pinned browser stops getting security fixes.
+**Agent tools:** with `COMPOSE_PROFILES=tools` and the tool settings from section 3d in `.env`, every deploy also builds the `browser` and `files` images and starts the five tool containers. Without it, deploys run the app alone. The first deploy with tools is slow: the Playwright base image of `browser` is about 2 GB. The deploy only waits for the app to become healthy, so a tool container that fails does not stop a deploy; agents then report that the tool did not answer. Check them with `docker compose ps`. Update the Playwright version in `tools/browser` (Dockerfile and package.json) regularly, for example monthly: a pinned browser stops getting security fixes. The same goes for the pins in `tools/files` (Dockerfile and requirements.txt), which read files from users.
 
 Useful commands in the checkout: `docker compose ps`, `docker compose logs -f web`, `docker compose restart web`.
 
@@ -239,7 +250,8 @@ If a migration has to be undone as well, stop the app (`docker compose stop web`
 - **Changing the password** needs the current password and signs the account out on every other device. **Deleting the account** needs the password and removes all of its data.
 - Each user's **Ollama address** is contacted by the server, so any signed-in user can make the server send requests to addresses it can reach. Use `ALLOWED_SIGNUP_EMAILS` to limit who can sign up.
 - **Agent tools** only read: they cannot click, fill in forms, log in or keep cookies. Pages cannot reach the LAN, the server or other containers. The page reader blocks private addresses itself, redirects included. All browser traffic goes through the `egress` proxy, which refuses private, loopback and link-local addresses after resolving names itself. Chromium keeps its sandbox (with Playwright's seccomp profile) and runs as an unprivileged user, and downloads are off. The two MCP servers listen on `127.0.0.1` only and need bearer tokens. Tool calls are rate limited per user.
-- **Text from web pages** can try to instruct the model (prompt injection). Agents are told to treat it as information, every tool call is shown in the chat, and images in replies are shown as links, so a reply cannot make the browser fetch a URL by itself.
+- **Files**: attachments and the files agents create are only served to the user whose conversation they are in. Images show in the browser; every other file is served as a download only, with a sandboxing Content-Security-Policy, so an HTML or SVG file cannot run in the app. The `files` container gets each file in the call, keeps nothing, never fetches URLs, runs read-only as an unprivileged user without capabilities, and needs a bearer token. Pandoc runs in its sandbox mode and gets no raw HTML, TeX or Typst, so a document cannot read files or reach the network.
+- **Text from web pages** can try to instruct the model (prompt injection). Agents are told to treat it as information, every tool call is shown in the chat, and images in replies are shown as links. The same goes for text in files, so a reply cannot make the browser fetch a URL by itself.
 
 ---
 
@@ -284,7 +296,7 @@ src/
   lib/          Code shared by client and server (types, selection strings, validation)
   server/       Server-only code (auth, database, chat backends, agent tools, config)
 prisma/         Database schema and migrations
-tools/          Agent tool containers: SearXNG settings, the browser MCP server, the egress proxy
+tools/          Agent tool containers: SearXNG settings, the browser and files MCP servers, the egress proxy
 ```
 
 

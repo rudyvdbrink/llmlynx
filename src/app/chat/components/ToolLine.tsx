@@ -1,11 +1,12 @@
 import styles from "../Chat.module.css";
-import { GlobeIcon, SpannerIcon } from "@/components/icons";
+import { FileIcon, GlobeIcon, SpannerIcon } from "@/components/icons";
 import type { ToolIcon } from "@/lib/agentTools";
 import type { ToolStep } from "@/lib/types";
 
-/** The icon of a tool step: a globe for the web tools, a spanner for the rest. */
+/** The icon of a tool step: a globe for the web tools, a file for the file tools, a spanner for the rest. */
 export function ToolStepIcon({ icon, className }: { icon: ToolIcon; className?: string }) {
-  return icon === "globe" ? <GlobeIcon className={className} /> : <SpannerIcon className={className} />;
+  if (icon === "globe") return <GlobeIcon className={className} />;
+  return icon === "file" ? <FileIcon className={className} /> : <SpannerIcon className={className} />;
 }
 
 /** One tool call in a reply's trace: what it did, and a screenshot's thumbnail. */
