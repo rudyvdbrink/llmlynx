@@ -115,3 +115,91 @@ export function TrashIcon(props: IconProps) {
     </Icon>
   );
 }
+
+// Lucide's "paperclip", drawn at 45 degrees
+export function PaperclipIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="m16 6-8.414 8.586a2 2 0 0 0 2.829 2.829l8.414-8.586a4 4 0 1 0-5.657-5.657l-8.379 8.551a6 6 0 1 0 8.485 8.485l8.379-8.551" />
+    </Icon>
+  );
+}
+
+// Lucide's "file-text"
+export function FileIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M10 9H8" />
+      <path d="M16 13H8" />
+      <path d="M16 17H8" />
+    </Icon>
+  );
+}
+
+// Lucide's "file-spreadsheet"
+export function SheetIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M8 13h2" />
+      <path d="M14 13h2" />
+      <path d="M8 17h2" />
+      <path d="M14 17h2" />
+    </Icon>
+  );
+}
+
+// Lucide's "presentation"
+export function SlidesIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2 3h20" />
+      <path d="M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3" />
+      <path d="m7 21 5-5 5 5" />
+    </Icon>
+  );
+}
+
+// Lucide's "file-code"
+export function CodeFileIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 12.5 8 15l2 2.5" />
+      <path d="m14 12.5 2 2.5-2 2.5" />
+      <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+      <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2z" />
+    </Icon>
+  );
+}
+
+export function ImageIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </Icon>
+  );
+}
+
+export function DownloadIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M12 15V3" />
+    </Icon>
+  );
+}
+
+export function XIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </Icon>
+  );
+}

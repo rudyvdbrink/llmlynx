@@ -2,10 +2,12 @@
 // The steps of one reply (assistant steps that call tools, the tool results,
 // and the answer) become one message: its trace holds the reasoning, any text
 // written before a tool call, and the tool calls, in order; its content is the
-// answer.
+// answer, and its files those the file tools made. A user message's files are
+// those the user attached.
 
 import type { Prisma } from "@prisma/client";
 import { toolIcon } from "@/lib/agentTools";
+import type { FileCard } from "@/lib/files";
 import { addReasoning, upsertToolStep } from "@/lib/trace";
 import type { ConversationWithMessages, Role, TraceItem } from "@/lib/types";
 import { toolLabel } from "@/server/tools/definitions";
@@ -21,12 +23,21 @@ export const DISPLAY_MESSAGE_SELECT = {
   toolCallId: true,
   metadata: true,
   createdAt: true,
-  attachments: { select: { id: true }, orderBy: { createdAt: "asc" } },
+  // Images made for the model from another attachment are not shown
+  attachments: {
+    where: { parentId: null },
+    select: { id: true, name: true, mimeType: true, size: true },
+    orderBy: { createdAt: "asc" },
+  },
 } satisfies Prisma.MessageSelect;
 
 type Row = Prisma.MessageGetPayload<{ select: typeof DISPLAY_MESSAGE_SELECT }>;
 
 type DisplayRow = ConversationWithMessages["messages"][number];
+
+/** The named attachments (files) of a row; a screenshot has no name. */
+const filesOf = (row: Row): FileCard[] =>
+  row.attachments.flatMap((a) => (a.name ? [{ id: a.id, name: a.name, mimeType: a.mimeType, size: a.size ?? 0 }] : []));
 
 function storedCalls(value: Prisma.JsonValue): StoredToolCall[] {
   return Array.isArray(value)
@@ -41,7 +52,14 @@ export function toDisplayMessages(rows: Row[]): DisplayRow[] {
   for (const row of rows) {
     if (row.role === "user" || row.role === "system") {
       reply = null;
-      out.push({ id: row.id, role: row.role as Role, content: row.content, createdAt: row.createdAt.toISOString() });
+      const files = filesOf(row);
+      out.push({
+        id: row.id,
+        role: row.role as Role,
+        content: row.content,
+        ...(files.length ? { files } : {}),
+        createdAt: row.createdAt.toISOString(),
+      });
       continue;
     }
     if (row.role === "assistant") {
@@ -75,12 +93,15 @@ export function toDisplayMessages(rows: Row[]): DisplayRow[] {
     const meta = (row.metadata ?? {}) as { label?: unknown; error?: unknown };
     const known = reply.trace.some((item) => item.kind === "tool" && item.step.id === row.toolCallId);
     if (!known || !row.toolCallId) continue;
+    const screenshot = row.attachments.find((a) => !a.name);
     reply.trace = upsertToolStep(reply.trace, {
       id: row.toolCallId,
       state: meta.error === true ? "error" : "done",
       ...(typeof meta.label === "string" ? { label: meta.label } : {}),
-      ...(row.attachments[0] ? { attachmentId: row.attachments[0].id } : {}),
+      ...(screenshot ? { attachmentId: screenshot.id } : {}),
     });
+    const files = filesOf(row);
+    if (files.length) reply.files = [...(reply.files ?? []), ...files];
   }
 
   for (const message of out) {

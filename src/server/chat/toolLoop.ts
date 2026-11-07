@@ -1,8 +1,9 @@
 // The back and forth between a model and its tools, for every chat backend:
 // the model answers or calls tools, the tools run, and it continues with the results.
 
+import type { FileCard } from "@/lib/files";
 import type { ToolStep } from "@/lib/types";
-import type { ToolDefinition } from "@/server/tools/definitions";
+import type { ToolCallContext, ToolDefinition } from "@/server/tools/definitions";
 import { runTool, type ToolResult } from "@/server/tools/run";
 import type { AssistantReply, StoredToolCall } from "./conversation";
 
@@ -17,8 +18,12 @@ export type ToolCallResult = { call: StoredToolCall; result: ToolResult };
 const limitResult = (max: number): ToolResult => ({
   text: `Error: not run. You have used all ${max} tool calls of this reply. Answer now with what you have, without calling tools.`,
   images: [],
+  files: [],
   error: true,
 });
+
+/** What a tool call gets from the chat it runs in. */
+export type ChatToolContext = Omit<ToolCallContext, "signal">;
 
 /** A result as the model gets it: with how many calls are left, so that it can plan them. */
 function withCallsLeft(result: ToolResult, used: number, max: number): ToolResult {
@@ -54,7 +59,7 @@ export function addToLastMessage<Message extends { content: string }>(messages: 
  * (0: no limit); each result tells the model how many are left. When they are
  * used up, the model gets a request to answer with what it has. Each call is
  * announced with `sendTool` (state "running"), run, and announced again with its
- * outcome. Every step is saved to `reply`.
+ * outcome; files a call made are announced with `sendFiles`. Every step is saved to `reply`.
  */
 export async function runToolLoop<Turn extends ModelTurn>({
   tools,
@@ -64,6 +69,7 @@ export async function runToolLoop<Turn extends ModelTurn>({
   signal,
   isCancelled,
   sendTool,
+  sendFiles,
   sendError,
   nextTurn,
   plainTurn,
@@ -72,11 +78,12 @@ export async function runToolLoop<Turn extends ModelTurn>({
 }: {
   tools: ToolDefinition[];
   maxToolCalls: number;
-  toolContext?: { userId: string; textBudget: number };
+  toolContext?: ChatToolContext;
   reply: AssistantReply;
   signal: AbortSignal;
   isCancelled: () => boolean;
   sendTool: (step: Partial<ToolStep> & { id: string }) => void;
+  sendFiles: (files: FileCard[]) => void;
   sendError: (message: string) => void;
   /** One request to the model, streamed to the client. `mayCallTools` is false when they are used up. */
   nextTurn: (mayCallTools: boolean) => Promise<Turn>;
@@ -97,18 +104,21 @@ export async function runToolLoop<Turn extends ModelTurn>({
       ? limitResult(maxToolCalls)
       : def
         ? await runTool(def, call.arguments, { ...toolContext!, signal })
-        : { text: `Error: there is no tool named ${call.name}.`, images: [], error: true };
+        : { text: `Error: there is no tool named ${call.name}.`, images: [], files: [], error: true };
     const state = result.error ? "error" : "done";
     const label =
       (def?.label(call.arguments, state) ?? `Could not use ${call.name}`) + (overLimit ? " (tool limit reached)" : "");
-    const [attachmentId] = await reply.saveToolResult({
+    const saved = await reply.saveToolResult({
       call,
       content: result.text,
       label,
       error: result.error,
       images: result.images,
+      files: result.files,
     });
+    const [attachmentId] = saved.imageIds;
     sendTool({ id: call.id, label, state, ...(attachmentId ? { attachmentId } : {}) });
+    if (saved.files.length) sendFiles(saved.files);
     return result;
   }
 

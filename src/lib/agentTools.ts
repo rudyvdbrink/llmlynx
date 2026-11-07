@@ -2,11 +2,22 @@
 // the agents page. Shared by the agents API (validation), the agents page and
 // the chat view (icons). What each tool does is in server/tools/definitions.ts.
 
-export const AGENT_TOOLS = ["web_search", "web_read", "web_read_rendered", "web_screenshot"] as const;
+export const AGENT_TOOLS = [
+  "web_search",
+  "web_read",
+  "web_read_rendered",
+  "web_screenshot",
+  "read_file",
+  "view_pdf_pages",
+  "create_file",
+  "edit_file",
+  "create_document",
+  "create_spreadsheet",
+] as const;
 
 export type AgentToolName = (typeof AGENT_TOOLS)[number];
 
-export type ToolIcon = "globe" | "spanner";
+export type ToolIcon = "globe" | "spanner" | "file";
 
 export const AGENT_TOOL_INFO: Record<AgentToolName, { label: string; help: string; icon: ToolIcon }> = {
   web_search: {
@@ -29,13 +40,53 @@ export const AGENT_TOOL_INFO: Record<AgentToolName, { label: string; help: strin
     help: "Opens a page in a browser and looks at a screenshot of it, one screen at a time. Needs a base model that can see images.",
     icon: "spanner",
   },
+  read_file: {
+    label: "Read files",
+    help: "Reads attached files and files it created, also the parts of long files that do not fit in the message.",
+    icon: "file",
+  },
+  view_pdf_pages: {
+    label: "Look at PDF pages",
+    help: "Looks at pages of a PDF as images, for scanned pages, charts and layout. Needs a base model that can see images.",
+    icon: "file",
+  },
+  create_file: {
+    label: "Create text files",
+    help: "Creates text, markdown, CSV, JSON and code files for you to download.",
+    icon: "file",
+  },
+  edit_file: {
+    label: "Edit files",
+    help: "Changes text and code files, and text in Word, PowerPoint and Excel files, keeping their formatting. Each edit gives a new version.",
+    icon: "file",
+  },
+  create_document: {
+    label: "Create documents",
+    help: "Creates Word documents, PDFs and PowerPoint presentations.",
+    icon: "file",
+  },
+  create_spreadsheet: {
+    label: "Create spreadsheets",
+    help: "Creates Excel workbooks, with formulas.",
+    icon: "file",
+  },
 };
+
+/** The tools that work on files, which get the conversation's list of files. */
+export const FILE_TOOL_NAMES: AgentToolName[] = [
+  "read_file",
+  "view_pdf_pages",
+  "create_file",
+  "edit_file",
+  "create_document",
+  "create_spreadsheet",
+];
 
 export function isAgentTool(value: unknown): value is AgentToolName {
   return typeof value === "string" && (AGENT_TOOLS as readonly string[]).includes(value);
 }
 
-/** The icon for a tool step in the chat view; tools added later get the spanner. */
+/** The icon for a tool step in the chat view; tools that no longer exist get the spanner. */
 export function toolIcon(name: string): ToolIcon {
   return isAgentTool(name) ? AGENT_TOOL_INFO[name].icon : "spanner";
 }

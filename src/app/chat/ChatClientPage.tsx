@@ -5,10 +5,11 @@ import styles from "./Chat.module.css";
 import AppShell from "@/components/AppShell";
 import { useProviderModels } from "@/hooks/useModelCatalog";
 import { DEFAULT_MODELS, hasModel } from "@/lib/providers";
-import { toSelection } from "@/lib/selection";
+import { parseSelection, toSelection } from "@/lib/selection";
 import type { SessionUser } from "@/lib/types";
 import { useConversations } from "./hooks/useConversations";
 import { useChat } from "./hooks/useChat";
+import { useAttachAccept } from "./hooks/useAttachAccept";
 import MessageList from "./components/MessageList";
 import Composer from "./components/Composer";
 
@@ -31,6 +32,9 @@ export default function ChatClientPage({
       ? ollamaModels[0]
       : DEFAULT_MODELS.ollama;
   const selection = picked ?? toSelection("ollama", firstModel);
+  // Only agents take files
+  const chosen = parseSelection(selection);
+  const accept = useAttachAccept(chosen.kind === "agent" ? chosen.value : null);
   // Bumped to remount the composer, which clears its draft.
   const [composerKey, setComposerKey] = useState(0);
 
@@ -115,7 +119,7 @@ export default function ChatClientPage({
       <div className={styles.chatArea}>
         <MessageList messages={messages} isStreaming={isStreaming} replyStatus={replyStatus} answering={answering} />
         <div className={styles.composerDock}>
-          <Composer key={composerKey} isStreaming={isStreaming} onSend={send} onCancel={cancel} />
+          <Composer key={composerKey} isStreaming={isStreaming} accept={accept} onSend={send} onCancel={cancel} />
         </div>
       </div>
     </AppShell>

@@ -7,7 +7,7 @@ import ReasoningText from "./ReasoningText";
 import ToolLine, { ToolStepIcon } from "./ToolLine";
 import type { ReplyStatus, ToolStep, TraceItem } from "@/lib/types";
 
-const LABELS: Record<ReplyStatus, string> = { loading: "Loading model…", thinking: "Thinking…" };
+const LABELS: Record<ReplyStatus, string> = { reading: "Reading files…", loading: "Loading model…", thinking: "Thinking…" };
 
 // How long the scrollbar stays visible after the user stops scrolling
 const SCROLLBAR_MS = 1000;

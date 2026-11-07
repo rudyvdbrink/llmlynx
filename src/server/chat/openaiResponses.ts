@@ -47,8 +47,21 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
     .filter((m) => m.role === "system")
     .map((m) => m.content)
     .join("\n\n");
+  // A message's images go in content parts after its text
   const toInput = (list: typeof messages): unknown[] =>
-    list.filter((m) => m.role !== "system").map((m) => ({ role: m.role, content: m.content }));
+    list
+      .filter((m) => m.role !== "system")
+      .map((m) =>
+        m.role === "user" && m.images?.length
+          ? {
+              role: "user",
+              content: [
+                { type: "input_text", text: m.content },
+                ...m.images.map((image) => ({ type: "input_image", image_url: `data:${image.mimeType};base64,${image.data}` })),
+              ],
+            }
+          : { role: m.role, content: m.content }
+      );
   const input = toInput(messages);
   const accepted: Record<string, unknown> = { include: ["reasoning.encrypted_content"], ...ctx.params };
 

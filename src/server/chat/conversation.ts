@@ -1,5 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/prisma";
+import { addFiles, HISTORY_ATTACHMENT_SELECT, type FileHistoryOptions } from "@/server/files/history";
+import type { ToolFile, ToolImage } from "@/server/tools/mcp";
+import { uniqueName, type FileCard } from "@/lib/files";
 import { parseSelection, toSelection } from "@/lib/selection";
 import type { ChatMessage } from "@/lib/types";
 import { saveRequestSetup, type RequestSetupInput } from "./setup";
@@ -70,38 +73,75 @@ async function nextPosition(tx: Prisma.TransactionClient, conversationId: string
   return last ? last.position + 1 : 0;
 }
 
+/** A file the user attached to a new message. */
+export type NewFile = { name: string; mimeType: string; data: Buffer<ArrayBuffer> };
+
+/** The file cards of a message's files, in order. */
+export async function messageFiles(messageId: string): Promise<FileCard[]> {
+  const rows = await prisma.messageAttachment.findMany({
+    where: { messageId, parentId: null, name: { not: null } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, name: true, mimeType: true, size: true },
+  });
+  return rows.map((r) => ({ id: r.id, name: r.name!, mimeType: r.mimeType, size: r.size ?? 0 }));
+}
+
 /**
- * Stores a user message. The first message of a conversation also sets its title.
- * A message with the `requestId` of the conversation's last user message is a
- * re-send of it (see attempts.ts): the message stays, and what the attempt before
- * stored of its reply goes, as this attempt writes the reply again.
+ * Stores a user message, with the files attached to it. The first message of a
+ * conversation also sets its title. A message with the `requestId` of the
+ * conversation's last user message is a re-send of it (see attempts.ts): the
+ * message stays, with its files (`files` are not stored again), and what the
+ * attempt before stored of its reply goes, as this attempt writes the reply again.
  */
 export async function saveUserMessage(
   conversationId: string,
   content: string,
   modelKey: string,
-  requestId: string | null = null
-) {
-  await prisma.$transaction(async (tx) => {
+  requestId: string | null = null,
+  files: NewFile[] = []
+): Promise<{ messageId: string; resent: boolean }> {
+  return prisma.$transaction(async (tx) => {
     if (requestId) {
       const last = await tx.message.findFirst({
         where: { conversationId, role: "user" },
         orderBy: { position: "desc" },
-        select: { position: true, metadata: true },
+        select: { id: true, position: true, metadata: true },
       });
       if ((last?.metadata as { requestId?: unknown } | null)?.requestId === requestId) {
         await tx.message.deleteMany({ where: { conversationId, position: { gt: last!.position } } });
-        return;
+        return { messageId: last!.id, resent: true };
       }
     }
     const position = await nextPosition(tx, conversationId);
-    await tx.message.create({
-      data: { conversationId, position, role: "user", content, ...(requestId ? { metadata: { requestId } } : {}) },
+    // Two files of one message with the same name, such as photos, get different names
+    const names: string[] = [];
+    for (const file of files) names.push(uniqueName(file.name, names));
+    const message = await tx.message.create({
+      data: {
+        conversationId,
+        position,
+        role: "user",
+        content,
+        ...(requestId ? { metadata: { requestId } } : {}),
+        ...(files.length
+          ? {
+              attachments: {
+                create: files.map((f, i) => ({ name: names[i], mimeType: f.mimeType, data: f.data, size: f.data.length })),
+              },
+            }
+          : {}),
+      },
+      select: { id: true },
     });
     await tx.conversation.update({
       where: { id: conversationId },
-      data: { updatedAt: new Date(), model: modelKey, ...(position === 0 ? { title: makeTitleFrom(content) } : {}) },
+      data: {
+        updatedAt: new Date(),
+        model: modelKey,
+        ...(position === 0 ? { title: makeTitleFrom(content || names[0] || "") } : {}),
+      },
     });
+    return { messageId: message.id, resent: false };
   });
 }
 
@@ -111,16 +151,29 @@ export async function saveUserMessage(
  * model wrote any) are left out. Of a reply that used tools, only its answer
  * (the last step) is sent: the tool calls and their results would fill the
  * context, and the answer names its sources, so the model can read them again.
+ * With `files`, user messages carry their files (see server/files/history.ts);
+ * without, only their text.
  */
-export async function loadHistory(conversationId: string): Promise<ChatMessage[]> {
+export async function loadHistory(conversationId: string, files?: FileHistoryOptions): Promise<ChatMessage[]> {
   const rows = await prisma.message.findMany({
-    where: { conversationId, role: { in: ["user", "assistant"] }, content: { not: "" } },
+    where: {
+      conversationId,
+      role: { in: ["user", "assistant"] },
+      OR: [{ content: { not: "" } }, { role: "user", attachments: { some: {} } }],
+    },
     orderBy: { position: "asc" },
-    select: { role: true, content: true, toolCalls: true },
+    select: { role: true, content: true, toolCalls: true, attachments: HISTORY_ATTACHMENT_SELECT },
   });
-  return rows
-    .filter((m) => m.toolCalls == null)
-    .map((m) => ({ role: m.role as ChatMessage["role"], content: m.content }));
+  const kept = rows.filter((m) => m.toolCalls == null);
+  if (files) {
+    const messages = kept.map((m) => ({ role: m.role as ChatMessage["role"], content: m.content }));
+    return addFiles(messages, kept.map((m) => m.attachments), files);
+  }
+  // A message of only files still keeps its place between the replies
+  return kept.map((m) => ({
+    role: m.role as ChatMessage["role"],
+    content: m.content || `[Files you cannot see: ${m.attachments.map((a) => a.name).join(", ")}]`,
+  }));
 }
 
 /** A tool call as stored in Message.toolCalls. */
@@ -131,16 +184,20 @@ export type ToolResultStep = {
   content: string; // what the model gets back
   label: string; // what the chat view shows
   error: boolean;
-  images: { mimeType: string; data: string }[]; // data: base64
+  images: ToolImage[]; // what the model sees, such as a screenshot
+  files: ToolFile[]; // files the tool made for the user
 };
+
+/** What saveToolResult stored: the ids of the images, and the cards of the files. */
+export type SavedToolResult = { imageIds: string[]; files: FileCard[] };
 
 export type AssistantReply = {
   append(text: string): void;
   appendReasoning(text: string): void;
   /** Stores what streamed so far as a step that calls `calls`; the next text starts a new step. */
   saveToolCalls(calls: StoredToolCall[]): Promise<void>;
-  /** Stores a tool's result as a tool step. Returns the ids of its stored images. */
-  saveToolResult(step: ToolResultStep): Promise<string[]>;
+  /** Stores a tool's result as a tool step, with its images and files. */
+  saveToolResult(step: ToolResultStep): Promise<SavedToolResult>;
   /** Stores the final step. Safe to call more than once; only the first call writes. */
   persist(): Promise<void>;
 };
@@ -173,19 +230,21 @@ export function createAssistantReply({
   // Every step of the reply shares one setup
   let setupId: string | null = null;
 
-  /** Stores one step of the reply as the conversation's next message. */
+  /** Stores one step of the reply as the conversation's next message. Returns its attachments, in order. */
   async function saveStep(data: Omit<Prisma.MessageUncheckedCreateInput, "conversationId" | "position">) {
     return prisma.$transaction(async (tx) => {
       const position = await nextPosition(tx, conversationId);
       const message = await tx.message.create({
         data: { ...data, conversationId, position },
-        select: { attachments: { select: { id: true } } },
+        select: {
+          attachments: { select: { id: true, name: true, mimeType: true, size: true }, orderBy: { createdAt: "asc" } },
+        },
       });
       await tx.conversation.update({
         where: { id: conversationId },
         data: { updatedAt: new Date(), model: modelKey },
       });
-      return message.attachments.map((a) => a.id);
+      return message.attachments;
     });
   }
 
@@ -218,21 +277,30 @@ export function createAssistantReply({
         // As with persist(): the reply goes on even if a step cannot be stored.
       }
     },
-    async saveToolResult({ call, content, label, error, images }) {
-      if (saved) return [];
+    async saveToolResult({ call, content, label, error, images, files }) {
+      const none: SavedToolResult = { imageIds: [], files: [] };
+      if (saved) return none;
+      const attachments = [
+        ...images.map((i) => ({ mimeType: i.mimeType, data: Buffer.from(i.data, "base64") })),
+        ...files.map((f) => ({ name: f.name, mimeType: f.mimeType, data: Buffer.from(f.data, "base64") })),
+      ].map((a) => ({ ...a, size: a.data.length }));
       try {
-        return await saveStep({
+        const stored = await saveStep({
           role: "tool",
           content,
           toolCallId: call.id,
           toolName: call.name,
           metadata: { label, error },
-          attachments: images.length
-            ? { create: images.map((i) => ({ mimeType: i.mimeType, data: Buffer.from(i.data, "base64") })) }
-            : undefined,
+          attachments: attachments.length ? { create: attachments } : undefined,
         });
+        return {
+          imageIds: stored.filter((a) => a.name === null).map((a) => a.id),
+          files: stored
+            .filter((a) => a.name !== null)
+            .map((a) => ({ id: a.id, name: a.name!, mimeType: a.mimeType, size: a.size ?? 0 })),
+        };
       } catch {
-        return [];
+        return none;
       }
     },
     async persist() {

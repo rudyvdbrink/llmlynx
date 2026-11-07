@@ -5,6 +5,7 @@ import styles from "../Chat.module.css";
 import MarkdownMessage from "./MarkdownMessage";
 import CopyButton from "./CopyButton";
 import Thinking from "./Thinking";
+import FileCards from "./FileCards";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import type { DisplayMessage, ReplyStatus } from "@/lib/types";
 
@@ -34,11 +35,17 @@ function MessageList({
         // Hide the copy button on the reply that is still streaming
         const showCopy = !isUser && !isReply;
         return (
-          <div key={idx} className={`${styles.messageRow} ${isUser ? styles.user : styles.bot}`}>
+          <div
+            key={idx}
+            className={`${styles.messageRow} ${isUser ? styles.user : styles.bot} ${isUser && msg.files?.length ? styles.withFiles : ""}`}
+          >
+            {isUser && !!msg.files?.length && <FileCards files={msg.files} />}
             {(waiting || !!msg.trace?.length) && <Thinking trace={msg.trace} status={waiting ? replyStatus : "done"} />}
-            {(!waiting || msg.content) && (
+            {/* A message of only files has no bubble; a reply's files show below its answer */}
+            {(isUser ? !!msg.content || !msg.files?.length : !waiting || msg.content) && (
               <div className={styles.bubble}>
                 <MarkdownMessage content={msg.error ? msg.content + errorNote(msg.error) : msg.content} />
+                {!isUser && !!msg.files?.length && <FileCards files={msg.files} />}
                 {showCopy && (
                   <CopyButton className={styles.messageCopyBtn} label="Copy response" getText={() => msg.content} />
                 )}

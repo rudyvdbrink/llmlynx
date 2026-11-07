@@ -4,7 +4,7 @@ import { withOllamaTag } from "@/lib/providers";
 import type { ChatMessage, ReplyStatus } from "@/lib/types";
 import { toFunctionTools, type ToolDefinition } from "@/server/tools/definitions";
 import type { AssistantReply } from "./conversation";
-import { addToLastMessage, runToolLoop, type ModelTurn } from "./toolLoop";
+import { addToLastMessage, runToolLoop, type ChatToolContext, type ModelTurn } from "./toolLoop";
 
 // A message as Ollama's /api/chat takes it.
 export type OllamaMessage = {
@@ -22,16 +22,23 @@ type OllamaToolCall = { id?: string; function: { index?: number; name: string; a
 export type OllamaChatRequest = {
   baseUrl: string; // the user's Ollama server
   model: string;
-  messages: OllamaMessage[];
+  messages: ChatMessage[];
   options?: unknown; // agent generation settings, passed through as Ollama options
   // The tools the model can call; with none, the chat is a single request
   tools?: ToolDefinition[];
   // Most tool calls per reply (0: no limit), see runToolLoop
   maxToolCalls?: number;
-  toolContext?: { userId: string; textBudget: number };
+  toolContext?: ChatToolContext;
   // Set when the user chats with an agent, for the error when its model is gone
   forAgent?: boolean;
 };
+
+/** A message of the conversation as Ollama takes it: images go in their own field. */
+const toOllama = ({ role, content, images }: ChatMessage): OllamaMessage => ({
+  role,
+  content,
+  ...(images?.length ? { images: images.map((i) => i.data) } : {}),
+});
 
 // Shape of one entry in Ollama's GET /api/ps response.
 type OllamaRunning = { name?: string; model?: string; context_length?: number };
@@ -160,7 +167,7 @@ export function streamOllamaChat(
         }
         sendStatus("thinking");
 
-        const conversation = [...messages];
+        const conversation = messages.map(toOllama);
         await runToolLoop({
           tools,
           maxToolCalls,
@@ -169,11 +176,12 @@ export function streamOllamaChat(
           signal: abort.signal,
           isCancelled: () => cancelled,
           sendTool: (step) => send(JSON.stringify({ tool: step })),
+          sendFiles: (files) => send(JSON.stringify({ files })),
           sendError: (error) => send(JSON.stringify({ error })),
           // The tools stay offered in every round: models such as gpt-oss call
           // them anyway once the conversation has tool calls in it
           nextTurn: () => chatTurn(conversation, tools),
-          plainTurn: (note) => chatTurn(addToLastMessage(messages, note), []),
+          plainTurn: (note) => chatTurn(addToLastMessage(messages, note).map(toOllama), []),
           addCalls(turn, calls) {
             conversation.push({
               role: "assistant",

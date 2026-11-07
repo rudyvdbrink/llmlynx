@@ -2,10 +2,12 @@
 
 import type { AgentSettings } from "./agentSettings";
 import type { ToolAvailability, ToolIcon } from "./agentTools";
+import type { FileCard } from "./files";
 
 export type Role = "user" | "assistant" | "system";
 
-export type ChatMessage = { role: Role; content: string };
+// `images` (on the server only) are the images the model gets with the message, base64
+export type ChatMessage = { role: Role; content: string; images?: { mimeType: string; data: string }[] };
 
 // A tool the model called while working on a reply, as the chat view shows it.
 // /api/chat sends these as { tool } lines; `label` says what the tool does or did.
@@ -23,11 +25,13 @@ export type ToolStep = {
 export type TraceItem = { kind: "reasoning"; text: string } | { kind: "tool"; step: ToolStep };
 
 // A message as shown in the chat view. `trace` is what the model did before
-// its reply, and `error` says why its reply failed.
-export type DisplayMessage = ChatMessage & { trace?: TraceItem[]; error?: string };
+// its reply, `files` the files the user attached or the agent created, and
+// `error` says why its reply failed.
+export type DisplayMessage = ChatMessage & { trace?: TraceItem[]; files?: FileCard[]; error?: string };
 
 // What a model is busy with before its reply starts, sent as { status } lines by /api/chat.
-export type ReplyStatus = "loading" | "thinking";
+// "reading": the files the user attached are read first.
+export type ReplyStatus = "reading" | "loading" | "thinking";
 
 export type SessionUser = { id: string; email: string };
 
@@ -43,7 +47,7 @@ export type ConversationSummary = {
 export type ConversationWithMessages = ConversationSummary & {
   // The user's messages and the replies; a reply that used tools is one message
   // whose trace holds its reasoning and tool calls in order
-  messages: { id: string; role: Role; content: string; trace?: TraceItem[]; createdAt: string }[];
+  messages: { id: string; role: Role; content: string; trace?: TraceItem[]; files?: FileCard[]; createdAt: string }[];
 };
 
 export type AgentSummary = {
