@@ -2,7 +2,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import styles from "../Chat.module.css";
-import { ChevronRightIcon } from "@/components/icons";
+import { ChevronRightIcon, WarningIcon } from "@/components/icons";
 import ReasoningText from "./ReasoningText";
 import ToolLine, { ToolStepIcon } from "./ToolLine";
 import type { ReplyStatus, ToolStep, TraceItem } from "@/lib/types";
@@ -15,11 +15,16 @@ const SCROLLBAR_MS = 1000;
 const isRunning = (item: TraceItem): item is { kind: "tool"; step: ToolStep } =>
   item.kind === "tool" && item.step.state === "running";
 
+// The reply waits for the user's choice about this step's result (see ToolLine.tsx)
+const isAsking = (item: TraceItem) => item.kind === "tool" && !!item.step.pauseId && !item.step.security?.decision;
+
 /**
  * Shows what the model does before its reply starts, with one status line
  * that says what it is doing now: a spinner with "Loading model…" or
  * "Thinking…" (only the spinner while `status` is null), or, while it uses a
- * tool, the tool's icon pulsing next to what the tool does.
+ * tool, the tool's icon pulsing next to what the tool does. While the reply
+ * is paused over flagged content, it says that it waits for the user's
+ * choice, which the tool line below offers.
  *
  * Below it, the trace streams in, in a short area that keeps its end in view:
  * the reasoning, and each tool call once it has finished, in the order they
@@ -35,6 +40,7 @@ export default function Thinking({ trace = [], status }: { trace?: TraceItem[]; 
   const expanded = !done || open;
   // The tool that is running shows in the status line, and joins the trace when it is done
   const running = done ? undefined : trace.find(isRunning)?.step;
+  const asking = !done && trace.some(isAsking);
   const items = done ? trace : trace.filter((item) => !isRunning(item));
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -90,6 +96,11 @@ export default function Thinking({ trace = [], status }: { trace?: TraceItem[]; 
         <div className={styles.thinkingStatus}>
           <ToolStepIcon icon={running.icon} className={`${styles.toolIcon} ${styles.toolIconRunning}`} />
           <span className={styles.toolLabel}>{running.label}</span>
+        </div>
+      ) : asking ? (
+        <div className={styles.thinkingStatus}>
+          <WarningIcon className={styles.warnIcon} />
+          Paused: waiting for your choice
         </div>
       ) : (
         <div className={styles.thinkingStatus}>

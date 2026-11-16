@@ -1,10 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/prisma";
 import { addFiles, HISTORY_ATTACHMENT_SELECT, type FileHistoryOptions } from "@/server/files/history";
+import { takeUploads, type UploadsToSend } from "@/server/files/uploads";
 import type { ToolFile, ToolImage } from "@/server/tools/mcp";
 import { uniqueName, type FileCard } from "@/lib/files";
 import { parseSelection, toSelection } from "@/lib/selection";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, PauseDecision, StepSecurity } from "@/lib/types";
 import { saveRequestSetup, type RequestSetupInput } from "./setup";
 
 // Helper to make a short title from the first user message
@@ -73,9 +74,6 @@ async function nextPosition(tx: Prisma.TransactionClient, conversationId: string
   return last ? last.position + 1 : 0;
 }
 
-/** A file the user attached to a new message. */
-export type NewFile = { name: string; mimeType: string; data: Buffer<ArrayBuffer> };
-
 /** The file cards of a message's files, in order. */
 export async function messageFiles(messageId: string): Promise<FileCard[]> {
   const rows = await prisma.messageAttachment.findMany({
@@ -86,63 +84,84 @@ export async function messageFiles(messageId: string): Promise<FileCard[]> {
   return rows.map((r) => ({ id: r.id, name: r.name!, mimeType: r.mimeType, size: r.size ?? 0 }));
 }
 
+// Moving the files of a message can take longer than Prisma's 5 seconds, on a small server
+const SAVE_TIMEOUT_MS = 60_000;
+
 /**
- * Stores a user message, with the files attached to it. The first message of a
- * conversation also sets its title. A message with the `requestId` of the
- * conversation's last user message is a re-send of it (see attempts.ts): the
- * message stays, with its files (`files` are not stored again), and what the
- * attempt before stored of its reply goes, as this attempt writes the reply again.
+ * Stores a user message, with the files attached to it: the drafts `uploads`
+ * names, which move into the message with their text, so nothing is
+ * converted or checked again. Throws UploadRefused when one of
+ * them may not be sent (see takeUploads). The first message of a conversation
+ * also sets its title. A message with the `requestId` of the conversation's
+ * last user message is a re-send of it (see attempts.ts): the message stays,
+ * with its files (drafts sent again are dropped), and what the attempt before
+ * stored of its reply goes, as this attempt writes the reply again.
  */
 export async function saveUserMessage(
   conversationId: string,
   content: string,
   modelKey: string,
   requestId: string | null = null,
-  files: NewFile[] = []
+  uploads: UploadsToSend | null = null
 ): Promise<{ messageId: string; resent: boolean }> {
-  return prisma.$transaction(async (tx) => {
-    if (requestId) {
-      const last = await tx.message.findFirst({
-        where: { conversationId, role: "user" },
-        orderBy: { position: "desc" },
-        select: { id: true, position: true, metadata: true },
-      });
-      if ((last?.metadata as { requestId?: unknown } | null)?.requestId === requestId) {
-        await tx.message.deleteMany({ where: { conversationId, position: { gt: last!.position } } });
-        return { messageId: last!.id, resent: true };
+  return prisma.$transaction(
+    async (tx) => {
+      if (requestId) {
+        const last = await tx.message.findFirst({
+          where: { conversationId, role: "user" },
+          orderBy: { position: "desc" },
+          select: { id: true, position: true, metadata: true },
+        });
+        if ((last?.metadata as { requestId?: unknown } | null)?.requestId === requestId) {
+          await tx.message.deleteMany({ where: { conversationId, position: { gt: last!.position } } });
+          if (uploads?.ids.length) await tx.upload.deleteMany({ where: { id: { in: uploads.ids }, userId: uploads.userId } });
+          return { messageId: last!.id, resent: true };
+        }
       }
-    }
-    const position = await nextPosition(tx, conversationId);
-    // Two files of one message with the same name, such as photos, get different names
-    const names: string[] = [];
-    for (const file of files) names.push(uniqueName(file.name, names));
-    const message = await tx.message.create({
-      data: {
-        conversationId,
-        position,
-        role: "user",
-        content,
-        ...(requestId ? { metadata: { requestId } } : {}),
-        ...(files.length
-          ? {
-              attachments: {
-                create: files.map((f, i) => ({ name: names[i], mimeType: f.mimeType, data: f.data, size: f.data.length })),
-              },
-            }
-          : {}),
-      },
-      select: { id: true },
-    });
-    await tx.conversation.update({
-      where: { id: conversationId },
-      data: {
-        updatedAt: new Date(),
-        model: modelKey,
-        ...(position === 0 ? { title: makeTitleFrom(content || names[0] || "") } : {}),
-      },
-    });
-    return { messageId: message.id, resent: false };
-  });
+      const files = uploads?.ids.length ? await takeUploads(tx, uploads) : [];
+      const position = await nextPosition(tx, conversationId);
+      // Two files of one message with the same name, such as photos, get different names
+      const names: string[] = [];
+      for (const file of files) names.push(uniqueName(file.name, names));
+      const now = Date.now();
+      const message = await tx.message.create({
+        data: {
+          conversationId,
+          position,
+          role: "user",
+          content,
+          ...(requestId ? { metadata: { requestId } } : {}),
+          ...(files.length
+            ? {
+                attachments: {
+                  create: files.map((f, i) => ({
+                    name: names[i],
+                    mimeType: f.mimeType,
+                    data: f.data,
+                    size: f.data.length,
+                    text: f.text,
+                    ...(f.info ? { info: f.info } : {}),
+                    // In the order they were attached
+                    createdAt: new Date(now + i),
+                  })),
+                },
+              }
+            : {}),
+        },
+        select: { id: true },
+      });
+      await tx.conversation.update({
+        where: { id: conversationId },
+        data: {
+          updatedAt: new Date(),
+          model: modelKey,
+          ...(position === 0 ? { title: makeTitleFrom(content || names[0] || "") } : {}),
+        },
+      });
+      return { messageId: message.id, resent: false };
+    },
+    { timeout: SAVE_TIMEOUT_MS, maxWait: SAVE_TIMEOUT_MS }
+  );
 }
 
 /**
@@ -186,6 +205,7 @@ export type ToolResultStep = {
   error: boolean;
   images: ToolImage[]; // what the model sees, such as a screenshot
   files: ToolFile[]; // files the tool made for the user
+  security?: StepSecurity; // what the security checks found in the result, which the model then did not get
 };
 
 /** What saveToolResult stored: the ids of the images, and the cards of the files. */
@@ -198,6 +218,8 @@ export type AssistantReply = {
   saveToolCalls(calls: StoredToolCall[]): Promise<void>;
   /** Stores a tool's result as a tool step, with its images and files. */
   saveToolResult(step: ToolResultStep): Promise<SavedToolResult>;
+  /** Adds what the user chose about a flagged result to the stored step of the call `callId`. */
+  saveToolDecision(callId: string, decision: PauseDecision): Promise<void>;
   /** Stores the final step. Safe to call more than once; only the first call writes. */
   persist(): Promise<void>;
 };
@@ -230,13 +252,17 @@ export function createAssistantReply({
   // Every step of the reply shares one setup
   let setupId: string | null = null;
 
-  /** Stores one step of the reply as the conversation's next message. Returns its attachments, in order. */
+  // The stored tool steps of this reply by their call's id, with what they keep for the chat view
+  const toolSteps = new Map<string, { id: string; metadata: Prisma.InputJsonObject }>();
+
+  /** Stores one step of the reply as the conversation's next message. Returns its id and its attachments, in order. */
   async function saveStep(data: Omit<Prisma.MessageUncheckedCreateInput, "conversationId" | "position">) {
     return prisma.$transaction(async (tx) => {
       const position = await nextPosition(tx, conversationId);
       const message = await tx.message.create({
         data: { ...data, conversationId, position },
         select: {
+          id: true,
           attachments: { select: { id: true, name: true, mimeType: true, size: true }, orderBy: { createdAt: "asc" } },
         },
       });
@@ -244,7 +270,7 @@ export function createAssistantReply({
         where: { id: conversationId },
         data: { updatedAt: new Date(), model: modelKey },
       });
-      return message.attachments;
+      return message;
     });
   }
 
@@ -277,22 +303,24 @@ export function createAssistantReply({
         // As with persist(): the reply goes on even if a step cannot be stored.
       }
     },
-    async saveToolResult({ call, content, label, error, images, files }) {
+    async saveToolResult({ call, content, label, error, images, files, security }) {
       const none: SavedToolResult = { imageIds: [], files: [] };
       if (saved) return none;
       const attachments = [
         ...images.map((i) => ({ mimeType: i.mimeType, data: Buffer.from(i.data, "base64") })),
         ...files.map((f) => ({ name: f.name, mimeType: f.mimeType, data: Buffer.from(f.data, "base64") })),
       ].map((a) => ({ ...a, size: a.data.length }));
+      const metadata: Prisma.InputJsonObject = { label, error, ...(security ? { security } : {}) };
       try {
-        const stored = await saveStep({
+        const { id, attachments: stored } = await saveStep({
           role: "tool",
           content,
           toolCallId: call.id,
           toolName: call.name,
-          metadata: { label, error },
+          metadata,
           attachments: attachments.length ? { create: attachments } : undefined,
         });
+        toolSteps.set(call.id, { id, metadata });
         return {
           imageIds: stored.filter((a) => a.name === null).map((a) => a.id),
           files: stored
@@ -301,6 +329,20 @@ export function createAssistantReply({
         };
       } catch {
         return none;
+      }
+    },
+    async saveToolDecision(callId, decision) {
+      const step = toolSteps.get(callId);
+      const security = step?.metadata.security;
+      if (!step || !security) return;
+      try {
+        // Also after the reply was stopped: the choice then was "stop"
+        await prisma.message.update({
+          where: { id: step.id },
+          data: { metadata: { ...step.metadata, security: { ...(security as Prisma.InputJsonObject), decision } } },
+        });
+      } catch {
+        // As with persist(): the reply goes on even if this cannot be stored.
       }
     },
     async persist() {

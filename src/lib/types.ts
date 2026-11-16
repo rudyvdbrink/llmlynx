@@ -9,6 +9,19 @@ export type Role = "user" | "assistant" | "system";
 // `images` (on the server only) are the images the model gets with the message, base64
 export type ChatMessage = { role: Role; content: string; images?: { mimeType: string; data: string }[] };
 
+// What the user chose when a reply paused over flagged content from the internet
+export type PauseDecision = "remove" | "stop";
+
+// What the security checks found in a tool's result, which the model then did
+// not get: text that looks like instructions aimed at the model ("injection"),
+// malware ("virus"), or content that could not be checked ("unchecked").
+export type StepSecurity = {
+  flag: "injection" | "virus" | "unchecked";
+  score?: number; // the classifier's score, 0 to 1
+  source?: string; // what was flagged: a page's host, or a file name
+  decision?: PauseDecision; // what the user chose, once they did
+};
+
 // A tool the model called while working on a reply, as the chat view shows it.
 // /api/chat sends these as { tool } lines; `label` says what the tool does or did.
 export type ToolStep = {
@@ -18,6 +31,8 @@ export type ToolStep = {
   icon: ToolIcon;
   state: "running" | "done" | "error";
   attachmentId?: string; // a screenshot, served by /api/attachments/:id
+  security?: StepSecurity;
+  pauseId?: string; // set while the reply waits for the user's choice about this step
 };
 
 // What a model did before its answer, in order: its reasoning (and any text it

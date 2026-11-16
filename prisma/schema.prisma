@@ -20,6 +20,8 @@ model User {
   agents           Agent[]
   providerSettings ProviderSetting[]
   requestSetups    RequestSetup[]
+  uploads          Upload[]
+  securityEvents   SecurityEvent[]
 }
 
 model Session {
@@ -50,6 +52,7 @@ model Conversation {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   messages  Message[]
+  securityEvents SecurityEvent[]
 
   @@index([userId, updatedAt])
 }
@@ -74,7 +77,8 @@ model Message {
   setup          RequestSetup? @relation(fields: [setupId], references: [id])
   // Anything else about the step, such as token usage, or data a provider needs
   // back to continue the conversation (for example signed reasoning). Tool
-  // steps keep what the chat view shows of them: { label, icon, error }.
+  // steps keep what the chat view shows of them: { label, icon, error }, and
+  // what the security checks found in the result: security: { flag, score?, decision? }.
   metadata       Json?
   createdAt      DateTime      @default(now())
   attachments    MessageAttachment[]
@@ -106,6 +110,49 @@ model MessageAttachment {
 
   @@index([messageId])
   @@index([parentId])
+}
+
+// A file the user attached in the composer and has not sent yet (a draft). It
+// is checked when it is attached (see server/security/engine.ts) and moves
+// into MessageAttachment when its message is sent. Drafts that are never sent
+// are deleted after a day.
+model Upload {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  mimeType  String
+  data      Bytes
+  text      String?  // the file as the model reads it (markdown); null for an image
+  info      Json?    // what converting it found, as in MessageAttachment.info
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// The audit log of the security checks: every scan, every warning and block
+// before a tool call, and every choice a user made in a security dialog. It
+// holds no content and no full URLs: a host and a SHA-256 hash only.
+model SecurityEvent {
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  conversationId String?       // null for a file that is not in a conversation yet
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tool           String?       // the tool whose call or result was checked; null for an attached file
+  check          String        // "url" | "injection" | "virus" | "decision"
+  verdict        String        // "allow" | "warn" | "block"
+  reason         String        // such as "clean", "injection", "virus", "unchecked", "url_exfil"
+  score          Float?        // the classifier's score, 0 to 1
+  host           String?       // the host of the page or URL
+  contentHash    String?       // SHA-256 of the content or URL that was checked
+  durationMs     Int?          // how long the check took
+  decision       String?       // what the user chose in a dialog
+  createdAt      DateTime      @default(now())
+
+  @@index([userId, createdAt])
+  @@index([conversationId])
 }
 
 // What a model was given besides the conversation: the system prompt, the

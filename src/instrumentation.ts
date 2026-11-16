@@ -10,4 +10,7 @@ export async function register() {
   const { secretsKeyProblem } = await import("@/server/secrets");
   const problem = secretsKeyProblem();
   if (problem) console.warn(`${problem}. Users cannot save or use OpenAI and OpenRouter API keys until it is fixed.`);
+
+  const { setupWarnings } = await import("@/server/security/config");
+  for (const warning of setupWarnings()) console.warn(`Security: ${warning}`);
 }

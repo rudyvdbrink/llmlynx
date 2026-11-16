@@ -3,6 +3,8 @@
 
 import type { FileCard } from "@/lib/files";
 import type { ToolStep } from "@/lib/types";
+import { awaitDecision } from "@/server/security/engine";
+import { hostOf } from "@/server/security/urls";
 import type { ToolCallContext, ToolDefinition } from "@/server/tools/definitions";
 import { runTool, type ToolResult } from "@/server/tools/run";
 import type { AssistantReply, StoredToolCall } from "./conversation";
@@ -60,6 +62,12 @@ export function addToLastMessage<Message extends { content: string }>(messages: 
  * used up, the model gets a request to answer with what it has. Each call is
  * announced with `sendTool` (state "running"), run, and announced again with its
  * outcome; files a call made are announced with `sendFiles`. Every step is saved to `reply`.
+ *
+ * When a result from the internet looks like a prompt injection (see
+ * server/security/engine.ts), it is withheld and the reply pauses: `sendPause`
+ * announces the pause, and the loop waits for the user's choice. "remove" goes
+ * on with the notice that the content was withheld as the call's result;
+ * "stop" ends the reply: no further call runs and the model gets no further turn.
  */
 export async function runToolLoop<Turn extends ModelTurn>({
   tools,
@@ -70,6 +78,7 @@ export async function runToolLoop<Turn extends ModelTurn>({
   isCancelled,
   sendTool,
   sendFiles,
+  sendPause,
   sendError,
   nextTurn,
   plainTurn,
@@ -84,6 +93,8 @@ export async function runToolLoop<Turn extends ModelTurn>({
   isCancelled: () => boolean;
   sendTool: (step: Partial<ToolStep> & { id: string }) => void;
   sendFiles: (files: FileCard[]) => void;
+  /** Announces a pause: `id` is what the user's choice is sent under, `tool` the call's id, `source` what was flagged. */
+  sendPause: (pause: { id: string; tool: string; source: string }) => void;
   sendError: (message: string) => void;
   /** One request to the model, streamed to the client. `mayCallTools` is false when they are used up. */
   nextTurn: (mayCallTools: boolean) => Promise<Turn>;
@@ -94,8 +105,11 @@ export async function runToolLoop<Turn extends ModelTurn>({
   /** Adds the results of those calls to it. */
   addResults: (results: ToolCallResult[]) => void;
 }): Promise<void> {
-  /** Runs one tool call (unless `overLimit`) and stores its result. Returns what the model gets back. */
-  async function callTool(call: StoredToolCall, overLimit: boolean): Promise<ToolResult> {
+  /**
+   * Runs one tool call (unless `overLimit`) and stores its result. Returns what
+   * the model gets back, and whether the user stopped the reply over it.
+   */
+  async function callTool(call: StoredToolCall, overLimit: boolean): Promise<{ result: ToolResult; stop: boolean }> {
     const def = tools.find((t) => t.name === call.name);
     const icon = def?.icon ?? "spanner";
     sendTool({ id: call.id, name: call.name, icon, label: def?.label(call.arguments, "running") ?? call.name, state: "running" });
@@ -106,8 +120,9 @@ export async function runToolLoop<Turn extends ModelTurn>({
         ? await runTool(def, call.arguments, { ...toolContext!, signal })
         : { text: `Error: there is no tool named ${call.name}.`, images: [], files: [], error: true };
     const state = result.error ? "error" : "done";
-    const label =
-      (def?.label(call.arguments, state) ?? `Could not use ${call.name}`) + (overLimit ? " (tool limit reached)" : "");
+    const note = overLimit ? "tool limit reached" : result.note;
+    const label = (def?.label(call.arguments, state) ?? `Could not use ${call.name}`) + (note ? ` (${note})` : "");
+    const { security } = result;
     const saved = await reply.saveToolResult({
       call,
       content: result.text,
@@ -115,11 +130,25 @@ export async function runToolLoop<Turn extends ModelTurn>({
       error: result.error,
       images: result.images,
       files: result.files,
+      security,
     });
     const [attachmentId] = saved.imageIds;
-    sendTool({ id: call.id, label, state, ...(attachmentId ? { attachmentId } : {}) });
+    sendTool({ id: call.id, label, state, ...(attachmentId ? { attachmentId } : {}), ...(security ? { security } : {}) });
     if (saved.files.length) sendFiles(saved.files);
-    return result;
+    if (!result.pause || !security || !toolContext?.security) return { result, stop: false };
+
+    // The flagged content is withheld and stored as such; what happens next is the user's choice
+    const { source } = result.pause;
+    const decision = await awaitDecision({
+      session: toolContext.security,
+      tool: call.name,
+      host: hostOf(call.arguments.url),
+      signal,
+      announce: (id) => sendPause({ id, tool: call.id, source }),
+    });
+    await reply.saveToolDecision(call.id, decision);
+    sendTool({ id: call.id, security: { ...security, decision } });
+    return { result, stop: decision === "stop" };
   }
 
   const limited = maxToolCalls > 0;
@@ -159,7 +188,8 @@ export async function runToolLoop<Turn extends ModelTurn>({
     for (const call of calls) {
       const overLimit = limited && used >= maxToolCalls;
       if (!overLimit) used++;
-      const result = await callTool(call, overLimit);
+      const { result, stop } = await callTool(call, overLimit);
+      if (stop) return;
       allResults.push({ call, result });
       results.push({ call, result: limited && !overLimit ? withCallsLeft(result, used, maxToolCalls) : result });
     }

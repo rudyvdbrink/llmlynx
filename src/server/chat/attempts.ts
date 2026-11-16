@@ -24,11 +24,13 @@ export async function stopAttempt(key: string): Promise<void> {
  * which the client tells a finished reply from one that was cut off. Runs as
  * the attempt `key` until the reply ends, `stopAttempt` stops it or
  * `clientGone` aborts. Stopping cancels `reply`, which stores what it has.
+ * `onEnd` runs when the attempt is over, however it ended.
  */
 export function trackAttempt(
   key: string | null,
   reply: ReadableStream<Uint8Array>,
-  clientGone: AbortSignal
+  clientGone: AbortSignal,
+  onEnd?: () => Promise<void>
 ): ReadableStream<Uint8Array> {
   const abort = new AbortController();
   const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>({
@@ -39,6 +41,8 @@ export function trackAttempt(
   const finished = reply
     .pipeTo(writable, { signal: AbortSignal.any([abort.signal, clientGone]) })
     .catch(() => {}) // stopped, or the client left
+    .then(() => onEnd?.())
+    .catch(() => {})
     .finally(() => {
       if (key && running.get(key)?.abort === abort) running.delete(key);
     });

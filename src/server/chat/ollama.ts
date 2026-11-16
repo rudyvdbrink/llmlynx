@@ -87,6 +87,7 @@ async function postChat(baseUrl: string, body: object, signal: AbortSignal): Pro
  * With `tools`, the model may call them: each call is announced with a
  * { tool: ToolStep } line (state "running"), run, and announced again with its
  * outcome; then the model continues with the results. Every step is saved.
+ * A { pause } line says the reply waits for the user's choice (see runToolLoop).
  *
  * If Ollama cannot be reached or rejects the request, the stream ends with an
  * { error } line.
@@ -177,6 +178,7 @@ export function streamOllamaChat(
           isCancelled: () => cancelled,
           sendTool: (step) => send(JSON.stringify({ tool: step })),
           sendFiles: (files) => send(JSON.stringify({ files })),
+          sendPause: (pause) => send(JSON.stringify({ pause })),
           sendError: (error) => send(JSON.stringify({ error })),
           // The tools stay offered in every round: models such as gpt-oss call
           // them anyway once the conversation has tool calls in it

@@ -2,7 +2,9 @@
 // the text of the files attached to it, in <file> blocks, and, for a model
 // that can see images, its images and images of a PDF's scanned pages. Files
 // take up a lot of context, so their text shares a budget, newest first; the
-// rest can be read with read_file.
+// rest can be read with read_file. A file that is withheld (its text looked
+// like instructions aimed at the model, or could not be checked) is only
+// named, with a notice.
 
 import { prisma } from "@/server/db/prisma";
 import { extensionOf, fileKind, isInlineImage, typeLabel } from "@/lib/files";

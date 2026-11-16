@@ -347,8 +347,9 @@ export type ApiChatRequest = {
  * and returns an NDJSON stream in the same format as streamOllamaChat
  * ({ status: "thinking" }, then { message: { thinking } } lines for any
  * reasoning the model streams, { message: { content } } lines, { tool } lines
- * for its tool calls, and { done: true }, or an { error } line when the request
- * fails). Cancelling the stream aborts the request.
+ * for its tool calls, a { pause } line when the reply waits for the user's
+ * choice, and { done: true }, or an { error } line when the request fails).
+ * Cancelling the stream aborts the request.
  */
 export function streamOpenAIChat(
   { provider, model, messages, params = {}, tools = [], maxToolCalls = DEFAULT_MAX_TOOL_CALLS, toolContext, forAgent, useResponses }: ApiChatRequest,
@@ -396,6 +397,7 @@ export function streamOpenAIChat(
           isCancelled: () => cancelled,
           sendTool: (step) => send({ tool: step }),
           sendFiles: (files) => send({ files }),
+          sendPause: (pause) => send({ pause }),
           sendError: (error) => send({ error }),
         });
 

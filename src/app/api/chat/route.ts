@@ -4,14 +4,7 @@ import { getCurrentUser } from "@/server/auth/session";
 import { getDefaultSystemPrompt } from "@/server/config";
 import { getApiConfig, getOllamaUrl } from "@/server/providers";
 import { stopAttempt, trackAttempt } from "@/server/chat/attempts";
-import {
-  createAssistantReply,
-  loadHistory,
-  messageFiles,
-  resolveConversation,
-  saveUserMessage,
-  type NewFile,
-} from "@/server/chat/conversation";
+import { createAssistantReply, loadHistory, messageFiles, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
 import { getModelInfo, usesResponsesApi } from "@/server/chat/models";
 import { streamOllamaChat } from "@/server/chat/ollama";
 import { apiRequestParams, streamOpenAIChat } from "@/server/chat/openai";
@@ -20,30 +13,36 @@ import { addToLastMessage } from "@/server/chat/toolLoop";
 import { fileTextBudget, filesNote } from "@/server/files/history";
 import { prepareMessageFiles } from "@/server/files/prepare";
 import { conversationFiles } from "@/server/files/store";
+import { UploadRefused } from "@/server/files/uploads";
+import { createAuditLog } from "@/server/security/audit";
+import { openSecurity } from "@/server/security/engine";
 import { textBudget, toFunctionTools } from "@/server/tools/definitions";
 import { attachAccept, hasFileTools, toolGuidance, toolsFor } from "@/server/tools/policy";
 import { normalizeSelection, parseBaseModel, parseSelection, toSelection } from "@/lib/selection";
 import { PROVIDER_LABELS, type ProviderId } from "@/lib/providers";
 import { DEFAULT_MAX_TOOL_CALLS } from "@/lib/agentTools";
-import { cleanFileName, fileProblem, MAX_FILES_PER_MESSAGE, mimeTypeOf } from "@/lib/files";
+import { fileProblem, MAX_FILES_PER_MESSAGE } from "@/lib/files";
 
 export const runtime = "nodejs";
 
 // POST /api/chat
-// body: { message: string, model?: string, agentId?: string, conversationId?: string, requestId?: string }
+// body: { message: string, model?: string, agentId?: string, conversationId?: string, requestId?: string, uploads?: string[] }
 // `message` is the user's new message; the rest of the conversation is read from
 // the database, so the model always gets the conversation as stored.
 // `model` is a selection ("ollama:<name>" | "openai:<name>" | "openrouter:<name>")
 // or a plain Ollama model name. Each user's own Ollama server and API keys are used.
 // `requestId` (32 hex characters) identifies the send: a re-send with the same id
 // replaces the attempt before it, see server/chat/attempts.ts.
-// A message with files comes as multipart/form-data: the body as JSON in the
-// "payload" field, and each file in a "file" field. Only agents take files (see
-// attachAccept in server/tools/policy.ts). The stream then starts with a
-// { userFiles: FileCard[] } line, the cards of the stored files, and
-// { status: "reading" } while they are read, before the model answers.
+// `uploads` are the ids of the message's files: drafts, which were checked and
+// stored when the user attached them (POST /api/uploads). Only agents take
+// files (see attachAccept in server/tools/policy.ts). A draft that is not the
+// user's is refused. The stream then starts with a { userFiles: FileCard[] }
+// line, the cards of the stored files, and { status: "reading" } while they
+// are made ready, before the model answers.
 // Responds with an NDJSON stream, which ends with an { end: true } line, and the
 // conversation id in X-Conversation-Id. X-Tools is "1" when the model can call tools.
+// A { pause: { id, tool, source } } line says the reply waits for the user's
+// choice about flagged content, sent with POST /api/chat/pauses/:id.
 
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 
@@ -88,17 +87,11 @@ async function resolveTarget(userId: string, model: unknown, agentId: unknown): 
   };
 }
 
-/** The request body, and the files of a multipart request. Null when it cannot be read. */
-async function readBody(req: NextRequest): Promise<{ body: Record<string, unknown>; uploads: File[] } | null> {
+/** The request body. Null when it cannot be read. */
+async function readBody(req: NextRequest): Promise<Record<string, unknown> | null> {
   try {
-    if (req.headers.get("content-type")?.startsWith("multipart/form-data")) {
-      const form = await req.formData();
-      const body: unknown = JSON.parse(String(form.get("payload") ?? ""));
-      const uploads = form.getAll("file").filter((f): f is File => typeof f !== "string");
-      return body && typeof body === "object" ? { body: body as Record<string, unknown>, uploads } : null;
-    }
     const body: unknown = await req.json();
-    return body && typeof body === "object" ? { body: body as Record<string, unknown>, uploads: [] } : null;
+    return body && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
   } catch {
     return null;
   }
@@ -147,9 +140,9 @@ export async function POST(req: NextRequest) {
   const user = await getCurrentUser().catch(() => null);
   if (!user) return new Response("Unauthorized", { status: 401 });
 
-  const read = await readBody(req);
-  if (!read) return new Response("Invalid request body", { status: 400 });
-  const { body, uploads } = read;
+  const body = await readBody(req);
+  if (!body) return new Response("Invalid request body", { status: 400 });
+  const uploads = Array.isArray(body.uploads) ? body.uploads.filter((id): id is string => typeof id === "string" && !!id) : [];
 
   const message = typeof body.message === "string" ? body.message.trim() : "";
   if (!message && !uploads.length) return new Response("message required", { status: 400 });
@@ -171,16 +164,7 @@ export async function POST(req: NextRequest) {
   // What the model can do decides its tools, the files it takes and, on OpenAI and OpenRouter, which options it gets
   const modelInfo = agent ? await getModelInfo(user.id, target.kind, target.model) : null;
   const capabilities = modelInfo?.capabilities ?? null;
-  const problem = uploads
-    .map((f) => fileProblem(attachAccept(capabilities), { name: cleanFileName(f.name), size: f.size }))
-    .find(Boolean);
-  if (problem) return new Response(problem, { status: 400 });
-  const files: NewFile[] = await Promise.all(
-    uploads.map(async (f) => {
-      const name = cleanFileName(f.name);
-      return { name, mimeType: mimeTypeOf(name), data: Buffer.from(await f.arrayBuffer()) };
-    })
-  );
+  const accept = attachAccept(capabilities);
 
   const conversationId = await resolveConversation(
     user.id,
@@ -193,7 +177,16 @@ export async function POST(req: NextRequest) {
   const attemptKey = requestId && `${user.id}:${requestId}`;
   if (attemptKey) await stopAttempt(attemptKey);
 
-  const { messageId } = await saveUserMessage(conversationId, message, target.modelKey, requestId, files);
+  // The drafts move into the message, unless one may not be sent: decided here, not by the client
+  let messageId: string;
+  try {
+    const problem = (file: { name: string; size: number }) => fileProblem(accept, file);
+    const sent = uploads.length ? { userId: user.id, ids: uploads, problem } : null;
+    ({ messageId } = await saveUserMessage(conversationId, message, target.modelKey, requestId, sent));
+  } catch (err) {
+    if (err instanceof UploadRefused) return new Response(err.message, { status: 400 });
+    throw err;
+  }
   const userFiles = await messageFiles(messageId);
   // The tools the model can call: only agents get them, see server/tools/policy.ts
   const tools = toolsFor(agent, capabilities);
@@ -226,18 +219,23 @@ export async function POST(req: NextRequest) {
     setup,
   });
 
-  const toolRun = {
-    tools,
-    maxToolCalls,
-    forAgent: !!agent,
-    toolContext: { userId: user.id, textBudget: textBudget(contextTokens), conversationId, vision },
-  };
+  // What the security checks log is written in one go when the reply ends
+  const audit = createAuditLog(user.id, conversationId);
   const { kind, model } = target;
   const baseUrl = kind === "ollama" ? await getOllamaUrl(user.id) : "";
   const has = (name: string) => tools.some((t) => t.name === name);
 
   const startReply = async (signal: AbortSignal): Promise<ReadableStream<Uint8Array>> => {
     if (userFiles.length) await prepareMessageFiles(messageId, vision, signal);
+    // The security checks of this request (see server/security/engine.ts): built
+    // from the stored conversation, before the model gets any of it
+    const security = agent ? await openSecurity({ userId: user.id, conversationId, tools, audit }) : null;
+    const toolRun = {
+      tools,
+      maxToolCalls,
+      forAgent: !!agent,
+      toolContext: { userId: user.id, textBudget: textBudget(contextTokens), conversationId, vision, security },
+    };
     // The conversation so far, ending with the new message. Like the system
     // prompt, it comes from the server, never from the client.
     let history = await loadHistory(
@@ -269,7 +267,7 @@ export async function POST(req: NextRequest) {
 
   const stream = afterPreparing(userFiles.length ? [{ userFiles }, { status: "reading" }] : [], startReply);
 
-  return new Response(trackAttempt(attemptKey, stream, req.signal), {
+  return new Response(trackAttempt(attemptKey, stream, req.signal, audit.flush), {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",

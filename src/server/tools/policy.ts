@@ -3,12 +3,10 @@
 
 import { FILE_TOOL_NAMES, validateAgentTools, type ToolAvailability } from "@/lib/agentTools";
 import type { AttachAccept } from "@/lib/files";
-import { getToolServer } from "./config";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./definitions";
 
 /** Why `def` cannot be used with a model that has `capabilities` (null: unknown), or null when it can. */
 function unavailableReason(def: ToolDefinition, capabilities: string[] | null): string | null {
-  if (!getToolServer(def.server)) return "Not set up on this server";
   if (!capabilities) return null; // the provider did not say; the chat finds out
   if (!capabilities.includes("tools")) return "This model cannot use tools";
   if (def.needs.includes("vision") && !capabilities.includes("vision")) return "Needs a model that can see images";
@@ -17,8 +15,8 @@ function unavailableReason(def: ToolDefinition, capabilities: string[] | null): 
 
 /**
  * The tools a chat can call. Only custom agents get tools for now: an agent
- * gets the tools checked for it, minus those whose server is not set up and
- * those its base model, with `capabilities` (null: unknown), cannot use.
+ * gets the tools checked for it, minus those its base model, with
+ * `capabilities` (null: unknown), cannot use.
  */
 export function toolsFor(agent: { tools: unknown } | null, capabilities: string[] | null): ToolDefinition[] {
   if (!agent) return [];
@@ -40,11 +38,10 @@ export function toolAvailability(capabilities: string[] | null): ToolAvailabilit
 
 /**
  * What a chat with an agent on a model with `capabilities` (null: unknown)
- * accepts as attachments. Only agents take files; reading them needs the
- * files server, and images a model that can see them.
+ * accepts as attachments. Only agents take files; images need a model that
+ * can see them.
  */
 export function attachAccept(capabilities: string[] | null): AttachAccept {
-  if (!getToolServer("files")) return { documents: false, images: false };
   return { documents: true, images: !!capabilities?.includes("vision") };
 }
 
