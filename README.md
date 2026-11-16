@@ -114,7 +114,7 @@ Below the checkboxes, a slider sets the most tool calls per reply (0 to 50, defa
 
 While an agent works, one status line shows what it is doing: "Thinking…", or a tool's icon (a globe for the web tools, a page for the file tools, a spanner for screenshots) with what the tool does. Below it, the reasoning and each finished tool call appear in the order they happened, screenshots included. Once the answer starts, all of it folds away behind "Show thinking". Web pages take up a lot of context: give agents with tools a context window of 16384 tokens or more.
 
-**Files.** In a chat with an agent, the paperclip button left of Send attaches files (up to 10 per message, 20 MB each; pasting or dropping files works too): text and code files, markdown, CSV, JSON, PDF, Word, Excel, PowerPoint, and images for agents whose base model can see them. Before the model answers, each file is turned into text (scanned PDF pages, which have none, are sent as images to models that can see them, at most 5) and goes with the message, cut to about half of the context window; with Read files, the agent can read the rest. Files the agent creates or edits show as cards below its answer: a click downloads them, and images show in the chat. Attachments are stored in the database with the conversation. Only images are ever shown in the browser; every other file is only downloaded, so a file such as HTML cannot run in the app. Plain models (not agents) take no files.
+**Files.** In a chat with an agent, the paperclip button left of Send attaches files (up to 10 per message, 20 MB each; pasting or dropping files works too): text and code files, markdown, CSV, JSON, PDF, Word, Excel, PowerPoint, and images for agents whose base model can see them. A file is sent to the server as soon as it is attached: while you type, it is scanned and turned into text ("Checking…" on its chip; see [Security](#security)). You can send before that is done: the message goes by itself once the file is checked. The text (scanned PDF pages, which have none, are sent as images to models that can see them, at most 5) goes with the message, cut to about half of the context window; with Read files, the agent can read the rest. Files the agent creates or edits show as cards below its answer: a click downloads them, and images show in the chat. Attachments are stored in the database with the conversation. Only images are ever shown in the browser; every other file is only downloaded, so a file such as HTML cannot run in the app. Plain models (not agents) take no files.
 
 The tools run in their own containers (see `docker-compose.yml`, profile `tools`):
 
@@ -125,6 +125,8 @@ The tools run in their own containers (see `docker-compose.yml`, profile `tools`
 | `browser` | `tools/browser`: headless Chromium for reading rendered pages and screenshots, as an MCP server on `127.0.0.1:8791` |
 | `egress` | Proxy that all browser traffic goes through. It refuses private, loopback and LAN addresses |
 | `files` | `tools/files`: reads, creates and edits files, as an MCP server on `127.0.0.1:8792`. Built on [MarkItDown](https://github.com/microsoft/markitdown) (documents to markdown), [pypdfium2](https://github.com/pypdfium2-team/pypdfium2) (PDF pages to images), [python-docx](https://github.com/python-openxml/python-docx), [python-pptx](https://github.com/scanny/python-pptx) and [openpyxl](https://openpyxl.readthedocs.io) (Office files), and [Pandoc](https://pandoc.org) with [Typst](https://typst.app) (documents from markdown). Files come and go in the calls: it keeps nothing and fetches nothing |
+| `guard` (profile `guard`) | `tools/guard`: scans text for prompt injections with [Llama Prompt Guard 2](https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-22M) on the CPU, as an MCP server on `127.0.0.1:8793`. Not a tool of the models: the app calls it for web content and attached files. See [Security](#security) |
+| `clamav` (profile `guard`) | [ClamAV](https://www.clamav.net): scans attached files and web content for malware, on `127.0.0.1:3310`. Only its signature updates come from the internet |
 
 To use them, add these to `.env` (not `.env.local`: compose reads the tokens from `.env`), with secrets from `openssl rand -hex 32`:
 
@@ -172,7 +174,7 @@ npm run dev
 
 Open: http://localhost:3000
 
-Other scripts: `npm run lint`, `npm run typecheck`.
+Other scripts: `npm run lint`, `npm run typecheck`, and `npm test` (unit tests, which need no containers: they use a scratch database and stand-ins for the tool servers). The guard has tests of its own: `cd tools/guard && pip install -r requirements-dev.txt && pytest`.
 
 ---
 
@@ -200,7 +202,7 @@ The server's checkout is only for deploying: every deploy discards edits to trac
 
 The container uses the host network, so it reaches an Ollama server on the same machine at `http://localhost:11434`. It listens on port 3000, or on `WEB_PORT` if it is set in `.env`. The compose file overrides `DATABASE_URL` and `AUTH_LOG_DIR` from the env files with the paths above.
 
-**Agent tools:** with `COMPOSE_PROFILES=tools` and the tool settings from section 3d in `.env`, every deploy also builds the `browser` and `files` images and starts the five tool containers. Without it, deploys run the app alone. The first deploy with tools is slow: the Playwright base image of `browser` is about 2 GB. The deploy only waits for the app to become healthy, so a tool container that fails does not stop a deploy; agents then report that the tool did not answer. Check them with `docker compose ps`. Update the Playwright version in `tools/browser` (Dockerfile and package.json) regularly, for example monthly: a pinned browser stops getting security fixes. The same goes for the pins in `tools/files` (Dockerfile and requirements.txt), which read files from users.
+**Agent tools:** with `COMPOSE_PROFILES=tools` and the tool settings from section 3d in `.env`, every deploy also builds the `browser` and `files` images and starts the five tool containers. With `COMPOSE_PROFILES=tools,guard` it also builds the `guard` image and starts the two scanners (see [Security](#security)). Without it, deploys run the app alone. The first deploy with tools is slow: the Playwright base image of `browser` is about 2 GB. The deploy only waits for the app to become healthy, so a tool container that fails does not stop a deploy; agents then report that the tool did not answer. Check them with `docker compose ps`. Update the Playwright version in `tools/browser` (Dockerfile and package.json) regularly, for example monthly: a pinned browser stops getting security fixes. The same goes for the pins in `tools/files` (Dockerfile and requirements.txt), which read files from users.
 
 Useful commands in the checkout: `docker compose ps`, `docker compose logs -f web`, `docker compose restart web`.
 
@@ -253,6 +255,45 @@ If a migration has to be undone as well, stop the app (`docker compose stop web`
 - **Files**: attachments and the files agents create are only served to the user whose conversation they are in. Images show in the browser; every other file is served as a download only, with a sandboxing Content-Security-Policy, so an HTML or SVG file cannot run in the app. The `files` container gets each file in the call, keeps nothing, never fetches URLs, runs read-only as an unprivileged user without capabilities, and needs a bearer token. Pandoc runs in its sandbox mode and gets no raw HTML, TeX or Typst, so a document cannot read files or reach the network.
 - **Text from web pages** can try to instruct the model (prompt injection). Agents are told to treat it as information, every tool call is shown in the chat, and images in replies are shown as links. The same goes for text in files, so a reply cannot make the browser fetch a URL by itself.
 
+### Prompt injection and malware
+
+A security layer checks what reaches a model from outside, on the server itself: no content goes to a cloud service. The details, the decisions and the limits are in [`docs/security.md`](docs/security.md).
+
+| Detection | What happens |
+|---|---|
+| Virus in a file you attach | The file is refused and never stored. Its chip says why |
+| Virus in content from the internet | The content is discarded and the model is told so. The reply goes on |
+| Text in content from the internet that looks like instructions aimed at the model | The reply pauses. You choose **Remove and continue** or **Stop**; the model does not get the content either way |
+| Content that could not be checked (a scanner is down or too slow) | It is withheld, with a message that says so |
+
+Files you attach are scanned for viruses only: their text is yours, and is not checked for such instructions.
+
+An agent can also only open URLs that come from you, your files or a search result once such text was found in a conversation, and never a URL that looks like it carries conversation data out. Every scan and every choice is written to an audit log in the database (`SecurityEvent`: a host and a hash, never content).
+
+Two containers do the scanning (profile `guard` in `docker-compose.yml`): `guard`, a classifier for prompt injections ([Llama Prompt Guard 2](https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-22M)), and `clamav`, the virus scanner. Without them the app works as before and scans nothing; it says so in its log when it starts. The model is Meta's, under the [Llama 4 Community License](https://www.llama.com/llama4/license/), which applies to whoever runs it; the build takes it as an ONNX file from a public conversion of Meta's weights (see `docs/security.md`, Decisions).
+
+| Variable | Purpose |
+|---|---|
+| `GUARD_MCP_URL`, `GUARD_MCP_TOKEN` | Where the guard is, and its bearer token. Unset: no prompt injection scan |
+| `GUARD_MODEL` | `22m` (default) or `86m`. The image holds one model; changing it takes `docker compose build guard` |
+| `GUARD_THRESHOLD` | From which score (0 to 1) text counts as a prompt injection. Default `0.5` |
+| `CLAMAV_HOST`, `CLAMAV_PORT` | Where clamd is (port default `3310`). Unset: no virus scan |
+| `SECURITY_MODE` | `enforce` (default), `monitor` (everything is checked and logged, only a virus is acted on) or `off` |
+
+To switch it on:
+
+1. Add to `.env` (not `.env.local`), with a secret from `openssl rand -hex 32`:
+
+   ```dotenv
+   GUARD_MCP_URL=http://127.0.0.1:8793/mcp
+   GUARD_MCP_TOKEN=<secret>
+   CLAMAV_HOST=127.0.0.1
+   COMPOSE_PROFILES=tools,guard
+   ```
+
+2. Run `npm run db:migrate` (a deploy does this), then build and start the containers: `docker compose build guard && docker compose up -d guard clamav`, or deploy. The first build downloads the model (about 300 MB for `22m`) and checks it against the pinned hashes in `tools/guard/build/models.json`; it needs no account and no token. ClamAV needs a minute to load its signatures.
+3. Restart the app, and check the speed on the server: `docker compose run --rm --no-deps guard python /app/bench.py` (see `docs/security.md`, Tuning).
+
 ---
 
 ## System Prompt Handling
@@ -272,10 +313,10 @@ SYSTEM_PROMPT=You are the llynx.\nStay concise.\nIf unsure, say so.
 
 ## Streaming Architecture
 
-1. Client sends: `{ model | agentId, conversationId, messages: [ {role:"user", content:"..."} , ... ] }`, where `model` is `ollama:<name>`, `openai:<name>` or `openrouter:<name>`
+1. Client sends: `{ model | agentId, conversationId, message, uploads? }`, where `model` is `ollama:<name>`, `openai:<name>` or `openrouter:<name>`, and `uploads` are the ids of the attached files, which went to `/api/uploads` when they were attached
 2. API route (`/api/chat`) stores the new user message and adds the system prompt.
 3. API proxies to the user's Ollama server (`/api/chat` with `"stream": true`). OpenAI and OpenRouter models are streamed with the user's API key and converted to the same format.
-4. The response is **newline-delimited JSON**: `{ message: { content } }` lines, then `{ done: true }`. When an agent uses a tool, a `{ tool: { id, name, icon, label, state: "running" } }` line announces the call, and a second one with the same `id` gives its outcome (`state` `"done"` or `"error"`, a new `label`, and `attachmentId` for a screenshot). The model then continues with the result, up to the agent's most tool calls per reply. Each step is stored as its own message.
+4. The response is **newline-delimited JSON**: `{ message: { content } }` lines, then `{ done: true }`. When an agent uses a tool, a `{ tool: { id, name, icon, label, state: "running" } }` line announces the call, and a second one with the same `id` gives its outcome (`state` `"done"` or `"error"`, a new `label`, `attachmentId` for a screenshot, and `security` when its result was withheld). The model then continues with the result, up to the agent's most tool calls per reply. Each step is stored as its own message. A `{ pause: { id, tool, source } }` line says the reply waits for the user's choice about flagged content, which the browser sends to `/api/chat/pauses/:id`.
 5. Client:
    - Parses each line.
    - Accumulates `assistant` content.
@@ -294,9 +335,11 @@ src/
   components/   UI shared by several pages (app shell, sidebar)
   hooks/        Client data hooks shared by several pages
   lib/          Code shared by client and server (types, selection strings, validation)
-  server/       Server-only code (auth, database, chat backends, agent tools, config)
+  server/       Server-only code (auth, database, chat backends, agent tools, security checks, config)
+  test/         What the unit tests share: the scratch database and stand-ins for the tool servers
 prisma/         Database schema and migrations
-tools/          Agent tool containers: SearXNG settings, the browser and files MCP servers, the egress proxy
+tools/          Tool containers: SearXNG settings, the browser, files and guard MCP servers, the egress proxy, ClamAV's settings
+docs/           Longer documentation: the security layer
 ```
 
 

@@ -5,35 +5,65 @@ import styles from "../Chat.module.css";
 import { isNarrowViewport } from "@/lib/viewport";
 import { PaperclipIcon, XIcon } from "@/components/icons";
 import { acceptAttribute, fileKind, fileProblem, formatSize, MAX_FILES_PER_MESSAGE, type AttachAccept } from "@/lib/files";
+import type { SentFile } from "../hooks/useChat";
 import { TypeIcon } from "./FileCards";
 
 // How long a note about a file that cannot be attached stays
 const NOTE_MS = 5000;
 
-/** A file waiting to be sent, with a preview of an image. */
-type Attached = { file: File; preview: string | null };
+const NOT_CHECKED = "The file could not be checked; try again in a moment";
+
+/**
+ * A file in the composer, with a preview of an image. It goes to the server
+ * as soon as it is attached and is checked there while the user types (POST
+ * /api/uploads): "checking" until the outcome is in, then "ready" (stored as
+ * the draft `id`) or "failed" (not stored: `message` says why, such as a
+ * virus).
+ */
+type Attached = {
+  key: number;
+  file: File;
+  preview: string | null;
+  status: "checking" | "ready" | "failed";
+  id?: string;
+  message?: string;
+  check: AbortController; // stops the check
+};
+
+/** Deletes a draft that will not be sent. Drafts the server still has after a day are deleted there. */
+function deleteDraft(id: string) {
+  fetch(`/api/uploads/${encodeURIComponent(id)}`, { method: "DELETE", keepalive: true }).catch(() => {});
+}
 
 // The draft lives here rather than in the page, so typing does not re-render
 // the message list or the sidebar. `accept` says which files the chat takes
-// (an agent's); null hides the attach button.
+// (an agent's, `agentId`); null hides the attach button.
 export default function Composer({
   isStreaming,
+  agentId,
   accept,
   onSend,
   onCancel,
 }: {
   isStreaming: boolean;
+  agentId: string | null;
   accept: AttachAccept | null;
-  onSend: (text: string, files: File[]) => void;
+  onSend: (text: string, files: SentFile[]) => void;
   onCancel: () => void;
 }) {
   const [input, setInput] = useState("");
   const [attached, setAttached] = useState<Attached[]>([]);
+  // The files as they are now, for what runs after a check, when `attached` is a render behind
+  const filesRef = useRef<Attached[]>([]);
+  const nextKey = useRef(0);
+  // The user sent while a file was still being checked: the message goes by itself once the outcome is in
+  const [waiting, setWaiting] = useState(false);
+  const waitingRef = useRef(false);
   const [note, setNote] = useState<string | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const noteTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const canAttach = !!accept && (accept.documents || accept.images);
+  const canAttach = !!accept && !!agentId && (accept.documents || accept.images);
 
   // Auto-resize
   useEffect(() => {
@@ -70,18 +100,24 @@ export default function Composer({
     wasStreaming.current = isStreaming;
   }, [isStreaming]);
 
-  // Previews are the browser's own copies of the images, freed when the composer goes
-  const attachedRef = useRef(attached);
-  useEffect(() => {
-    attachedRef.current = attached;
-  }, [attached]);
+  // When the composer goes: free the previews, which are the browser's own copies
+  // of the images, stop the checks, and delete the drafts that were not sent
   useEffect(
     () => () => {
       clearTimeout(noteTimer.current);
-      for (const a of attachedRef.current) if (a.preview) URL.revokeObjectURL(a.preview);
+      for (const a of filesRef.current) {
+        a.check.abort();
+        if (a.preview) URL.revokeObjectURL(a.preview);
+        if (a.id) deleteDraft(a.id);
+      }
     },
     []
   );
+
+  function setFiles(files: Attached[]) {
+    filesRef.current = files;
+    setAttached(files);
+  }
 
   function showNote(text: string) {
     setNote(text);
@@ -89,42 +125,100 @@ export default function Composer({
     noteTimer.current = setTimeout(() => setNote(null), NOTE_MS);
   }
 
-  /** Adds the files the chat takes; says why the first other one cannot be added. */
+  /** Sends the file to the server, which checks it, and shows the outcome on its chip. */
+  async function checkFile(item: Attached) {
+    let outcome: Partial<Attached>;
+    try {
+      const form = new FormData();
+      form.append("file", item.file, item.file.name);
+      form.append("agentId", agentId ?? "");
+      const res = await fetch("/api/uploads", { method: "POST", body: form, signal: item.check.signal });
+      const data = (await res.json().catch(() => null)) as { outcome?: string; id?: string; message?: string } | null;
+      if (res.ok && data?.outcome === "clean" && data.id) outcome = { status: "ready", id: data.id };
+      else outcome = { status: "failed", message: data?.message || NOT_CHECKED };
+    } catch {
+      outcome = { status: "failed", message: NOT_CHECKED };
+    }
+    // Removed while it was checked: its draft goes too
+    if (!filesRef.current.some((a) => a.key === item.key)) {
+      if (outcome.id) deleteDraft(outcome.id);
+      return;
+    }
+    setFiles(filesRef.current.map((a) => (a.key === item.key ? { ...a, ...outcome } : a)));
+    sendIfWaiting();
+  }
+
+  /** Adds the files the chat takes, and starts their checks; says why the first other one cannot be added. */
   function addFiles(files: File[]) {
     if (!accept || !files.length) return;
-    const room = MAX_FILES_PER_MESSAGE - attached.length;
+    const room = MAX_FILES_PER_MESSAGE - filesRef.current.length;
     const problems: string[] = [];
     const added: Attached[] = [];
     for (const file of files) {
       const problem = fileProblem(accept, file);
       if (problem) problems.push(problem);
       else if (added.length < room) {
-        added.push({ file, preview: fileKind(file.name) === "image" ? URL.createObjectURL(file) : null });
+        added.push({
+          key: nextKey.current++,
+          file,
+          preview: fileKind(file.name) === "image" ? URL.createObjectURL(file) : null,
+          status: "checking",
+          check: new AbortController(),
+        });
       } else problems.push(`At most ${MAX_FILES_PER_MESSAGE} files per message`);
     }
-    if (added.length) setAttached((prev) => [...prev, ...added]);
+    if (added.length) setFiles([...filesRef.current, ...added]);
+    for (const item of added) void checkFile(item);
     if (problems.length) showNote(problems[0]);
   }
 
-  function removeFile(index: number) {
-    const gone = attached[index];
-    if (gone?.preview) URL.revokeObjectURL(gone.preview);
-    setAttached((prev) => prev.filter((_, i) => i !== index));
+  function removeFile(key: number) {
+    const gone = filesRef.current.find((a) => a.key === key);
+    if (!gone) return;
+    gone.check.abort();
+    if (gone.preview) URL.revokeObjectURL(gone.preview);
+    if (gone.id) deleteDraft(gone.id);
+    setFiles(filesRef.current.filter((a) => a.key !== key));
+    sendIfWaiting();
   }
 
-  function submit() {
-    const text = input.trim();
-    if ((!text && !attached.length) || isStreaming) return;
-    const files = attached.map((a) => a.file);
+  /** The message goes with the files that are stored; one that failed its check stays behind. */
+  function sendNow() {
+    const text = textAreaRef.current?.value.trim() ?? "";
+    const files = filesRef.current;
+    const sent: SentFile[] = files.flatMap((a) => (a.status === "ready" && a.id ? [{ id: a.id, file: a.file }] : []));
+    if (!text && !sent.length) return;
     setInput("");
     // The sent message shows its files from copies of its own
-    for (const a of attached) if (a.preview) URL.revokeObjectURL(a.preview);
-    setAttached([]);
+    for (const a of files) if (a.preview) URL.revokeObjectURL(a.preview);
+    setFiles([]);
     setNote(null);
     // Close the on-screen keyboard now, so the viewport does not resize while the reply streams in
     textAreaRef.current?.blur();
-    onSend(text, files);
+    onSend(text, sent);
   }
+
+  /** After a check: sends the message the user already sent, unless an error needs them first. */
+  function sendIfWaiting() {
+    if (!waitingRef.current || filesRef.current.some((a) => a.status === "checking")) return;
+    waitingRef.current = false;
+    setWaiting(false);
+    if (!filesRef.current.some((a) => a.status === "failed")) sendNow();
+  }
+
+  function submit() {
+    const files = filesRef.current;
+    if (isStreaming || waiting) return;
+    if (!input.trim() && !files.some((a) => a.status === "ready" || a.status === "checking")) return;
+    if (files.some((a) => a.status === "checking")) {
+      waitingRef.current = true;
+      setWaiting(true);
+      return;
+    }
+    sendNow();
+  }
+
+  const sendable = !!input.trim() || attached.some((a) => a.status === "ready" || a.status === "checking");
 
   return (
     <form
@@ -144,8 +238,12 @@ export default function Composer({
     >
       {(attached.length > 0 || note) && (
         <div className={styles.attachedFiles}>
-          {attached.map((a, i) => (
-            <span key={`${a.file.name}-${i}`} className={styles.attachedFile} title={a.file.name}>
+          {attached.map((a) => (
+            <span
+              key={a.key}
+              className={`${styles.attachedFile} ${a.status === "failed" ? styles.attachedFailed : ""}`}
+              title={a.status === "failed" ? `${a.file.name}: ${a.message}` : a.file.name}
+            >
               {a.preview ? (
                 // eslint-disable-next-line @next/next/no-img-element -- the browser's copy of the user's image
                 <img src={a.preview} alt="" className={styles.attachedThumb} />
@@ -153,12 +251,23 @@ export default function Composer({
                 <TypeIcon name={a.file.name} className={styles.attachedIcon} />
               )}
               <span className={styles.attachedName}>{a.file.name}</span>
-              <span className={styles.attachedSize}>{formatSize(a.file.size)}</span>
+              {a.status === "checking" ? (
+                <span className={styles.attachedChecking} role="status">
+                  <span className={styles.spinner} aria-hidden="true" />
+                  Checking…
+                </span>
+              ) : a.status === "failed" ? (
+                <span className={styles.attachedError} role="alert">
+                  {a.message}
+                </span>
+              ) : (
+                <span className={styles.attachedSize}>{formatSize(a.file.size)}</span>
+              )}
               <button
                 type="button"
                 className={styles.attachedRemove}
                 aria-label={`Remove ${a.file.name}`}
-                onClick={() => removeFile(i)}
+                onClick={() => removeFile(a.key)}
                 disabled={isStreaming}
               >
                 <XIcon size={14} />
@@ -231,13 +340,19 @@ export default function Composer({
             <rect x="7" y="7" width="10" height="10" rx="1" />
           </svg>
         </button>
-      ) : (
+      ) : waiting ? (
+        // Sent while a file was still being checked: it goes by itself when the check is done
         <button
-          type="submit"
-          aria-label="Send"
-          disabled={!input.trim() && !attached.length}
+          type="button"
+          aria-label="Sending when the file is checked"
+          title="Sending when the file is checked"
+          disabled
           className={styles.iconButton}
         >
+          <span className={styles.spinner} aria-hidden="true" />
+        </button>
+      ) : (
+        <button type="submit" aria-label="Send" disabled={!sendable} className={styles.iconButton}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <path d="M4 12L20 4L12 20L11 13L4 12Z" transform="translate(-0.5 0)" />
           </svg>

@@ -9,7 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { toolIcon } from "@/lib/agentTools";
 import type { FileCard } from "@/lib/files";
 import { addReasoning, upsertToolStep } from "@/lib/trace";
-import type { ConversationWithMessages, Role, TraceItem } from "@/lib/types";
+import type { ConversationWithMessages, Role, StepSecurity, TraceItem } from "@/lib/types";
 import { toolLabel } from "@/server/tools/definitions";
 import type { StoredToolCall } from "./conversation";
 
@@ -38,6 +38,17 @@ type DisplayRow = ConversationWithMessages["messages"][number];
 /** The named attachments (files) of a row; a screenshot has no name. */
 const filesOf = (row: Row): FileCard[] =>
   row.attachments.flatMap((a) => (a.name ? [{ id: a.id, name: a.name, mimeType: a.mimeType, size: a.size ?? 0 }] : []));
+
+/** What the security checks found in a tool step's result, as stored in its metadata. */
+function storedSecurity(value: unknown): StepSecurity | null {
+  const { flag, source, decision } = (value ?? {}) as Record<string, unknown>;
+  if (flag !== "injection" && flag !== "virus" && flag !== "unchecked") return null;
+  return {
+    flag,
+    ...(typeof source === "string" ? { source } : {}),
+    ...(decision === "remove" || decision === "stop" ? { decision } : {}),
+  };
+}
 
 function storedCalls(value: Prisma.JsonValue): StoredToolCall[] {
   return Array.isArray(value)
@@ -90,7 +101,8 @@ export function toDisplayMessages(rows: Row[]): DisplayRow[] {
     }
     // A tool step: fill in the result of its call
     if (!reply) continue;
-    const meta = (row.metadata ?? {}) as { label?: unknown; error?: unknown };
+    const meta = (row.metadata ?? {}) as { label?: unknown; error?: unknown; security?: unknown };
+    const security = storedSecurity(meta.security);
     const known = reply.trace.some((item) => item.kind === "tool" && item.step.id === row.toolCallId);
     if (!known || !row.toolCallId) continue;
     const screenshot = row.attachments.find((a) => !a.name);
@@ -99,6 +111,7 @@ export function toDisplayMessages(rows: Row[]): DisplayRow[] {
       state: meta.error === true ? "error" : "done",
       ...(typeof meta.label === "string" ? { label: meta.label } : {}),
       ...(screenshot ? { attachmentId: screenshot.id } : {}),
+      ...(security ? { security } : {}),
     });
     const files = filesOf(row);
     if (files.length) reply.files = [...(reply.files ?? []), ...files];

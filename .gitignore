@@ -151,3 +151,7 @@ scrap/
 
 # Production state on the deploy server (see README, Production deployment)
 /data/
+
+# Python caches of the guard server (tools/guard)
+__pycache__/
+.pytest_cache/

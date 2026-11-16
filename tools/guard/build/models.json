@@ -1,0 +1,26 @@
+{
+  "22m": {
+    "model": "meta-llama/Llama-Prompt-Guard-2-22M",
+    "repository": "gravitee-io/Llama-Prompt-Guard-2-22M-onnx",
+    "revision": "da68d0f6023c7aeaf6b256eec549de295d5e8740",
+    "files": {
+      "model.onnx": "c6f4d2ebf59be36f3557ad484bf11a51f1b356f570958d1ec1cbbe322a8dfddf",
+      "tokenizer.json": "92c8b45d0b12ae0dd9680fbfe9804503542c377d65838558cd0b48a795385dde",
+      "config.json": "db1a6dabb734766632a009e17fa72ac4d110505f4be0651654dafc30002461cc",
+      "LICENSE": "90ae4807183070953bd8da5d7be81c4494920fb54c74359383c8a4536bf003c3",
+      "NOTICE": "6d70b1303958ace2c652d10ffcb63cdd8436d49bc0e81c97373df4e329fad0c9"
+    }
+  },
+  "86m": {
+    "model": "meta-llama/Llama-Prompt-Guard-2-86M",
+    "repository": "gravitee-io/Llama-Prompt-Guard-2-86M-onnx",
+    "revision": "45a05fbd5337a864edc608f994911f009c37ca57",
+    "files": {
+      "model.onnx": "fbe0be6a471873b6c52f7d6631c16fbddb88ba8c7ab2ba34ca48e8e77ffd9999",
+      "tokenizer.json": "870798f0e3bb05c636bf62be904b2d8f48ace4785e9c1d71a8a67bd0586c941d",
+      "config.json": "a39ae60b9b718b72bbe3f359ad07ddf6909dcb09ccff936c00a488ceb4e983a6",
+      "LICENSE": "90ae4807183070953bd8da5d7be81c4494920fb54c74359383c8a4536bf003c3",
+      "NOTICE": "6d70b1303958ace2c652d10ffcb63cdd8436d49bc0e81c97373df4e329fad0c9"
+    }
+  }
+}

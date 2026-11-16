@@ -14,6 +14,11 @@
 # named on the command line. The web tools share the private "tools" network;
 # only the MCP servers are published, on 127.0.0.1, where the app reaches them.
 # Their tokens must be in .env (not .env.local): compose fills ${...} from .env only.
+#
+# The security layer's two scanners (prompt injections and viruses, see
+# docs/security.md) have no profile: they are part of the app and always run.
+# The guard needs GUARD_MCP_TOKEN in .env, and downloads its model when its
+# image is built (about 300 MB).
 name: llmlynx
 
 services:
@@ -140,9 +145,65 @@ services:
     networks: [files]
     restart: unless-stopped
 
+  # MCP server that scans text for prompt injections (tools/guard), with Llama
+  # Prompt Guard 2 on the CPU. The app calls it for web content and attached
+  # files; it is not a tool of the models. The text comes in the call: it keeps
+  # nothing and fetches nothing, so it runs read-only, on a network of its own.
+  guard:
+    image: llmlynx-guard
+    build:
+      context: ./tools/guard
+      args:
+        # 22m (the default) or 86m: the image holds exactly one model
+        GUARD_MODEL: ${GUARD_MODEL:-22m}
+    environment:
+      MCP_AUTH_TOKEN: ${GUARD_MCP_TOKEN:?Set GUARD_MCP_TOKEN in .env, for example to the output of openssl rand -hex 32}
+      GUARD_THRESHOLD: ${GUARD_THRESHOLD:-0.5}
+      # One batch of text at a time: the model uses every core
+      GUARD_MAX_CONCURRENCY: ${GUARD_MAX_CONCURRENCY:-1}
+    ports:
+      - 127.0.0.1:${GUARD_MCP_PORT:-8793}:8080
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 2g
+    init: true
+    networks: [guard]
+    restart: unless-stopped
+
+  # ClamAV: clamd scans attached files and web content for malware, and
+  # freshclam keeps its signatures up to date. That update is the only thing
+  # the security layer gets from the internet, so the service has a network of
+  # its own. clamd has no authentication: it is published on 127.0.0.1 only.
+  # The official clamav/clamav image has no linux/arm64 build; this one has.
+  clamav:
+    image: clamav/clamav-debian:1.5.4
+    volumes:
+      - ./tools/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+      - clamav-db:/var/lib/clamav
+    ports:
+      - 127.0.0.1:${CLAMAV_PORT:-3310}:3310
+    cap_drop: [ALL]
+    # What the image's start script needs: it gives its directories to the
+    # clamav user, lets freshclam write there, and both then drop to that user
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    security_opt:
+      - no-new-privileges:true
+    # clamd holds about 1 GB of signatures in memory
+    mem_limit: 2g
+    networks: [clamav]
+    restart: unless-stopped
+
 networks:
   tools: {}
   files: {}
+  guard: {}
+  clamav: {}
 
 volumes:
   searxng-cache: {}
+  # The virus signatures, so a restart does not download them again
+  clamav-db: {}

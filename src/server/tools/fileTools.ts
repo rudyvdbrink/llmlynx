@@ -18,6 +18,10 @@ const EDITABLE_OFFICE = ["docx", "pptx", "xlsx"];
 const MAX_EDITS = 50;
 const MAX_CELLS = 500;
 
+// The file tools work on files the user attached, which were checked when they
+// were attached, and on files the model made: they fetch nothing from the internet
+const LOCAL = { fetchesUrl: false, untrustedOutput: false };
+
 const failure = (text: string): ToolResult => ({ text: `Error: ${text}`, images: [], files: [], error: true });
 const success = (text: string): ToolResult => ({ text, images: [], files: [], error: false });
 
@@ -127,6 +131,7 @@ export const FILE_TOOLS: ToolDefinition[] = [
     server: "files",
     needs: ["tools"],
     timeoutMs: 180_000,
+    effects: LOCAL,
     label: (args, state) => labels(args, state, "Reading", "Read", "Could not read"),
     async run(args, ctx) {
       const file = await lookUp(args, ctx);
@@ -175,6 +180,7 @@ export const FILE_TOOLS: ToolDefinition[] = [
     server: "files",
     needs: ["tools", "vision"],
     timeoutMs: 90_000,
+    effects: LOCAL,
     label(args, state) {
       const where = `${pagesLabel(args)} of ${fileName(args)}`;
       if (state === "running") return `Looking at ${where}`;
@@ -218,6 +224,7 @@ export const FILE_TOOLS: ToolDefinition[] = [
     server: "files",
     needs: ["tools"],
     timeoutMs: 60_000,
+    effects: LOCAL,
     label: (args, state) => labels(args, state, "Creating", "Created", "Could not create", "name"),
     async run(args, ctx) {
       const name = newName(
@@ -276,6 +283,7 @@ export const FILE_TOOLS: ToolDefinition[] = [
     server: "files",
     needs: ["tools"],
     timeoutMs: 120_000,
+    effects: LOCAL,
     label: (args, state) => labels(args, state, "Editing", "Edited", "Could not edit"),
     async run(args, ctx) {
       const file = await lookUp(args, ctx);
@@ -334,6 +342,7 @@ export const FILE_TOOLS: ToolDefinition[] = [
     server: "files",
     needs: ["tools"],
     timeoutMs: 120_000,
+    effects: LOCAL,
     label: (args, state) => labels(args, state, "Creating", "Created", "Could not create", "name"),
     async run(args, ctx) {
       const name = newName(
@@ -380,6 +389,7 @@ export const FILE_TOOLS: ToolDefinition[] = [
     server: "files",
     needs: ["tools"],
     timeoutMs: 60_000,
+    effects: LOCAL,
     label: (args, state) => labels(args, state, "Creating", "Created", "Could not create", "name"),
     async run(args, ctx) {
       const name = newName(args.name, (ext) => ext === "xlsx", "Use a name ending in .xlsx; create_file makes .csv files.");

@@ -500,7 +500,10 @@
   color: color-mix(in srgb, var(--text) 75%, var(--muted));
 }
 .thinkingText > .toolStep:first-child { margin-top: 0; }
-.toolStepFailed { opacity: 0.6; }
+/* Not the whole step: a notice below a failed call (.toolNotice) keeps its full strength */
+.toolStepFailed > .toolIcon,
+.toolStepFailed > .toolLabel,
+.toolStepFailed > .toolShot { opacity: 0.6; }
 
 /* In the spinner's place, and as tall as its box */
 .toolIcon { flex: none; }
@@ -747,6 +750,92 @@
   color: #f87171;
   font-size: 13px;
   padding: 0 4px;
+}
+
+/* A file that is being checked on the server (see Composer.tsx): a spinner in the size's place */
+.attachedChecking {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.attachedChecking .spinner { width: 12px; height: 12px; margin: 0; }
+
+/* A file that was refused, such as one with a virus: the chip grows to say why */
+.attachedFailed {
+  height: auto;
+  min-height: 32px;
+  padding-block: 4px;
+  border-color: color-mix(in srgb, #f87171 45%, transparent);
+}
+.attachedError {
+  min-width: 0;
+  color: #f87171;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+/* The send button while the message waits for a file's check */
+.iconButton .spinner { margin: 0; color: var(--muted); }
+
+/* ===== Security dialog: flagged content from the internet in a tool line
+   (ToolLine.tsx), a warning with two choices. ===== */
+
+.chatArea { --warning: #fbbf24; }
+
+.warnIcon { flex: none; color: var(--warning); }
+
+.choices {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.choiceButton {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.choiceButton:hover:not(:disabled) { background: var(--surface-hover); }
+.choiceButton:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.choiceButton:disabled { opacity: 0.6; cursor: not-allowed; }
+/* The choice that keeps the flagged text away from the model, like the primary buttons of the other pages */
+.choiceSafe { background: #1d2a44; }
+.choiceSafe:hover:not(:disabled) { background: #223152; }
+
+/* In a tool line: below the call's label. With the choices, while the reply waits, it stands out as the dialog. */
+.toolNotice {
+  grid-column: 2;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 6px 8px;
+  align-items: start;
+  margin: 2px 0 4px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+/* The icon's 16px box next to the first line of the text, which is 18.2px high */
+.toolNotice > .warnIcon { margin-top: 1px; }
+.toolNotice > .choices { grid-column: 2; }
+.toolNoticeAsking {
+  margin: 6px 0 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface));
+  color: var(--text);
 }
 
 /* A user message with files: the files above its bubble, both at the right */

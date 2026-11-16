@@ -119,7 +119,14 @@ export default function ChatClientPage({
       <div className={styles.chatArea}>
         <MessageList messages={messages} isStreaming={isStreaming} replyStatus={replyStatus} answering={answering} />
         <div className={styles.composerDock}>
-          <Composer key={composerKey} isStreaming={isStreaming} accept={accept} onSend={send} onCancel={cancel} />
+          <Composer
+            key={composerKey}
+            isStreaming={isStreaming}
+            agentId={chosen.kind === "agent" ? chosen.value : null}
+            accept={accept}
+            onSend={send}
+            onCancel={cancel}
+          />
         </div>
       </div>
     </AppShell>

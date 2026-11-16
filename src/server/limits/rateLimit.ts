@@ -23,6 +23,9 @@ const LIMITS = {
 
   // 600 agent tool calls (web search, page reads, screenshots) per 10 minutes per user
   tools: { windowMs: 10 * 60 * 1000, max: 600 },
+
+  // 120 attached files per 10 minutes per user: each is scanned and converted when it is attached
+  uploads: { windowMs: 10 * 60 * 1000, max: 120 },
 } satisfies Record<string, RateLimitConfig>;
 
 export type RateLimitKind = keyof typeof LIMITS;

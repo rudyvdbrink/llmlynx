@@ -15,6 +15,7 @@ tools
 *.log
 *.tsbuildinfo
 README.md
+docs
 LICENSE
 Dockerfile
 docker-compose.yml

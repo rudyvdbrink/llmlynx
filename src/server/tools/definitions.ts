@@ -5,6 +5,8 @@
 // which have more options than small local models handle well.
 
 import { AGENT_TOOL_INFO, type AgentToolName, type ToolIcon } from "@/lib/agentTools";
+import type { StepSecurity } from "@/lib/types";
+import type { SecuritySession } from "@/server/security/engine";
 import type { ToolServerId } from "./config";
 import { checkStart, shorten, toInteger } from "./args";
 import { FILE_TOOLS } from "./fileTools";
@@ -17,15 +19,37 @@ export type ToolState = "running" | "done" | "error";
 export type Args = Record<string, unknown>;
 
 /** What a tool call gives the model, and the files it made for the user. */
-export type ToolResult = { text: string; images: ToolImage[]; files: ToolFile[]; error: boolean };
+export type ToolResult = {
+  text: string;
+  images: ToolImage[];
+  files: ToolFile[];
+  error: boolean;
+  note?: string; // why the call failed, shown after its label in the chat view, such as "discarded"
+  security?: StepSecurity; // what the security checks found in the result; stored with the tool step
+  pause?: { source: string }; // the reply waits for the user's choice about what was flagged: a page's host or a file name
+};
 
-/** What a call gets besides its arguments. `textBudget` is the most characters of text its result may have. */
+/**
+ * What a call gets besides its arguments. `textBudget` is the most characters
+ * of text its result may have. `security` is the chat's security checks (see
+ * server/security/engine.ts); without it, nothing is checked.
+ */
 export type ToolCallContext = {
   userId: string;
   textBudget: number;
   conversationId: string;
   vision: boolean; // the model can see images
   signal: AbortSignal;
+  security?: SecuritySession | null;
+};
+
+/**
+ * What a tool does that the security checks care about. Every tool states
+ * both, so a new tool cannot be added without deciding them.
+ */
+export type ToolEffects = {
+  fetchesUrl: boolean; // requests a URL the model chose (its `url` argument)
+  untrustedOutput: boolean; // its result comes from the internet
 };
 
 /** The tool to call on the MCP server, or an error text for the model when its arguments are unusable. */
@@ -41,6 +65,7 @@ type ToolBase = {
   needs: ToolCapability[];
   /** How long a call may take, connecting included. */
   timeoutMs: number;
+  effects: ToolEffects;
   /** What the chat view shows for a call while it runs and after. */
   label(args: Args, state: ToolState): string;
 };
@@ -131,6 +156,7 @@ const WEB_TOOLS: ToolDefinition[] = [
     server: "search",
     needs: ["tools"],
     timeoutMs: 30_000,
+    effects: { fetchesUrl: false, untrustedOutput: true },
     label(args, state) {
       const query = typeof args.query === "string" && args.query.trim() ? `: ${shorten(args.query)}` : "";
       if (state === "running") return `Searching the web${query}`;
@@ -161,6 +187,7 @@ const WEB_TOOLS: ToolDefinition[] = [
     server: "search",
     needs: ["tools"],
     timeoutMs: 30_000,
+    effects: { fetchesUrl: true, untrustedOutput: true },
     label(args, state) {
       const page = shortUrl(args.url);
       if (state === "running") return `Reading ${page}`;
@@ -199,6 +226,7 @@ const WEB_TOOLS: ToolDefinition[] = [
     server: "browser",
     needs: ["tools"],
     timeoutMs: 60_000,
+    effects: { fetchesUrl: true, untrustedOutput: true },
     label(args, state) {
       const page = shortUrl(args.url);
       if (state === "running") return `Reading ${page} in a browser`;
@@ -230,6 +258,7 @@ const WEB_TOOLS: ToolDefinition[] = [
     server: "browser",
     needs: ["tools", "vision"],
     timeoutMs: 60_000,
+    effects: { fetchesUrl: true, untrustedOutput: true },
     label(args, state) {
       const section = toInteger(args.section);
       const where = shortUrl(args.url) + (section && section > 1 ? `, section ${section}` : "");

@@ -13,15 +13,29 @@ const isReplyStatus = (value: unknown): value is ReplyStatus =>
 const isFileList = (value: unknown): value is FileCard[] =>
   Array.isArray(value) && value.every((f) => typeof f?.id === "string" && typeof f?.name === "string");
 
+/**
+ * A file of a message that is being sent: the browser's copy, and the id of
+ * the draft the server stored when it was attached (see POST /api/uploads).
+ */
+export type SentFile = { id: string; file: File };
+
 /** Cards for files that are still being sent, which show from the browser's copy. */
-const localCards = (files: File[]): FileCard[] =>
-  files.map((file, i) => ({
+const localCards = (files: SentFile[]): FileCard[] =>
+  files.map(({ file }, i) => ({
     id: `local-${i}`,
     name: file.name,
     mimeType: file.type,
     size: file.size,
     url: URL.createObjectURL(file),
   }));
+
+// A { pause } line: the reply waits for the user's choice about the tool call `tool`
+const isPauseLine = (value: unknown): value is { id: string; tool: string } =>
+  !!value && typeof (value as { id?: unknown }).id === "string" && typeof (value as { tool?: unknown }).tool === "string";
+
+/** The trace without the pauses that are still open: their reply is over, so there is nothing left to choose. */
+const withoutPauses = (trace: TraceItem[]): TraceItem[] =>
+  trace.map((item) => (item.kind === "tool" && item.step.pauseId ? { kind: "tool", step: { ...item.step, pauseId: undefined } } : item));
 
 // A { tool } line: a new step (with all fields), or an update of one (with its id)
 const isToolLine = (value: unknown): value is Partial<ToolStep> & { id: string } =>
@@ -80,7 +94,7 @@ export function useChat({
   }, []);
 
   const send = useCallback(
-    async (text: string, files: File[] = []) => {
+    async (text: string, files: SentFile[] = []) => {
       const content = text.trim();
       if ((!content && !files.length) || isStreaming) return;
 
@@ -98,7 +112,7 @@ export function useChat({
       abortRef.current = controller;
 
       const failedSend = failedSendRef.current;
-      const fileKey = files.map((f) => `${f.name}:${f.size}:${f.lastModified}`).join("|");
+      const fileKey = files.map(({ file }) => `${file.name}:${file.size}:${file.lastModified}`).join("|");
       const requestId =
         failedSend?.content === content && failedSend.files === fileKey ? failedSend.requestId : newRequestId();
       failedSendRef.current = null;
@@ -108,6 +122,8 @@ export function useChat({
 
       // The text of the current step: the answer, unless a tool call follows it
       let reply = "";
+      // The reasoning and tool calls so far, in order
+      let trace: TraceItem[] = [];
       let replyFiles: FileCard[] = [];
       // Whether that text shows as the answer yet. While the model can call
       // tools, it is held back until it looks like an answer or the reply ends:
@@ -118,25 +134,18 @@ export function useChat({
         const conversationId = await ensureConversation();
         const { kind, value } = parseSelection(selection);
 
-        // Only the new message: the server reads the rest of the conversation from the database
-        const payload = JSON.stringify({
-          message: content,
-          conversationId,
-          requestId,
-          ...(kind === "agent" ? { agentId: value } : { model: selection }),
-        });
-        let body: BodyInit = payload;
-        if (files.length) {
-          const form = new FormData();
-          form.append("payload", payload);
-          for (const file of files) form.append("file", file, file.name);
-          body = form;
-        }
+        // Only the new message: the server reads the rest of the conversation from the
+        // database, and has the files already, as drafts
         const res = await fetch("/api/chat", {
           method: "POST",
-          // FormData sets its own type, with the boundary
-          ...(files.length ? {} : { headers: { "Content-Type": "application/json" } }),
-          body,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: content,
+            conversationId,
+            requestId,
+            ...(files.length ? { uploads: files.map((f) => f.id) } : {}),
+            ...(kind === "agent" ? { agentId: value } : { model: selection }),
+          }),
           signal: controller.signal,
         });
         connected = true;
@@ -145,13 +154,12 @@ export function useChat({
         }
 
         const mayCallTools = res.headers.get("X-Tools") === "1";
-        // The reasoning and tool calls so far, in order
-        let trace: TraceItem[] = [];
         await readNdjson(res.body, (obj) => {
           const line = obj as {
             message?: { content?: unknown; thinking?: unknown };
             status?: unknown;
             tool?: unknown;
+            pause?: unknown;
             files?: unknown;
             userFiles?: unknown;
             error?: unknown;
@@ -176,6 +184,11 @@ export function useChat({
             shown = false;
             setAnswering(false);
             updateReply({ trace, content: reply });
+          }
+          // The reply waits: the tool line of that call offers the choice
+          if (isPauseLine(line?.pause)) {
+            trace = upsertToolStep(trace, { id: line.pause.tool, pauseId: line.pause.id });
+            updateReply({ trace });
           }
           const thought = line?.message?.thinking;
           if (typeof thought === "string" && thought) {
@@ -214,6 +227,7 @@ export function useChat({
         if (failed) failedSendRef.current = { content, files: fileKey, requestId };
         // Text still held back is the answer: no tool call followed it
         if (!shown && reply) updateReply({ content: reply });
+        if (trace.some((item) => item.kind === "tool" && item.step.pauseId)) updateReply({ trace: withoutPauses(trace) });
         setIsStreaming(false);
         abortRef.current = null;
       }

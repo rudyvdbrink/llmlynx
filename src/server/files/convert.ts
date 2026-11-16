@@ -21,38 +21,49 @@ export const serverError = (text: string) => text.replace(/^error( executing too
 const errorText = (text: string) => serverError(text) || "The file could not be read.";
 
 /**
- * The file as text (markdown), converted by the files server the first time
- * and stored. `text` is null when it cannot be converted; `info.error` says why.
- * Throws only when `signal` aborts.
+ * Converts a file's bytes to text (markdown) on the files server. `text` is
+ * null when the file cannot be converted; `info.error` says why. Throws when
+ * the server is not set up or does not answer, and when `signal` aborts.
+ */
+export async function convertFile(
+  name: string,
+  data: Uint8Array,
+  signal: AbortSignal
+): Promise<{ text: string | null; info: FileInfo }> {
+  const server = filesServer();
+  if (!server) throw new Error("The files server is not set up.");
+  const out = await callMcpTool(
+    server,
+    "files_convert",
+    { name, data: Buffer.from(data).toString("base64") },
+    { signal, timeoutMs: CONVERT_TIMEOUT_MS }
+  );
+  if (out.isError) return { text: null, info: { error: errorText(out.text) } };
+  const parsed = JSON.parse(out.text) as { markdown?: unknown; pages?: unknown; textless_pages?: unknown };
+  const info: FileInfo = {};
+  if (typeof parsed.pages === "number") info.pages = parsed.pages;
+  if (Array.isArray(parsed.textless_pages) && parsed.textless_pages.length) {
+    info.textlessPages = parsed.textless_pages.filter((p): p is number => Number.isInteger(p));
+  }
+  return { text: typeof parsed.markdown === "string" ? parsed.markdown : "", info };
+}
+
+/**
+ * The file as text (markdown). Files are converted when they are attached
+ * (see server/files/uploads.ts); one that was stored without its text is
+ * converted here the first time, and the text stored. `text` is null when it
+ * cannot be converted; `info.error` says why. Throws only when `signal` aborts.
  */
 export async function fileText(
   file: Pick<ConversationFile, "id" | "name" | "text" | "info">,
   signal: AbortSignal
 ): Promise<{ text: string | null; info: FileInfo | null }> {
   if (file.text !== null || file.info?.error) return { text: file.text, info: file.info };
-  const server = filesServer();
-  if (!server) return { text: null, info: { error: "Files cannot be read on this server." } };
+  if (!filesServer()) return { text: null, info: { error: "Files cannot be read on this server." } };
 
   let result: { text: string | null; info: FileInfo };
   try {
-    const data = await fileData(file.id);
-    const out = await callMcpTool(
-      server,
-      "files_convert",
-      { name: file.name, data: data.toString("base64") },
-      { signal, timeoutMs: CONVERT_TIMEOUT_MS }
-    );
-    if (out.isError) {
-      result = { text: null, info: { error: errorText(out.text) } };
-    } else {
-      const parsed = JSON.parse(out.text) as { markdown?: unknown; pages?: unknown; textless_pages?: unknown };
-      const info: FileInfo = {};
-      if (typeof parsed.pages === "number") info.pages = parsed.pages;
-      if (Array.isArray(parsed.textless_pages) && parsed.textless_pages.length) {
-        info.textlessPages = parsed.textless_pages.filter((p): p is number => Number.isInteger(p));
-      }
-      result = { text: typeof parsed.markdown === "string" ? parsed.markdown : "", info };
-    }
+    result = await convertFile(file.name, await fileData(file.id), signal);
   } catch (err) {
     if (signal.aborted) throw err;
     console.error(`Converting ${file.name} failed: ${(err as Error)?.message || err}`);
