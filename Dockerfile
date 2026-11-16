@@ -9,6 +9,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 FROM base AS build
 # Dependencies first, so a code change does not reinstall them.
 COPY package.json package-lock.json ./
+# npm ci runs it (postinstall); without .env.example, which is not in the context, it does nothing.
+COPY scripts/setup-env.mjs ./scripts/
 RUN npm ci
 COPY . .
 RUN npx prisma generate && npm run build && npm prune --omit=dev

@@ -8,8 +8,8 @@ import type { BaseModelInfo } from "@/lib/types";
 
 // GET /api/agents/base-model?model=<selection or Ollama model name> -> BaseModelInfo
 // What an agent on this model can have: the agent tools it can use (a tool is
-// not available when its server is not set up, or the model cannot use it), the
-// generation options it takes, and its limits.
+// not available when the model cannot use it), the generation options it takes,
+// and its limits.
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
   if (!user) return jsonError("Unauthorized", 401);

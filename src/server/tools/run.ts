@@ -34,7 +34,6 @@ async function callTool(
 ): Promise<{ result: ToolResult; answered: boolean }> {
   const unanswered = (text: string) => ({ result: failure(text), answered: false });
   if (def.run) {
-    if (!getToolServer(def.server)) return unanswered(`${def.name} is not set up on this server.`);
     if (!checkRateLimit("tools", ctx.userId).allowed) return unanswered(LIMITED);
     try {
       const result = await def.run(args, ctx);
@@ -50,7 +49,6 @@ async function callTool(
   const call = def.toMcpCall(args, ctx.textBudget);
   if ("error" in call) return unanswered(call.error);
   const server = getToolServer(def.server);
-  if (!server) return unanswered(`${def.name} is not set up on this server.`);
   if (!checkRateLimit("tools", ctx.userId).allowed) return unanswered(LIMITED);
 
   try {

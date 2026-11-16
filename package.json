@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "postinstall": "node scripts/setup-env.mjs",
+    "predev": "node scripts/setup-env.mjs",
     "dev": "next dev",
+    "prebuild": "node scripts/setup-env.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",

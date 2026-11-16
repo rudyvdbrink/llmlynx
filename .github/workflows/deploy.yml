@@ -37,6 +37,16 @@ jobs:
           git -C "$DEPLOY_DIR" checkout --force -B main origin/main
           git -C "$DEPLOY_DIR" log -1 --oneline
 
+      # Generates the secrets a new version needs (tokens of new containers) in
+      # the server's .env, so a deploy needs no hand edit. It never changes a
+      # value that is set (scripts/setup-env.mjs). Node runs in a container,
+      # as the runner's user, so the server needs no Node and keeps owning .env.
+      - name: Add missing secrets to .env
+        run: >-
+          docker run --rm --network none --user "$(id -u):$(id -g)"
+          -v "$DEPLOY_DIR:/app" -w /app
+          node:24-bookworm-slim node scripts/setup-env.mjs
+
       - name: Build image
         run: docker compose build
 

@@ -66,7 +66,6 @@ async function callFilesServer(
   timeoutMs: number
 ): Promise<ToolResult> {
   const server = getToolServer("files");
-  if (!server) return failure("the file tools are not set up on this server.");
   try {
     const out = await callMcpTool(server, tool, args, { signal: ctx.signal, timeoutMs });
     if (out.isError) return failure(serverError(out.text) || "the file could not be made.");

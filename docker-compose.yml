@@ -9,16 +9,14 @@
 # which owns these directories on the server. Secrets come from the gitignored
 # .env and .env.local at runtime and are never baked into the image.
 #
-# The agent tools (web search, page reading, screenshots, files) are in the
-# "tools" profile: they only run with COMPOSE_PROFILES=tools in .env, or when
-# named on the command line. The web tools share the private "tools" network;
-# only the MCP servers are published, on 127.0.0.1, where the app reaches them.
-# Their tokens must be in .env (not .env.local): compose fills ${...} from .env only.
-#
-# The security layer's two scanners (prompt injections and viruses, see
-# docs/security.md) have no profile: they are part of the app and always run.
-# The guard needs GUARD_MCP_TOKEN in .env, and downloads its model when its
-# image is built (about 300 MB).
+# The agent tools (web search, page reading, screenshots, files) and the
+# security layer's two scanners (prompt injections and viruses, see
+# docs/security.md) are part of the app: they always run. The web tools share
+# the private "tools" network; only the MCP servers and clamd are published, on
+# 127.0.0.1, where the app reaches them. Their tokens must be in .env (not
+# .env.local): compose fills ${...} from .env only. npm install and every
+# deploy put them there (scripts/setup-env.mjs). The guard downloads its model
+# when its image is built (about 300 MB).
 name: llmlynx
 
 services:
@@ -51,7 +49,6 @@ services:
   # Metasearch engine behind web_search. Not published: only mcp-searxng uses it.
   searxng:
     image: searxng/searxng:2026.11.2-cccbc9e15
-    profiles: [tools]
     environment:
       SEARXNG_SECRET: ${SEARXNG_SECRET:-}
       SEARXNG_BASE_URL: http://searxng:8080/
@@ -67,7 +64,6 @@ services:
   # Its URL reader blocks private and LAN addresses itself.
   mcp-searxng:
     image: isokoliuk/mcp-searxng:2.10.0
-    profiles: [tools]
     environment:
       SEARXNG_URL: http://searxng:8080
       MCP_HTTP_PORT: "8080"
@@ -92,7 +88,6 @@ services:
   browser:
     image: llmlynx-browser
     build: ./tools/browser
-    profiles: [tools]
     environment:
       MCP_AUTH_TOKEN: ${BROWSER_MCP_TOKEN:-}
       EGRESS_PROXY: http://egress:3128
@@ -114,7 +109,6 @@ services:
   # Egress proxy for the browser: refuses private, loopback and LAN addresses.
   egress:
     image: ubuntu/squid:6.6-24.04_edge
-    profiles: [tools]
     volumes:
       - ./tools/egress/squid.conf:/etc/squid/squid.conf:ro
     networks: [tools]
@@ -126,7 +120,6 @@ services:
   files:
     image: llmlynx-files
     build: ./tools/files
-    profiles: [tools]
     environment:
       MCP_AUTH_TOKEN: ${FILES_MCP_TOKEN:-}
       # Files converted at once; each can take a few hundred MB
@@ -157,7 +150,7 @@ services:
         # 22m (the default) or 86m: the image holds exactly one model
         GUARD_MODEL: ${GUARD_MODEL:-22m}
     environment:
-      MCP_AUTH_TOKEN: ${GUARD_MCP_TOKEN:?Set GUARD_MCP_TOKEN in .env, for example to the output of openssl rand -hex 32}
+      MCP_AUTH_TOKEN: ${GUARD_MCP_TOKEN:?GUARD_MCP_TOKEN is missing from .env. Run npm install or node scripts/setup-env.mjs to add it}
       GUARD_THRESHOLD: ${GUARD_THRESHOLD:-0.5}
       # One batch of text at a time: the model uses every core
       GUARD_MAX_CONCURRENCY: ${GUARD_MAX_CONCURRENCY:-1}

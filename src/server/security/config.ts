@@ -3,8 +3,7 @@
 
 import { getToolServer, type ToolServer } from "@/server/tools/config";
 
-// Where docker-compose.yml publishes the scanners
-const GUARD_URL = "http://127.0.0.1:8793/mcp";
+// Where docker-compose.yml publishes clamd
 const CLAMAV_HOST = "127.0.0.1";
 const CLAMAV_PORT = 3310;
 
@@ -14,7 +13,7 @@ const CLAMAV_PORT = 3310;
  * a scanner out, and content a scanner cannot check is withheld.
  */
 export function guardServer(): ToolServer {
-  return getToolServer("guard") ?? { id: "guard", url: GUARD_URL, token: process.env.GUARD_MCP_TOKEN?.trim() || undefined };
+  return getToolServer("guard");
 }
 
 /** Where clamd, the virus scanner, listens. */

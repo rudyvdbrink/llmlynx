@@ -23,17 +23,15 @@ const errorText = (text: string) => serverError(text) || "The file could not be 
 /**
  * Converts a file's bytes to text (markdown) on the files server. `text` is
  * null when the file cannot be converted; `info.error` says why. Throws when
- * the server is not set up or does not answer, and when `signal` aborts.
+ * the server does not answer, and when `signal` aborts.
  */
 export async function convertFile(
   name: string,
   data: Uint8Array,
   signal: AbortSignal
 ): Promise<{ text: string | null; info: FileInfo }> {
-  const server = filesServer();
-  if (!server) throw new Error("The files server is not set up.");
   const out = await callMcpTool(
-    server,
+    filesServer(),
     "files_convert",
     { name, data: Buffer.from(data).toString("base64") },
     { signal, timeoutMs: CONVERT_TIMEOUT_MS }
@@ -59,7 +57,6 @@ export async function fileText(
   signal: AbortSignal
 ): Promise<{ text: string | null; info: FileInfo | null }> {
   if (file.text !== null || file.info?.error) return { text: file.text, info: file.info };
-  if (!filesServer()) return { text: null, info: { error: "Files cannot be read on this server." } };
 
   let result: { text: string | null; info: FileInfo };
   try {
@@ -83,13 +80,11 @@ export async function renderPdfPages(
   pages: number[],
   signal: AbortSignal
 ): Promise<{ images: { page: number; image: ToolImage }[] } | { error: string }> {
-  const server = filesServer();
-  if (!server) return { error: "PDF pages cannot be shown on this server." };
   try {
     const data = await fileData(file.id);
     const wanted = pages.slice(0, MAX_RENDERED_PAGES);
     const out = await callMcpTool(
-      server,
+      filesServer(),
       "files_render_pdf",
       { name: file.name, data: data.toString("base64"), pages: wanted },
       { signal, timeoutMs: RENDER_TIMEOUT_MS }
@@ -113,12 +108,10 @@ export async function prepareImage(
   file: Pick<ConversationFile, "id" | "name">,
   signal: AbortSignal
 ): Promise<ToolImage | null> {
-  const server = filesServer();
-  if (!server) return null;
   try {
     const data = await fileData(file.id);
     const out = await callMcpTool(
-      server,
+      filesServer(),
       "files_prepare_image",
       { name: file.name, data: data.toString("base64") },
       { signal, timeoutMs: RENDER_TIMEOUT_MS }

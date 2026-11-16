@@ -5,7 +5,7 @@ repository and revision pinned in models.json, checks every file against its
 pinned SHA-256, and runs the model once on a known injection and on a harmless
 sentence. It needs no account and no token.
 
-The repository is a third party's conversion of Meta's weights. The pins are
+The repository is the project's own conversion of Meta's weights. The pins are
 what the build trusts: change them only after comparing the new model.onnx
 with the original weights (see docs/security.md, "Decisions").
 

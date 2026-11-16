@@ -13,7 +13,7 @@ const databaseDir = path.join(os.tmpdir(), `llmlynx-test-${process.pid}`);
 export default defineConfig({
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   test: {
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
     globalSetup: "./src/test/globalSetup.ts",
     // The test files share the scratch database
     fileParallelism: false,
