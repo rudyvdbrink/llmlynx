@@ -27,6 +27,20 @@ def test_the_jail_has_no_network_no_environment_and_only_its_own_folders():
     assert command[-2:] == ["5", "6"]
 
 
+def test_every_jail_is_sealed_after_its_last_mount():
+    import gitrepo
+
+    for command in (
+        jail.bwrap_command({"python": Path("/packages/chats/c/python"), "node": Path("/packages/chats/c/node")}, 5, 6),
+        gitrepo.local_command(Path("/packages/staging/git-x"), 5, 6),
+        gitrepo.download_command("https://github.com/a/b", [], Path("/packages/staging/git-x/0")),
+    ):
+        # No user namespaces of the code's own, and no writable tmpfs without a size
+        uid = command.index("--uid")
+        assert command[uid - len(jail.SEAL) : uid] == jail.SEAL
+        assert "--disable-userns" in jail.SEAL and jail.SEAL[-4:-2] == ["--remount-ro", "/"]
+
+
 def test_the_limits_of_a_run_are_those_of_the_plan():
     assert jail.RUN_SECONDS == 120
     assert jail.MEMORY_BYTES == 512 * 1024 * 1024
