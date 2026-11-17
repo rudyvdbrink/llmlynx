@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from "react";
 import styles from "./Sandbox.module.css";
+import boxStyles from "@/components/BoxButton.module.css";
 import FilesTab from "./FilesTab";
 import { useSandbox } from "./useSandbox";
 import { showToolCall } from "../Thinking";
-import { ChevronRightIcon, GitBranchIcon, PackageIcon, TerminalIcon, WarningIcon } from "@/components/icons";
+import { ChevronRightIcon, DunesIcon, GitBranchIcon, PackageIcon, TerminalIcon, WarningIcon } from "@/components/icons";
 import type { SandboxPackageRow, SandboxRunSummary, SandboxView } from "@/lib/sandbox";
 
 type Tab = "files" | "runs" | "packages";
@@ -167,8 +168,8 @@ function Body({ tab, data, conversationId, reload, onShowRun, split, onSplit }: 
 /**
  * The sandbox panel: a side bar on the right of the chat, the counterpart of
  * the sidebar on the left, with the chat's files, runs and packages. Only a
- * chat with a sandbox (`available`) shows its chevron, which fades in at the
- * right edge; the panel stays collapsed until the chevron is clicked, also
+ * chat with a sandbox (`available`) shows its toggle, a box with dunes, which
+ * fades in at the right edge; the panel stays collapsed until it is clicked, also
  * while code runs. From 1200px it sits beside the chat, which narrows; below
  * that it opens over the chat, with a backdrop that closes it; on phones it
  * covers the full width. `tick` changes when a run, an install or a download
@@ -206,23 +207,12 @@ export default function SandboxPanel({
       <aside className={`${styles.panel} ${open ? styles.open : ""}`} aria-label="Sandbox">
         <button
           type="button"
-          className={styles.toggle}
+          className={`${boxStyles.box} ${boxStyles.filled} ${styles.toggle}`}
           aria-label={open ? "Close the sandbox" : "Open the sandbox"}
           aria-expanded={open}
           onClick={() => onOpenChange(!open)}
         >
-          <svg
-            className={styles.toggleIcon}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polyline points="8 4 16 12 8 20" />
-          </svg>
+          <DunesIcon className={boxStyles.icon} />
         </button>
         <div className={styles.content} inert={!open}>
           <header className={styles.header}>

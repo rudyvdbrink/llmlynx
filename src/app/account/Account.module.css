@@ -12,12 +12,6 @@
   }
 }
 
-@media (max-width: 860px) {
-  .accountArea {
-    margin-top: 28px;
-  }
-}
-
 /* Page header: title and email, log out button on the right */
 .header {
   display: flex;

@@ -117,7 +117,7 @@ export default function ChatClientPage({
 
   return (
     <AppShell
-      rightOpen={sandboxOpen && hasSandbox}
+      right={hasSandbox ? { open: sandboxOpen, onOpenChange: setSandboxOpen } : undefined}
       sidebar={{
         user,
         model: selection,

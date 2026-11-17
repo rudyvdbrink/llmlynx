@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import styles from "./Sidebar.module.css";
-import { PencilIcon, PinIcon, PinOffIcon, PlusIcon, SearchIcon, TrashIcon } from "@/components/icons";
+import boxStyles from "../BoxButton.module.css";
+import { PencilIcon, PinIcon, PinOffIcon, SearchIcon, SpeechBubbleIcon, TrashIcon } from "@/components/icons";
 import type { ConversationList } from "@/hooks/useConversationList";
 import { groupByDate } from "@/lib/dateGroups";
 
@@ -174,14 +175,15 @@ export default function ConversationsPanel({
               spellCheck={false}
             />
           </div>
+          {/* On small screens the banner has this button (see AppShell.tsx) */}
           <button
             type="button"
-            className={styles.newConversationBtn}
+            className={`${boxStyles.box} ${styles.newConversationBtn}`}
             onClick={onNewConversation}
             aria-label="New conversation"
             title="New conversation"
           >
-            <PlusIcon size={14} />
+            <SpeechBubbleIcon className={boxStyles.icon} />
           </button>
         </div>
       </div>

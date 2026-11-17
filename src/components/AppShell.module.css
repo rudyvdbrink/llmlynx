@@ -89,15 +89,46 @@
   .resizerRight { right: calc(var(--sandbox-width) - 4px); }
 }
 
-.sidebarBackdrop {
+.sidebarBackdrop,
+.banner {
   display: none;
 }
 
-/* Narrower screens have no room beside it: the sidebar opens over the page */
+/* Narrower screens have no room beside it: the sidebar opens over the page,
+   below a banner with the buttons (AppShell.tsx) that the side bars have on
+   wide screens. The banner stays in view while the page scrolls. */
 @media (max-width: 860px) {
+  .page {
+    --banner-height: 52px;
+    padding-top: var(--banner-height);
+  }
+  .banner {
+    --box-size: 36px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 60;
+    height: var(--banner-height);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+  .bannerEnd {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+  }
+  /* Points left while the sidebar is open: a tap closes it */
+  .bannerChevron { transition: transform 0.38s cubic-bezier(.4,0,.2,1); }
+  .page.sidebarOpen .bannerChevron { transform: rotate(180deg); }
+
   .sidebarBackdrop {
     position: fixed;
-    inset: 0;
+    inset: var(--banner-height) 0 0;
     z-index: 40;
     display: block;
     border: none;

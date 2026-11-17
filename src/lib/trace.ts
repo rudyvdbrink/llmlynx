@@ -17,6 +17,20 @@ export function addReasoning(trace: TraceItem[], text: string, paragraph = false
   return [...trace.slice(0, -1), { kind: "reasoning", text: joined }];
 }
 
+/**
+ * Whether text a model wrote before calling a tool is meant for the user, and
+ * so is part of the answer, not the trace. Models such as qwen3.5 first say
+ * what they are about to do, in one paragraph that can run to hundreds of
+ * characters ("Let me read the rest to confirm…"). Text that goes on past a
+ * line break is taken for the answer. Text that starts with such text is too,
+ * so text that shows as the answer while it streams in stays there when a
+ * tool call follows it.
+ */
+export const looksLikeAnswer = (text: string) => /\S\s*\n\s*\S/.test(text);
+
+/** Adds the text of another step to an answer, as a new paragraph. */
+export const addToAnswer = (answer: string, text: string) => (answer && text ? `${answer}\n\n${text}` : answer || text);
+
 /** Adds a tool step to the trace, or updates the one with the same id. */
 export function upsertToolStep(trace: TraceItem[], step: Partial<ToolStep> & { id: string }): TraceItem[] {
   const index = trace.findIndex((item) => item.kind === "tool" && item.step.id === step.id);

@@ -3,15 +3,12 @@
 import { useCallback, useRef, useState } from "react";
 import { readNdjson } from "@/lib/ndjson";
 import { parseSelection } from "@/lib/selection";
-import { withFileCards, type FileCard } from "@/lib/files";
-import { addReasoning, upsertToolStep } from "@/lib/trace";
-import type { DisplayMessage, ReplyStatus, ToolStep, TraceItem } from "@/lib/types";
+import type { FileCard } from "@/lib/files";
+import type { DisplayMessage, ReplyStatus } from "@/lib/types";
+import { endReply, isFileList, isToolLine, NEW_REPLY, readReplyLine, shownText, type StreamedReply } from "./streamedReply";
 
 const isReplyStatus = (value: unknown): value is ReplyStatus =>
   value === "reading" || value === "loading" || value === "thinking";
-
-const isFileList = (value: unknown): value is FileCard[] =>
-  Array.isArray(value) && value.every((f) => typeof f?.id === "string" && typeof f?.name === "string");
 
 /**
  * A file of a message that is being sent: the browser's copy, and the id of
@@ -28,24 +25,6 @@ const localCards = (files: SentFile[]): FileCard[] =>
     size: file.size,
     url: URL.createObjectURL(file),
   }));
-
-// A { pause } line: the reply waits for the user's choice about the tool call `tool`
-const isPauseLine = (value: unknown): value is { id: string; tool: string } =>
-  !!value && typeof (value as { id?: unknown }).id === "string" && typeof (value as { tool?: unknown }).tool === "string";
-
-/** The trace without the pauses that are still open: their reply is over, so there is nothing left to choose. */
-const withoutPauses = (trace: TraceItem[]): TraceItem[] =>
-  trace.map((item) => (item.kind === "tool" && item.step.pauseId ? { kind: "tool", step: { ...item.step, pauseId: undefined } } : item));
-
-// A { tool } line: a new step (with all fields), or an update of one (with its id)
-const isToolLine = (value: unknown): value is Partial<ToolStep> & { id: string } =>
-  !!value && typeof value === "object" && typeof (value as ToolStep).id === "string";
-
-// Before calling a tool, models such as qwen3.5 may say what they are about to
-// do, in one short line ("Let me look that up."). Text that goes on past a line
-// break, or is longer than that, is taken for the answer.
-const PREAMBLE_MAX = 300;
-const looksLikeAnswer = (text: string) => /\S\s*\n\s*\S/.test(text) || text.trim().length > PREAMBLE_MAX;
 
 // A failed connection is a TypeError, with wording of each browser's own ("Failed to fetch", "Load failed", ...)
 const SERVER_UNREACHABLE = "Could not reach the server. Check your connection and send your message again.";
@@ -82,6 +61,8 @@ export function useChat({
     setMessages((prev) => {
       const last = prev[prev.length - 1];
       if (last?.role !== "assistant") return prev;
+      // Nothing that shows changed, such as while text is held back
+      if (Object.entries(patch).every(([key, value]) => last[key as keyof DisplayMessage] === value)) return prev;
       return [...prev.slice(0, -1), { ...last, ...patch }];
     });
   }, []);
@@ -120,17 +101,16 @@ export function useChat({
       failedSendRef.current = null;
       let failed = false;
       let connected = false;
-      let ended = false;
-
-      // The text of the current step: the answer, unless a tool call follows it
-      let reply = "";
-      // The reasoning and tool calls so far, in order
-      let trace: TraceItem[] = [];
-      let replyFiles: FileCard[] = [];
-      // Whether that text shows as the answer yet. While the model can call
-      // tools, it is held back until it looks like an answer or the reply ends:
-      // a model only says it calls a tool after the text before the call.
-      let shown = false;
+      let reply: StreamedReply = NEW_REPLY;
+      const show = () => {
+        updateReply({
+          content: shownText(reply),
+          ...(reply.trace.length ? { trace: reply.trace } : {}),
+          ...(reply.files.length ? { files: reply.files } : {}),
+          ...(reply.error ? { error: reply.error } : {}),
+        });
+        setAnswering(reply.shown);
+      };
 
       try {
         const conversationId = await ensureConversation();
@@ -157,64 +137,22 @@ export function useChat({
 
         const mayCallTools = res.headers.get("X-Tools") === "1";
         await readNdjson(res.body, (obj) => {
-          const line = obj as {
-            message?: { content?: unknown; thinking?: unknown };
-            status?: unknown;
-            tool?: unknown;
-            pause?: unknown;
-            files?: unknown;
-            userFiles?: unknown;
-            error?: unknown;
-            end?: unknown;
-          };
-          if (line?.end === true) ended = true;
+          const line = obj as { status?: unknown; userFiles?: unknown; tool?: unknown };
           if (isReplyStatus(line?.status)) setReplyStatus(line.status);
           // The stored copies of the files the user sent replace the browser's
           if (isFileList(line?.userFiles)) {
             for (const card of cards) if (card.url) URL.revokeObjectURL(card.url);
             updateUserMessage({ files: line.userFiles });
           }
-          // Files the agent made show below its answer, each once
-          if (isFileList(line?.files)) {
-            replyFiles = withFileCards(replyFiles, line.files);
-            updateReply({ files: replyFiles });
+          const next = readReplyLine(reply, obj, mayCallTools);
+          if (next !== reply) {
+            reply = next;
+            show();
           }
-          if (isToolLine(line?.tool)) {
-            // Text written before a tool call is not the answer: it moves into the trace
-            trace = upsertToolStep(addReasoning(trace, reply, true), line.tool);
-            reply = "";
-            shown = false;
-            setAnswering(false);
-            updateReply({ trace, content: reply });
-            if (line.tool.state === "done" || line.tool.state === "error") setToolsDone((n) => n + 1);
-          }
-          // The reply waits: the tool line of that call offers the choice
-          if (isPauseLine(line?.pause)) {
-            trace = upsertToolStep(trace, { id: line.pause.tool, pauseId: line.pause.id });
-            updateReply({ trace });
-          }
-          const thought = line?.message?.thinking;
-          if (typeof thought === "string" && thought) {
-            trace = addReasoning(trace, thought);
-            updateReply({ trace });
-          }
-          const delta = line?.message?.content;
-          if (typeof delta === "string" && delta) {
-            reply += delta;
-            if (!shown && reply.trim() && (!mayCallTools || looksLikeAnswer(reply))) {
-              shown = true;
-              setAnswering(true);
-            }
-            if (shown) updateReply({ content: reply });
-          }
-          // Ollama and the OpenAI-compatible providers report a failed chat as an { error } line.
-          if (typeof line?.error === "string" && line.error) {
-            failed = true;
-            updateReply({ content: reply, error: line.error });
-          }
+          if (isToolLine(line?.tool) && (line.tool.state === "done" || line.tool.state === "error")) setToolsDone((n) => n + 1);
         });
         // Some browsers report a cut-off stream as a normal end
-        if (!ended) {
+        if (!reply.ended) {
           failed = true;
           updateReply({ error: CONNECTION_LOST });
         }
@@ -227,10 +165,10 @@ export function useChat({
           updateReply({ error: err instanceof TypeError ? connectionError : (err as Error)?.message || "Stream error" });
         }
       } finally {
-        if (failed) failedSendRef.current = { content, files: fileKey, requestId };
-        // Text still held back is the answer: no tool call followed it
-        if (!shown && reply) updateReply({ content: reply });
-        if (trace.some((item) => item.kind === "tool" && item.step.pauseId)) updateReply({ trace: withoutPauses(trace) });
+        // Ollama and the OpenAI-compatible providers report a failed chat as an { error } line
+        if (failed || reply.error) failedSendRef.current = { content, files: fileKey, requestId };
+        reply = endReply(reply);
+        show();
         setIsStreaming(false);
         abortRef.current = null;
       }
