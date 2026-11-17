@@ -36,6 +36,7 @@ MAX_FILE_BYTES = 20 * 1024 * 1024
 # The app keeps a sandbox to 100 MB; the jail's folder has room for a run to go over, which the app then refuses
 SANDBOX_TMPFS_BYTES = 160 * 1024 * 1024
 TMP_TMPFS_BYTES = 64 * 1024 * 1024
+SHM_TMPFS_BYTES = 16 * 1024 * 1024
 MAX_CHANGED_FILES = 1000
 # Past the run's own limit: copying the files in and out, and starting up
 GRACE_SECONDS = 30
@@ -57,6 +58,17 @@ BASE_ENV = {
     "npm_config_audit": "false",
     "NO_COLOR": "1",
 }
+
+
+# The end of every jail's mounts. The jail's root and /dev are tmpfs that bubblewrap makes without a size,
+# so they are read-only, and /dev/shm gets a tmpfs of fixed size instead. The code may not make user
+# namespaces of its own: in one it would have every capability, and could mount.
+SEAL = [
+    "--size", str(SHM_TMPFS_BYTES), "--tmpfs", "/dev/shm",
+    "--remount-ro", "/dev",
+    "--remount-ro", "/",
+    "--unshare-user", "--disable-userns",
+]  # fmt: skip
 
 
 class JailError(Exception):
@@ -112,6 +124,7 @@ def bwrap_command(packages: dict[str, Path], in_fd: int, out_fd: int) -> list[st
     if "node" in packages:
         command += ["--ro-bind", str(packages["node"]), "/node_modules"]
     command += [
+        *SEAL,
         "--uid", "1000",
         "--gid", "1000",
         "--chdir", "/sandbox",
@@ -248,10 +261,10 @@ async def self_test() -> str | None:
         "bwrap", "--unshare-all", "--die-with-parent", "--clearenv",
         "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",
         "--dev", "/dev", "--proc", "/proc", "--size", "1048576", "--tmpfs", "/tmp",
-        "--uid", "1000", "--gid", "1000", "/usr/bin/true",
     ]
     if Path("/usr/lib64").exists():
-        command[command.index("/usr/bin/true"):command.index("/usr/bin/true")] = ["--symlink", "usr/lib64", "/lib64"]
+        command += ["--symlink", "usr/lib64", "/lib64"]
+    command += [*SEAL, "--uid", "1000", "--gid", "1000", "/usr/bin/true"]
     process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     _, errors = await process.communicate()
     return None if process.returncode == 0 else errors.decode("utf-8", "replace").strip() or f"exit code {process.returncode}"

@@ -454,6 +454,7 @@ def local_command(copies: Path | None, in_fd: int, out_fd: int) -> list[str]:
     if copies is not None:
         command += ["--ro-bind", str(copies), "/net"]
     return command + [
+        *jail.SEAL,
         "--uid", "1000", "--gid", "1000", "--chdir", "/w",
         "/usr/local/bin/python3", "-I", "-S", "/opt/jail/git_runner.py", str(in_fd), str(out_fd),
     ]  # fmt: skip
@@ -466,6 +467,7 @@ def download_command(url: str, options: list[str], folder: Path) -> list[str]:
         "bwrap", "--unshare-all", "--share-net", "--die-with-parent", "--new-session", "--clearenv",
         *system_mounts(),
         "--bind", str(folder), "/net",
+        *jail.SEAL,
         "--uid", "1000", "--gid", "1000", "--chdir", "/net",
     ]  # fmt: skip
     for key, value in (git_env(DOWNLOAD_FORCED, repo=False) | {"HOME": "/tmp"}).items():
