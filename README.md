@@ -136,7 +136,7 @@ All tools and guards run in their own containers:
 
 ## Security
 
-**Secrets.** Passwords and recovery codes are stored as salted bcrypt hashes (never plain text). API keys for OpenAI and OpenRouter must stay readable to be used, so they are encrypted (AES-256-GCM). Setup creates the encryption key, and a random token for each container. The containers can only be reached from the machine itself and are gated by an acess token. 
+**Secrets.** Passwords and recovery codes are stored as salted bcrypt hashes (never plain text). API keys for OpenAI and OpenRouter must stay readable to be used, so they are encrypted (AES-256-GCM). Setup creates the encryption key, and a random token for each container. The containers can only be reached from the machine itself and are gated by an access token. 
 
 **Scanning.** Everything an agent gets from the internet is checked on the server before a model sees it. Nothing is sent to an outside service for this. ClamAV scans for viruses, and Llama Prompt Guard 2 scans for prompt injection. Files you attach yourself are scanned for viruses only.
 
