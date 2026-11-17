@@ -17,7 +17,8 @@ function unavailableReason(def: ToolDefinition, capabilities: string[] | null): 
  * The tools a chat can call. Only custom agents get tools for now: an agent
  * gets the tools checked for it, minus those its base model, with
  * `capabilities` (null: unknown), cannot use. share_file and view_image have
- * no checkbox: an agent gets them with any tool that works on files.
+ * no checkbox: an agent gets them with any tool that works on files, and
+ * undo_file with run_code.
  */
 export function toolsFor(agent: { tools: unknown } | null, capabilities: string[] | null): ToolDefinition[] {
   if (!agent) return [];
@@ -25,6 +26,7 @@ export function toolsFor(agent: { tools: unknown } | null, capabilities: string[
   if (!checked.ok || checked.value.length === 0) return [];
   const names: ToolName[] = [...checked.value];
   if (names.some((name) => FILE_TOOL_NAMES.includes(name))) names.push("share_file", "view_image");
+  if (names.includes("run_code")) names.push("undo_file");
   return TOOL_DEFINITIONS.filter((def) => names.includes(def.name) && !unavailableReason(def, capabilities));
 }
 
@@ -100,6 +102,9 @@ export function toolGuidance(tools: ToolDefinition[], maxToolCalls: number, toda
         "clone <https URL>, then status, add, commit, log, diff, branches and pull. Change their files with the " +
         "other tools in between. Nothing can be pushed."
     );
+  }
+  if (has("undo_file")) {
+    lines.push("- To take back a change to a file, such as an edit or a run that went wrong, use undo_file rather than writing the file again.");
   }
   if (has("git") && has("run_code")) lines.push("- Runs of code have no git: never run git in run_code.");
   if (has("web_fetch")) lines.push("- Download data files and images with web_fetch, and read pages with web_read.");

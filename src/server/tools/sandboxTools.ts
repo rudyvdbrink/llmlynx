@@ -1,18 +1,22 @@
 // The agent tools of the chat's sandbox: downloading files into it
 // (web_fetch), running code in it (run_code), installing packages for that
-// code (install_packages), git on its repositories (git), and giving the user
-// one of its files (share_file).
+// code (install_packages), git on its repositories (git), giving the user
+// one of its files (share_file), and undoing a change to one (undo_file).
 // The work is in server/sandbox. See definitions.ts for what a tool definition is.
 
 import { AGENT_TOOL_INFO } from "@/lib/agentTools";
-import { conversationFiles, findFile } from "@/server/files/store";
+import { formatSize } from "@/lib/files";
+import { conversationFiles, fileData, fileVersions, findFile, undoTarget } from "@/server/files/store";
 import { installPackages, registryOf, REGISTRY_LABELS } from "@/server/sandbox/install";
+import { sandboxRoomError } from "@/server/sandbox/room";
 import { LANGUAGE_LABELS, LANGUAGES, languageOf, runCode } from "@/server/sandbox/runCode";
 import { FETCH_TIMEOUT_MS, webFetch } from "@/server/sandbox/webFetch";
 import { GIT_TIMEOUT_MS, INSTALL_TIMEOUT_MS, RUN_TIMEOUT_MS } from "@/server/sandbox/code";
 import { runGit, splitCommand } from "@/server/sandbox/git";
 import { shortUrl, shorten, urlParameter } from "./args";
-import type { Args, ToolDefinition, ToolResult, ToolState } from "./definitions";
+import type { Args, ToolCallContext, ToolDefinition, ToolResult, ToolState } from "./definitions";
+import { missingFile } from "./fileTools";
+import type { ToolFile } from "./mcp";
 
 const failure = (text: string): ToolResult => ({ text: `Error: ${text}`, images: [], files: [], error: true });
 
@@ -149,7 +153,7 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
       "Run a git command on a repository in this chat's sandbox; the only way to use git here. Such as clone https://github.com/user/repo, " +
       "status, log --oneline -10, diff, add -A, commit -m \"message\", checkout -b feature, merge or pull. A " +
       "repository is a folder of the sandbox: its files are files of the sandbox, which every tool can read and " +
-      "change. Only public https:// repositories can be cloned, fetched and pulled, and nothing can be pushed. One " +
+      "change, but its .git folder is not in the sandbox: only this tool sees it. Only public https:// repositories can be cloned, fetched and pulled, and nothing can be pushed. One " +
       "command per call, without shell operators such as && or |.",
     parameters: {
       type: "object",
@@ -192,11 +196,7 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
     async run(args, ctx) {
       const files = await conversationFiles(ctx.conversationId);
       const file = findFile(files, args.file);
-      if (!file) {
-        const known = files.map((f) => f.name).join(", ");
-        const asked = typeof args.file === "string" && args.file.trim() ? `There is no file named ${args.file.trim()}.` : "file is required.";
-        return failure(known ? `${asked} The files of this conversation are: ${known}.` : `${asked} This conversation has no files.`);
-      }
+      if (!file) return failure(missingFile(args.file, files));
       return {
         text: `${file.name} is shared with the user: it shows as a file card below your reply. Do not write a link to it.`,
         images: [],
@@ -206,4 +206,59 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
       };
     },
   },
+  {
+    name: "undo_file",
+    icon: "file",
+    description:
+      "Undo the last change to a file of this chat's sandbox, made by a run of code, an edit, git or a download: the " +
+      "file goes back to the version before it, also when it was deleted. Call it again to go further back.",
+    parameters: {
+      type: "object",
+      properties: { file: { type: "string", description: "The file's name in the sandbox, also of a deleted file" } },
+      required: ["file"],
+    },
+    server: "files",
+    needs: ["tools"],
+    timeoutMs: 10_000,
+    effects: { untrustedOutput: false, exec: false },
+    label(args: Args, state: ToolState) {
+      const name = fileName(args, "file");
+      if (state === "running") return `Undoing the last change to ${name}`;
+      return state === "done" ? `Undid the last change to ${name}` : `Could not undo the change to ${name}`;
+    },
+    run: undoFile,
+  },
 ];
+
+/** Puts a file of the sandbox back to its version before the current one, as a new version. */
+async function undoFile(args: Args, ctx: ToolCallContext): Promise<ToolResult> {
+  const versions = await fileVersions(ctx.conversationId, args.file);
+  if (!versions) return failure(missingFile(args.file, await conversationFiles(ctx.conversationId)));
+  const current = versions[versions.length - 1];
+  const target = undoTarget(versions);
+  if (!target) return failure(`${current.name} has no earlier version to go back to. To remove it, delete it with run_code.`);
+  const data = await fileData(target.id);
+  const full = await sandboxRoomError(ctx.conversationId, [{ name: current.name, size: data.length }]);
+  if (full) return failure(full);
+  const origin = target.origin === "code" || target.origin === "internet" ? target.origin : undefined;
+  const file: ToolFile = {
+    name: current.name,
+    mimeType: target.mimeType,
+    data: data.toString("base64"),
+    text: target.text,
+    info: target.info,
+    restoredFrom: target.id,
+    ...(origin ? { origin } : {}),
+  };
+  const what = current.deleted ? "back, as it was before it was deleted" : "back to its previous version";
+  // What the next undo would go back to
+  const further = undoTarget(versions.slice(0, versions.indexOf(target) + 1));
+  return {
+    text:
+      `Undone: ${current.name} is ${what} (${formatSize(data.length)}).` +
+      (further ? " Call undo_file again to go further back." : " It has no earlier version."),
+    images: [],
+    files: [file],
+    error: false,
+  };
+}

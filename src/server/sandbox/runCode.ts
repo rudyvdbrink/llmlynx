@@ -5,7 +5,7 @@
 // What it printed is scanned like a web page after the call (see
 // checkAfterCall).
 
-import { formatSize, isArtifact, mimeTypeOf, cleanFilePath } from "@/lib/files";
+import { fileKind, formatSize, isArtifact, mimeTypeOf, cleanFilePath } from "@/lib/files";
 import { conversationFiles, fileData } from "@/server/files/store";
 import { TOOL_SCAN_TIMEOUT_MS, UPLOAD_VIRUS_TIMEOUT_MS } from "@/server/security/limits";
 import { scanVirus } from "@/server/security/scan";
@@ -59,18 +59,35 @@ export function startAndEnd(text: string, budget: number): string {
   return `${text.slice(0, head)}\n\n[... ${left} characters of the output left out ...]\n\n${text.slice(-tail)}`;
 }
 
-/** How the run ended, in words, for the model, and as a note after the tool line's label. */
+/**
+ * How the run ended, in words, for the model, and as a note after the tool
+ * line's label. A run stopped at a limit says what to do instead.
+ */
 function ending(outcome: RunOutcome): { sentence: string; note?: string } {
   const seconds = `${(outcome.durationMs / 1000).toFixed(1)} s`;
   switch (outcome.reason) {
     case "timeout":
-      return { sentence: "Stopped: it ran longer than 120 seconds.", note: "stopped after 120 s" };
+      return {
+        sentence:
+          "Stopped: it ran longer than 120 seconds. Do the work in smaller steps: save what each run finds to a file, " +
+          "and go on from there in the next run.",
+        note: "stopped after 120 s",
+      };
     case "memory":
-      return { sentence: "Stopped: it used more than 512 MB of memory.", note: "stopped: too much memory" };
+      return {
+        sentence: "Stopped: it used more than 512 MB of memory. Work on the data in parts, rather than loading it all at once.",
+        note: "stopped: too much memory",
+      };
     case "processes":
-      return { sentence: "Stopped: it started more than 128 processes or threads.", note: "stopped: too many processes" };
+      return {
+        sentence: "Stopped: it started more than 128 processes or threads. Do the work in one process, one part after another.",
+        note: "stopped: too many processes",
+      };
     case "output":
-      return { sentence: "Stopped: it printed more than 1 MB.", note: "stopped: too much output" };
+      return {
+        sentence: "Stopped: it printed more than 1 MB. Write the full output to a file, and print only a summary of it.",
+        note: "stopped: too much output",
+      };
   }
   if (outcome.exitCode === 0) return { sentence: `It succeeded in ${seconds}.` };
   return { sentence: `It failed with exit code ${outcome.exitCode} after ${seconds}.`, note: `exit code ${outcome.exitCode}` };
@@ -175,6 +192,11 @@ async function keepResults(
   ];
   const shown = files.filter((f) => isArtifact(f.mimeType)).map((f) => f.name);
   if (shown.length) notes.push(`The user sees these in the chat below your reply, so do not share or link to them: ${shown.join(", ")}.`);
+  // A model that can see checks its own charts the way it looks at any image
+  const images = files.filter((f) => fileKind(f.name) === "image").map((f) => f.name);
+  if (ctx.vision && images.length) {
+    notes.push(`Look at ${images.join(", ")} with view_image to check ${images.length === 1 ? "it" : "them"}.`);
+  }
   const { sentence, note } = ending(outcome);
   // Room for the rest of the text in the budget
   const budget = Math.max(500, ctx.textBudget - 600);

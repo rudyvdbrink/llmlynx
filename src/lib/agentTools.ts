@@ -21,8 +21,9 @@ export const AGENT_TOOLS = [
 
 export type AgentToolName = (typeof AGENT_TOOLS)[number];
 
-// share_file and view_image have no checkbox: an agent gets them with any tool that works on files (see server/tools/policy.ts)
-export type ToolName = AgentToolName | "share_file" | "view_image";
+// share_file and view_image have no checkbox: an agent gets them with any tool that works on files, and
+// undo_file with run_code (see server/tools/policy.ts)
+export type ToolName = AgentToolName | "share_file" | "view_image" | "undo_file";
 
 export type ToolIcon = "globe" | "spanner" | "file" | "code" | "package" | "git";
 
@@ -116,6 +117,7 @@ export const FILE_TOOL_NAMES: ToolName[] = [
   "git",
   "share_file",
   "view_image",
+  "undo_file",
 ];
 
 /** The tools whose first call starts the chat's sandbox, which shows the sandbox panel's chevron. */
@@ -127,7 +129,7 @@ export function isAgentTool(value: unknown): value is AgentToolName {
 
 /** The icon for a tool step in the chat view; tools that no longer exist get the spanner. */
 export function toolIcon(name: string): ToolIcon {
-  if (name === "share_file" || name === "view_image") return "file";
+  if (name === "share_file" || name === "view_image" || name === "undo_file") return "file";
   return isAgentTool(name) ? AGENT_TOOL_INFO[name].icon : "spanner";
 }
 

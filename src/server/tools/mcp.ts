@@ -12,6 +12,7 @@ export type ToolImage = { mimeType: string; data: string }; // data: base64
  * code or the internet (see FileOrigin in server/files/store.ts); `text` and
  * `info` are what converting it gave, when that was done already, and
  * `scanned` says its whole text passed the prompt injection scan.
+ * `restoredFrom` is the older version an undo copied it from.
  */
 export type ToolFile = {
   name: string;
@@ -21,6 +22,7 @@ export type ToolFile = {
   text?: string | null;
   info?: object | null;
   scanned?: boolean;
+  restoredFrom?: string;
 };
 
 /** What a tool returned: its text, any images and files, and whether it reported an error. */

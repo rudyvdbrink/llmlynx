@@ -120,6 +120,8 @@ model MessageAttachment {
   origin    String?
   // A deletion: the run of this tool step deleted the file `name`. Holds no data
   deleted   Boolean  @default(false)
+  // The version of the same file this one is a copy of, when undo_file put the file back to it
+  restoredFrom String?
   // The prompt injection scans of the parts of its text the model read, by the SHA-256 of the
   // part: { [hash]: { flagged, score } }. Only untrusted files are scanned, when they are read
   scans     Json?

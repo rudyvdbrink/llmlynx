@@ -36,8 +36,12 @@ export type ConversationFile = {
   createdAt: Date;
 };
 
-/** A version of a file, as the sandbox panel lists it: a deletion holds no data. */
-export type FileVersion = ConversationFile & { deleted: boolean };
+/**
+ * A version of a file, as the sandbox panel lists it: a deletion holds no
+ * data. `restoredFrom` is the id of the older version it is a copy of, when
+ * undo_file put the file back to that one.
+ */
+export type FileVersion = ConversationFile & { deleted: boolean; restoredFrom: string | null };
 
 /**
  * Files from code or the internet: their text is scanned for prompt
@@ -54,6 +58,7 @@ const FILE_SELECT = {
   info: true,
   origin: true,
   deleted: true,
+  restoredFrom: true,
   createdAt: true,
   message: { select: { role: true } },
 } satisfies Prisma.MessageAttachmentSelect;
@@ -73,10 +78,11 @@ function toVersion(row: FileRow): FileVersion {
     info: (row.info as FileInfo | null) ?? null,
     createdAt: row.createdAt,
     deleted: row.deleted,
+    restoredFrom: row.restoredFrom,
   };
 }
 
-const toFile = ({ deleted: _deleted, ...file }: FileVersion): ConversationFile => file;
+const toFile = ({ deleted: _deleted, restoredFrom: _restoredFrom, ...file }: FileVersion): ConversationFile => file;
 
 // Names are compared without case, as the model refers to files by name
 const nameKey = (name: string) => name.toLowerCase();
@@ -145,6 +151,36 @@ export function findFile(files: ConversationFile[], name: unknown): Conversation
   if (sameBase) return sameBase;
   const stem = (f: ConversationFile) => nameKey(baseName(f.name)).slice(0, -(extensionOf(f.name).length + 1));
   return only(files.filter((f) => stem(f) === wantedBase || nameKey(f.name).endsWith(wanted)));
+}
+
+/**
+ * The versions of the file the model means by `name` (see findFile), oldest
+ * first, deletions included; also of a file that was deleted. null when there
+ * is no such file.
+ */
+export async function fileVersions(conversationId: string, name: unknown): Promise<FileVersion[] | null> {
+  const names = byName(await allVersions(conversationId));
+  const newest = (deleted: boolean) => names.map((v) => v[v.length - 1]).filter((v) => v.deleted === deleted).map(toFile);
+  const file = findFile(newest(false), name) ?? findFile(newest(true), name);
+  return file ? (names.find((v) => v[v.length - 1].id === file.id) ?? null) : null;
+}
+
+/**
+ * The version an undo of the file with `versions` (oldest first) puts it back
+ * to: the one before the current version. A copy that an undo made counts as
+ * the version it copied, so that undoing again goes further back rather than
+ * bringing back what was undone. Deletions are passed over. null when there is
+ * no earlier version.
+ */
+export function undoTarget(versions: FileVersion[]): FileVersion | null {
+  const index = new Map(versions.map((v, i) => [v.id, i]));
+  const place = (i: number): number => {
+    const original = versions[i].restoredFrom ? index.get(versions[i].restoredFrom!) : undefined;
+    return original !== undefined && original < i ? place(original) : i;
+  };
+  let i = place(versions.length - 1) - 1;
+  while (i >= 0 && versions[i].deleted) i--;
+  return i >= 0 ? versions[i] : null;
 }
 
 /** The file's contents. */

@@ -137,6 +137,19 @@ describe("run_code", () => {
     const timeout = await chat.call("run_code", { language: "python", code: "x" });
     expect(timeout.text).toMatch(/longer than 120 seconds/);
     expect(timeout.note).toBe("stopped after 120 s");
+    // A run stopped at a limit says what to do instead
+    expect(timeout.text).toContain("Do the work in smaller steps");
+    fakes.run = { status: "error", exit_code: -9, reason: "output" };
+    expect((await chat.call("run_code", { language: "python", code: "x" })).text).toContain("Write the full output to a file");
+  });
+
+  it("points a model that can see to view_image for the images a run made", async () => {
+    const chat = await newChat();
+    fakes.run = { changed: { "plot.png": "png", "page.html": "<p>hi</p>" } };
+    const seeing = await chat.call("run_code", { language: "python", code: "x" }, 8000, true);
+    expect(seeing.text).toContain("Look at plot.png with view_image to check it.");
+    const blind = await chat.call("run_code", { language: "python", code: "x" });
+    expect(blind.text).not.toContain("view_image");
   });
 
   it("does not run code with a virus, nor code that could not be checked", async () => {
@@ -385,6 +398,65 @@ describe("share_file", () => {
     expect(fakes.runs).toHaveLength(1);
     const missing = await chat.call("share_file", { file: "nope.txt" });
     expect(missing.text).toMatch(/The files of this conversation are: out\/result.csv/);
+  });
+});
+
+describe("undo_file", () => {
+  const contents = async (chat: Chat, name: string) =>
+    (await fileData(findFile(await conversationFiles(chat.conversationId), name)!.id)).toString();
+
+  it("puts a file back one version per call, without bringing back what it undid", async () => {
+    const chat = await newChat({ "a.txt": "one" });
+    for (const text of ["two", "three"]) {
+      fakes.run = { changed: { "a.txt": text } };
+      await chat.call("run_code", { language: "python", code: "x" });
+    }
+    const first = await chat.call("undo_file", { file: "a.txt" });
+    expect(first.text).toBe("Undone: a.txt is back to its previous version (3 B). Call undo_file again to go further back.");
+    expect(await contents(chat, "a.txt")).toBe("two");
+    const second = await chat.call("undo_file", { file: "a.txt" });
+    expect(second.text).toContain("It has no earlier version.");
+    expect(await contents(chat, "a.txt")).toBe("one");
+    const third = await chat.call("undo_file", { file: "a.txt" });
+    expect(third.error).toBe(true);
+    expect(third.text).toMatch(/a\.txt has no earlier version to go back to/);
+    // Every undo is a new version: the history stays
+    expect((await sandboxHistory(chat.conversationId))[0]).toHaveLength(5);
+  });
+
+  it("undoes a change made after an undo, back to the version the undo restored", async () => {
+    const chat = await newChat({ "a.txt": "one" });
+    for (const text of ["two", "three"]) {
+      fakes.run = { changed: { "a.txt": text } };
+      await chat.call("run_code", { language: "python", code: "x" });
+    }
+    await chat.call("undo_file", { file: "a.txt" }); // two
+    fakes.run = { changed: { "a.txt": "four" } };
+    await chat.call("run_code", { language: "python", code: "x" });
+    await chat.call("undo_file", { file: "a.txt" });
+    expect(await contents(chat, "a.txt")).toBe("two");
+    await chat.call("undo_file", { file: "a.txt" });
+    expect(await contents(chat, "a.txt")).toBe("one");
+  });
+
+  it("brings back a deleted file, still untrusted when code made it", async () => {
+    const chat = await newChat();
+    fakes.run = { changed: { "out/data.csv": "a,b" } };
+    await chat.call("run_code", { language: "python", code: "x" });
+    fakes.run = { deleted: ["out/data.csv"] };
+    await chat.call("run_code", { language: "python", code: "x" });
+    expect(await names(chat)).toEqual([]);
+    const result = await chat.call("undo_file", { file: "data.csv" });
+    expect(result.text).toContain("out/data.csv is back, as it was before it was deleted");
+    const [file] = await conversationFiles(chat.conversationId);
+    expect([file.name, file.origin]).toEqual(["out/data.csv", "code"]);
+    expect(await contents(chat, "out/data.csv")).toBe("a,b");
+  });
+
+  it("names the files there are when the file is not there", async () => {
+    const chat = await newChat({ "a.txt": "one" });
+    const result = await chat.call("undo_file", { file: "b.txt" });
+    expect(result.text).toBe("Error: There is no file named b.txt. The files of this conversation are: a.txt.");
   });
 });
 

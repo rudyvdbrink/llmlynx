@@ -24,6 +24,8 @@ from create import cell_value
 # text from the markdown it read, so a find that does not occur is tried without it
 MARKDOWN_ESCAPE = re.compile(r"\\([\\`*_{}\[\]()#+\-.!|>~])")
 MARKDOWN_EMPHASIS = re.compile(r"(\*\*|__|\*|_|`)(.+?)\1")
+# How many places of a text that occurs more than once an error names
+MAX_PLACES = 3
 
 
 def _variants(find: str) -> list[str]:
@@ -112,16 +114,58 @@ def _pptx_paragraphs(presentation):
             yield from slide.notes_slide.notes_text_frame.paragraphs
 
 
-def _check(number: int, find: str, count: int, all_of_them: bool):
+def _snippet(text: str, at: int, width: int = 120) -> str:
+    """The part of `text` around position `at`, at most `width` characters."""
+    if len(text) <= width:
+        return text.strip()
+    start = max(0, min(at - width // 3, len(text) - width))
+    end = start + width
+    return ("..." if start else "") + text[start:end].strip() + ("..." if end < len(text) else "")
+
+
+def _line_places(text: str, find: str) -> list[str]:
+    """Where `find` occurs in `text`: the first few lines, numbered, so that the model can tell them apart."""
+    places = []
+    at = text.find(find)
+    while at >= 0 and len(places) < MAX_PLACES:
+        start = text.rfind("\n", 0, at) + 1
+        end = text.find("\n", at)
+        line = text[start : end if end >= 0 else len(text)].rstrip("\r")
+        number = text.count("\n", 0, at) + 1
+        places.append(f"line {number}: {_snippet(line, at - start)}")
+        at = text.find(find, at + len(find))
+    return places
+
+
+def _paragraph_places(paragraphs: list, find: str) -> list[str]:
+    """Where `find` occurs in the paragraphs or cells: the first few, with the text around it."""
+    places = []
+    for paragraph in paragraphs:
+        if len(places) >= MAX_PLACES:
+            break
+        text = paragraph.text()
+        at = text.find(find)
+        while at >= 0 and len(places) < MAX_PLACES:
+            places.append(f"in: {_snippet(text, at)}")
+            at = text.find(find, at + len(find))
+    return places
+
+
+def _check(number: int, find: str, count: int, all_of_them: bool, places):
+    """Raises the error for an edit whose text is not there, or there more than once; `places()` says where."""
     if count == 0:
         raise ToolError(
             f"Edit {number}: this text was not found: {find[:120]!r}. Copy the text exactly as the file has it"
             " (without markdown formatting), within one paragraph or cell."
         )
     if count > 1 and not all_of_them:
+        found = places()
+        where = "".join(f"\n- {place}" for place in found)
+        label = "Where" if count <= len(found) else f"The first {len(found)}"
         raise ToolError(
-            f"Edit {number}: this text occurs {count} times: {find[:120]!r}. Give more of the text around it,"
-            " or set all to true to replace every occurrence."
+            f"Edit {number}: this text occurs {count} times: {find[:120]!r}."
+            + (f" {label}:{where}\n" if where else " ")
+            + "Give more of the text around the one to change, or set all to true to replace every occurrence."
         )
 
 
@@ -137,7 +181,7 @@ def _apply(edits: list[dict], paragraphs: list) -> int:
             if count:
                 find = variant
                 break
-        _check(number, edit["find"], count, all_of_them)
+        _check(number, edit["find"], count, all_of_them, lambda: _paragraph_places(paragraphs, find))
         left = None if all_of_them else 1
         for paragraph in paragraphs:
             done = paragraph.replace(find, edit["replace"], left)
@@ -159,7 +203,7 @@ def _edit_text(raw: bytes, edits: list[dict]) -> bytes:
             crlf = find.replace("\n", "\r\n")
             if "\r\n" in text and text.count(crlf):
                 find, count = crlf, text.count(crlf)
-        _check(number, edit["find"], count, bool(edit.get("all")))
+        _check(number, edit["find"], count, bool(edit.get("all")), lambda: _line_places(text, find))
         replace = edit["replace"].replace("\n", "\r\n") if find != edit["find"] else edit["replace"]
         text = text.replace(find, replace, -1 if edit.get("all") else 1)
     bom = b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b""
