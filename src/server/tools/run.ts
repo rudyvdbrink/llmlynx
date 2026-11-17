@@ -3,7 +3,7 @@
 // The chat's security checks run around the call (see server/security/engine.ts).
 
 import { checkRateLimit } from "@/server/limits/rateLimit";
-import { checkAfterCall, checkBeforeCall } from "@/server/security/engine";
+import { checkAfterCall } from "@/server/security/engine";
 import { getToolServer } from "./config";
 import { callMcpTool } from "./mcp";
 import type { Args, ToolCallContext, ToolDefinition, ToolResult } from "./definitions";
@@ -70,17 +70,14 @@ async function callTool(
 }
 
 /**
- * Runs the tool `def` with the model's `args`. With `ctx.security`, the call
- * is checked first and may be blocked, with an error text that tells the
- * model how to go on; what the tool then returns is checked before the model
- * gets it. Throws only when the chat was stopped (`signal` aborted).
+ * Runs the tool `def` with the model's `args`. With `ctx.security`, what the
+ * tool returns is checked before the model gets it. Throws only when the chat
+ * was stopped (`signal` aborted).
  */
 export async function runTool(def: ToolDefinition, args: Args, ctx: ToolCallContext): Promise<ToolResult> {
   const security = ctx.security;
   if (!security) return (await callTool(def, args, ctx)).result;
 
-  const blocked = checkBeforeCall(def, args, security);
-  if (blocked) return blocked;
   const { result, answered } = await callTool(def, args, ctx);
   // An error llmlynx wrote itself holds nothing from the tool to check
   return answered ? checkAfterCall(def, args, result, security, ctx.signal) : result;

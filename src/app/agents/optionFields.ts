@@ -67,7 +67,7 @@ const OLLAMA_GROUPS: OptionGroup[] = [
         help:
           "How much the model can see at once: the system prompt, the conversation, tool results and the reply " +
           "together. What does not fit is cut off. Larger windows need more GPU memory; when the model no longer " +
-          "fits, Ollama runs part of it on the CPU, which is much slower. Default 2048.",
+          "fits, Ollama runs part of it on the CPU, which is much slower. Default: half of what the model supports.",
         integer: true,
         doublingSliderTo: "contextLength",
         limitHint: (model, limit) => `${model} supports up to ${limit} tokens, so Ollama uses ${limit}.`,

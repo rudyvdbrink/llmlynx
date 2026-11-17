@@ -1,13 +1,17 @@
-// The agent tools that work on files: those the user attached and those the
-// agent created, which the model names. The work is done by the files server
-// (tools/files): the file goes there in the call and a new one comes back,
-// which the chat view shows as a card below the reply. See definitions.ts for
-// what a tool definition is.
+// The agent tools that work on files: the files of the chat's sandbox, which
+// the user attached, the agent created, code made or a download fetched, and
+// which the model names. The work is done by the files server (tools/files):
+// the file goes there in the call and a new one comes back, which the chat
+// view shows as a card below the reply. See definitions.ts for what a tool
+// definition is.
 
 import { AGENT_TOOL_INFO } from "@/lib/agentTools";
-import { cleanFileName, extensionOf, fileKind, MAX_FILE_BYTES } from "@/lib/files";
-import { fileText, MAX_RENDERED_PAGES, renderPdfPages, serverError } from "@/server/files/convert";
-import { conversationFiles, fileData, findFile, type ConversationFile } from "@/server/files/store";
+import { baseName, cleanFilePath, extensionOf, fileKind, MAX_FILE_BYTES, mimeTypeOf } from "@/lib/files";
+import { fileText, MAX_RENDERED_PAGES, prepareImage, renderPdfPages, serverError } from "@/server/files/convert";
+import { sniffType } from "@/server/files/sniff";
+import { conversationFiles, fileData, findFile, isUntrusted, type ConversationFile } from "@/server/files/store";
+import { sandboxRoomError } from "@/server/sandbox/room";
+import { checkFileRead } from "@/server/security/engine";
 import { checkStart, shorten, toInteger } from "./args";
 import { getToolServer } from "./config";
 import type { Args, ToolCallContext, ToolDefinition, ToolResult, ToolState } from "./definitions";
@@ -18,9 +22,10 @@ const EDITABLE_OFFICE = ["docx", "pptx", "xlsx"];
 const MAX_EDITS = 50;
 const MAX_CELLS = 500;
 
-// The file tools work on files the user attached, which were checked when they
-// were attached, and on files the model made: they fetch nothing from the internet
-const LOCAL = { fetchesUrl: false, untrustedOutput: false };
+// The file tools fetch nothing from the internet. The files they read were
+// checked when they arrived; the text of an untrusted file (from code, or
+// downloaded) is scanned before the model reads it (see read_file)
+const LOCAL = { untrustedOutput: false, exec: false };
 
 const failure = (text: string): ToolResult => ({ text: `Error: ${text}`, images: [], files: [], error: true });
 const success = (text: string): ToolResult => ({ text, images: [], files: [], error: false });
@@ -47,30 +52,43 @@ async function lookUp(args: Args, ctx: ToolCallContext): Promise<ConversationFil
 
 const isResult = (value: ConversationFile | ToolResult): value is ToolResult => "error" in value;
 
-/** The name for a file the model creates, or an error text. */
+/** The path for a file the model creates (folders allowed), or an error text. */
 function newName(raw: unknown, allowed: (ext: string) => boolean, hint: string): { name: string } | { error: string } {
   if (typeof raw !== "string" || !raw.trim()) return { error: "name is required, with an extension, such as report.docx." };
-  const name = cleanFileName(raw);
-  if (!name.includes(".") && fileKind(name) === null) return { error: `name needs an extension, such as ${hint}.` };
-  return allowed(extensionOf(name)) ? { name } : { error: `${name} cannot be made with this tool. ${hint}` };
+  const name = cleanFilePath(raw);
+  if (!name) return { error: "name must be a file name in the sandbox, such as report.docx or out/report.docx." };
+  const base = baseName(name);
+  if (!base.includes(".") && fileKind(base) === null) return { error: `name needs an extension, such as ${hint}.` };
+  return allowed(extensionOf(base)) ? { name } : { error: `${name} cannot be made with this tool. ${hint}` };
 }
 
 /**
  * Calls `tool` on the files server. A successful call that made a file
- * returns it, to show the user; the model gets the server's text.
+ * returns it, stored in the sandbox as `path` (the server only gets its file
+ * name), to show the user; the model gets the server's text. A file made from
+ * an untrusted one stays untrusted (`origin`).
  */
 async function callFilesServer(
   tool: string,
   args: Args,
   ctx: ToolCallContext,
-  timeoutMs: number
+  timeoutMs: number,
+  path: string,
+  origin?: ConversationFile["origin"]
 ): Promise<ToolResult> {
   const server = getToolServer("files");
   try {
     const out = await callMcpTool(server, tool, args, { signal: ctx.signal, timeoutMs });
     if (out.isError) return failure(serverError(out.text) || "the file could not be made.");
-    const files = out.files.filter((f) => Buffer.byteLength(f.data, "base64") <= MAX_FILE_BYTES);
+    const files = out.files
+      .filter((f) => Buffer.byteLength(f.data, "base64") <= MAX_FILE_BYTES)
+      .map((f) => ({ ...f, name: path, ...(origin === "code" || origin === "internet" ? { origin } : {}) }));
     if (out.files.length && !files.length) return failure("the file came out larger than 20 MB, which is too large.");
+    const full = await sandboxRoomError(
+      ctx.conversationId,
+      files.map((f) => ({ name: f.name, size: Buffer.byteLength(f.data, "base64") }))
+    );
+    if (full) return failure(full);
     const note = files.length
       ? " The user gets it as a file card below your reply: do not write a link to it, nor repeat all of its content."
       : "";
@@ -112,6 +130,23 @@ const pagesLabel = (args: Args) => {
 
 const fileParameter = { type: "string", description: "The file's name, as in the list of this conversation's files" };
 
+/**
+ * An image file as the model sees it: a smaller JPEG or PNG of a large photo
+ * or of a GIF, else the file itself, as the type its bytes are.
+ */
+async function viewImage(file: ConversationFile, ctx: ToolCallContext): Promise<ToolResult> {
+  if (!ctx.vision) return failure(`${file.name} is an image, and you cannot see images.`);
+  const prepared = await prepareImage(file, ctx.signal);
+  if ("error" in prepared) return failure(`${file.name} cannot be shown: ${prepared.error}`);
+  let image = prepared.image;
+  if (!image) {
+    const data = await fileData(file.id);
+    const real = sniffType(data);
+    image = { mimeType: real ? mimeTypeOf(`x.${real}`) : file.mimeType, data: data.toString("base64") };
+  }
+  return { text: `${file.name}:`, images: [image], files: [], error: false };
+}
+
 export const FILE_TOOLS: ToolDefinition[] = [
   {
     name: "read_file",
@@ -135,18 +170,22 @@ export const FILE_TOOLS: ToolDefinition[] = [
     async run(args, ctx) {
       const file = await lookUp(args, ctx);
       if (isResult(file)) return file;
-      if (fileKind(file.name) === "image") {
-        if (!ctx.vision) return failure(`${file.name} is an image, and you cannot see images.`);
-        const data = await fileData(file.id);
-        return { text: `${file.name}:`, images: [{ mimeType: file.mimeType, data: data.toString("base64") }], files: [], error: false };
-      }
+      if (fileKind(file.name) === "image") return viewImage(file, ctx);
       const start = checkStart(args.start);
       if ("error" in start) return failure(start.error);
       const { text, info } = await fileText(file, ctx.signal);
       if (text === null) return failure(`${file.name} could not be read: ${info?.error ?? "unknown error"}`);
       if (start.start >= text.length && text.length > 0) return failure(`${file.name} has only ${text.length} characters.`);
       const end = Math.min(text.length, start.start + ctx.textBudget);
-      const part = text.slice(start.start, end);
+      let part = text.slice(start.start, end);
+      // A file from code or the internet is scanned for prompt injections before the model reads it
+      const untrusted = isUntrusted(file);
+      if (untrusted) {
+        if (!ctx.security) return failure(`${file.name} could not be checked, so it cannot be read.`);
+        const checked = await checkFileRead({ file, text: part, tool: "read_file", session: ctx.security, signal: ctx.signal });
+        if ("blocked" in checked) return checked.blocked;
+        part = checked.text;
+      }
       const notes: string[] = [];
       if (end < text.length) {
         notes.push(`[Characters ${start.start} to ${end} of ${text.length}. Call read_file with start=${end} for the next part.]`);
@@ -206,6 +245,25 @@ export const FILE_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: "view_image",
+    icon: "file",
+    description:
+      "Look at an image file of this conversation (PNG, JPEG, WebP or GIF), such as one you downloaded, one code " +
+      "made or one the user attached. Large images come smaller.",
+    parameters: { type: "object", properties: { file: fileParameter }, required: ["file"] },
+    server: "files",
+    needs: ["tools", "vision"],
+    timeoutMs: 90_000,
+    effects: LOCAL,
+    label: (args, state) => labels(args, state, "Looking at", "Looked at", "Could not look at"),
+    async run(args, ctx) {
+      const file = await lookUp(args, ctx);
+      if (isResult(file)) return file;
+      if (fileKind(file.name) !== "image") return failure(`${file.name} is not an image (PNG, JPEG, WebP or GIF).`);
+      return viewImage(file, ctx);
+    },
+  },
+  {
     name: "create_file",
     icon: AGENT_TOOL_INFO.create_file.icon,
     description:
@@ -215,7 +273,10 @@ export const FILE_TOOLS: ToolDefinition[] = [
     parameters: {
       type: "object",
       properties: {
-        name: { type: "string", description: "The file name with its extension, such as notes.md, data.csv or main.py" },
+        name: {
+          type: "string",
+          description: "The file name with its extension, such as notes.md, data.csv or src/main.py (folders are made as needed)",
+        },
         content: { type: "string", description: "The whole content of the file" },
       },
       required: ["name", "content"],
@@ -234,15 +295,21 @@ export const FILE_TOOLS: ToolDefinition[] = [
       if ("error" in name) return failure(name.error);
       if (typeof args.content !== "string") return failure("content is required.");
       if (Buffer.byteLength(args.content) > MAX_FILE_BYTES) return failure("content is too long.");
-      return callFilesServer("files_create_text", { name: name.name, content: args.content }, ctx, this.timeoutMs);
+      return callFilesServer(
+        "files_create_text",
+        { name: baseName(name.name), content: args.content },
+        ctx,
+        this.timeoutMs,
+        name.name
+      );
     },
   },
   {
     name: "edit_file",
     icon: AGENT_TOOL_INFO.edit_file.icon,
     description:
-      "Change a file of this conversation and give the user the new version, as a new file card (the original " +
-      "stays). Works on text and code files, and on the text of Word, PowerPoint and Excel files, whose formatting " +
+      "Change a file of this conversation and give the user the new version, as a file card below your reply. " +
+      "Works on text and code files, and on the text of Word, PowerPoint and Excel files, whose formatting " +
       "stays as it is. Each edit replaces text that must occur in the file exactly once, unless all is true; in " +
       "Word and PowerPoint, within one paragraph, written without markdown. For Excel, cells can also be set.",
     parameters: {
@@ -307,17 +374,20 @@ export const FILE_TOOLS: ToolDefinition[] = [
         rename = named.name;
       }
       const data = await fileData(file.id);
+      // The new version of a file from code or the internet stays untrusted
       return callFilesServer(
         "files_edit",
         {
-          name: file.name,
+          name: baseName(file.name),
           data: data.toString("base64"),
           edits: edits.map((e) => ({ find: e.find, replace: e.replace, all: e.all === true || e.all === "true" })),
           cells: cells.map((c) => ({ cell: String(c?.cell ?? ""), value: c?.value ?? null })),
-          ...(rename ? { new_name: rename } : {}),
+          ...(rename ? { new_name: baseName(rename) } : {}),
         },
         ctx,
-        this.timeoutMs
+        this.timeoutMs,
+        rename ?? file.name,
+        file.origin
       );
     },
   },
@@ -352,7 +422,13 @@ export const FILE_TOOLS: ToolDefinition[] = [
       if ("error" in name) return failure(name.error);
       if (typeof args.markdown !== "string" || !args.markdown.trim()) return failure("markdown is required.");
       if (Buffer.byteLength(args.markdown) > MAX_FILE_BYTES) return failure("markdown is too long.");
-      return callFilesServer("files_create_document", { name: name.name, markdown: args.markdown }, ctx, this.timeoutMs);
+      return callFilesServer(
+        "files_create_document",
+        { name: baseName(name.name), markdown: args.markdown },
+        ctx,
+        this.timeoutMs,
+        name.name
+      );
     },
   },
   {
@@ -399,7 +475,13 @@ export const FILE_TOOLS: ToolDefinition[] = [
       if (bad >= 0) return failure(`Sheet ${bad + 1} needs rows: a list of rows, each a list of cells.`);
       const payload = sheets.map((s, i) => ({ name: typeof s?.name === "string" && s.name.trim() ? s.name : `Sheet${i + 1}`, rows: s.rows }));
       if (Buffer.byteLength(JSON.stringify(payload)) > MAX_FILE_BYTES) return failure("The sheets are too large.");
-      return callFilesServer("files_create_spreadsheet", { name: name.name, sheets: payload }, ctx, this.timeoutMs);
+      return callFilesServer(
+        "files_create_spreadsheet",
+        { name: baseName(name.name), sheets: payload },
+        ctx,
+        this.timeoutMs,
+        name.name
+      );
     },
   },
 ];

@@ -100,14 +100,42 @@ export async function renderPdfPages(
   }
 }
 
+/** A workbook's sheets as rows of cells, its first 1,000 rows each (`more`: it has more). */
+export type Sheets = { sheets: { name: string; rows: (string | number | boolean | null)[][]; more: boolean }[] };
+
+/**
+ * The sheets of an Excel `file`, for a preview, or an error text. Throws only
+ * when `signal` aborts.
+ */
+export async function readSheets(
+  file: Pick<ConversationFile, "id" | "name">,
+  signal: AbortSignal
+): Promise<Sheets | { error: string }> {
+  try {
+    const data = await fileData(file.id);
+    const out = await callMcpTool(
+      filesServer(),
+      "files_sheets",
+      { name: file.name.split("/").pop(), data: data.toString("base64") },
+      { signal, timeoutMs: CONVERT_TIMEOUT_MS }
+    );
+    if (out.isError) return { error: errorText(out.text) };
+    return JSON.parse(out.text) as Sheets;
+  } catch (err) {
+    if (signal.aborted) throw err;
+    console.error(`Reading the sheets of ${file.name} failed: ${(err as Error)?.message || err}`);
+    return { error: "The files server did not answer." };
+  }
+}
+
 /**
  * The image as a model takes it: a smaller JPEG or PNG for a large photo or
- * another format, or null when the original will do (or cannot be read).
+ * another format, or null when the original will do; or why it cannot be read.
  */
 export async function prepareImage(
   file: Pick<ConversationFile, "id" | "name">,
   signal: AbortSignal
-): Promise<ToolImage | null> {
+): Promise<{ image: ToolImage | null } | { error: string }> {
   try {
     const data = await fileData(file.id);
     const out = await callMcpTool(
@@ -116,11 +144,12 @@ export async function prepareImage(
       { name: file.name, data: data.toString("base64") },
       { signal, timeoutMs: RENDER_TIMEOUT_MS }
     );
-    if (out.isError || /^unchanged/i.test(out.text)) return null;
-    return out.images[0] ?? null;
+    if (out.isError) return { error: serverError(out.text) || "It cannot be read." };
+    if (/^unchanged/i.test(out.text)) return { image: null };
+    return out.images[0] ? { image: out.images[0] } : { error: "It cannot be read." };
   } catch (err) {
     if (signal.aborted) throw err;
     console.error(`Preparing ${file.name} failed: ${(err as Error)?.message || err}`);
-    return null;
+    return { error: "The files server did not answer." };
   }
 }

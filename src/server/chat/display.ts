@@ -2,14 +2,16 @@
 // The steps of one reply (assistant steps that call tools, the tool results,
 // and the answer) become one message: its trace holds the reasoning, any text
 // written before a tool call, and the tool calls, in order; its content is the
-// answer, and its files those the file tools made. A user message's files are
-// those the user attached.
+// answer, and its files those the file tools made, the images, SVG and HTML a
+// run of code made, and those the model shared (see shownInChat), each once,
+// as its newest version (see withFileCards). A user
+// message's files are those the user attached.
 
 import type { Prisma } from "@prisma/client";
 import { toolIcon } from "@/lib/agentTools";
-import type { FileCard } from "@/lib/files";
+import { shownInChat, withFileCards, type FileCard } from "@/lib/files";
 import { addReasoning, upsertToolStep } from "@/lib/trace";
-import type { ConversationWithMessages, Role, StepSecurity, TraceItem } from "@/lib/types";
+import type { ConversationWithMessages, Role, StepSecurity, ToolStep, TraceItem } from "@/lib/types";
 import { toolLabel } from "@/server/tools/definitions";
 import type { StoredToolCall } from "./conversation";
 
@@ -21,11 +23,12 @@ export const DISPLAY_MESSAGE_SELECT = {
   reasoning: true,
   toolCalls: true,
   toolCallId: true,
+  toolName: true,
   metadata: true,
   createdAt: true,
-  // Images made for the model from another attachment are not shown
+  // Images made for the model from another attachment are not shown, nor what marks a deleted file
   attachments: {
-    where: { parentId: null },
+    where: { parentId: null, deleted: false },
     select: { id: true, name: true, mimeType: true, size: true },
     orderBy: { createdAt: "asc" },
   },
@@ -41,13 +44,27 @@ const filesOf = (row: Row): FileCard[] =>
 
 /** What the security checks found in a tool step's result, as stored in its metadata. */
 function storedSecurity(value: unknown): StepSecurity | null {
-  const { flag, source, decision } = (value ?? {}) as Record<string, unknown>;
+  const { flag, source, decision, chunk } = (value ?? {}) as Record<string, unknown>;
   if (flag !== "injection" && flag !== "virus" && flag !== "unchecked") return null;
   return {
     flag,
     ...(typeof source === "string" ? { source } : {}),
     ...(decision === "remove" || decision === "stop" ? { decision } : {}),
+    ...(typeof chunk === "string" && chunk ? { chunk } : {}),
   };
+}
+
+/** The user's answer when they were asked before code ran, as stored in a tool step's metadata. */
+function storedApproval(value: unknown): ToolStep["approval"] | null {
+  if (!value || typeof value !== "object") return null;
+  const { decision } = value as { decision?: unknown };
+  return decision === "run" || decision === "skip" ? { decision } : {};
+}
+
+/** The ids of the files a tool step shared with the user (share_file), from its metadata. */
+export function sharedIds(metadata: unknown): string[] {
+  const shared = (metadata as { shared?: unknown } | null)?.shared;
+  return Array.isArray(shared) ? shared.filter((id): id is string => typeof id === "string") : [];
 }
 
 function storedCalls(value: Prisma.JsonValue): StoredToolCall[] {
@@ -56,7 +73,8 @@ function storedCalls(value: Prisma.JsonValue): StoredToolCall[] {
     : [];
 }
 
-export function toDisplayMessages(rows: Row[]): DisplayRow[] {
+/** `shared` holds the cards of the files that tool steps shared, by id (see sharedIds). */
+export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = new Map()): DisplayRow[] {
   const out: DisplayRow[] = [];
   let reply: (DisplayRow & { trace: TraceItem[] }) | null = null;
 
@@ -101,8 +119,9 @@ export function toDisplayMessages(rows: Row[]): DisplayRow[] {
     }
     // A tool step: fill in the result of its call
     if (!reply) continue;
-    const meta = (row.metadata ?? {}) as { label?: unknown; error?: unknown; security?: unknown };
+    const meta = (row.metadata ?? {}) as { label?: unknown; error?: unknown; security?: unknown; approval?: unknown };
     const security = storedSecurity(meta.security);
+    const approval = storedApproval(meta.approval);
     const known = reply.trace.some((item) => item.kind === "tool" && item.step.id === row.toolCallId);
     if (!known || !row.toolCallId) continue;
     const screenshot = row.attachments.find((a) => !a.name);
@@ -112,9 +131,13 @@ export function toDisplayMessages(rows: Row[]): DisplayRow[] {
       ...(typeof meta.label === "string" ? { label: meta.label } : {}),
       ...(screenshot ? { attachmentId: screenshot.id } : {}),
       ...(security ? { security } : {}),
+      ...(approval ? { approval } : {}),
     });
-    const files = filesOf(row);
-    if (files.length) reply.files = [...(reply.files ?? []), ...files];
+    const files = [
+      ...shownInChat(row.toolName ?? "", filesOf(row)),
+      ...sharedIds(row.metadata).flatMap((id) => shared.get(id) ?? []),
+    ];
+    if (files.length) reply.files = withFileCards(reply.files ?? [], files);
   }
 
   for (const message of out) {

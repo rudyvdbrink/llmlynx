@@ -1,7 +1,7 @@
 // Tests of a reply with tool calls whose results the security checks act on:
 // a virus is discarded and the reply goes on, a prompt injection pauses the
-// reply for the user's choice, and a blocked URL never reaches its tool. The
-// model is a script of turns; the tool servers and scanners are stand-ins.
+// reply for the user's choice. The model is a script of turns; the tool
+// servers and scanners are stand-ins.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolStep } from "@/lib/types";
@@ -139,16 +139,18 @@ describe("a prompt injection in content from the internet", () => {
     // The tool line gets the choice, so its buttons go
     expect(run.lines.find((line) => line.security?.decision)).toEqual({
       id: "call_1_0",
-      security: { flag: "injection", source: "site.example", score: 0.98, decision: "remove" },
+      security: { flag: "injection", source: "site.example", score: 0.98, chunk: expect.stringContaining(INJECTION), decision: "remove" },
     });
 
     const steps = await run.stored();
     expect(steps.map((step) => step.role)).toEqual(["user", "assistant", "tool", "tool", "assistant"]);
     expect(steps[2].metadata).toMatchObject({ security: { flag: "injection", source: "site.example", decision: "remove" } });
     expect(steps.at(-1)?.content).toBe("The answer.");
-    // The flagged page is nowhere in the stored conversation
-    expect(JSON.stringify(steps)).not.toContain(INJECTION);
-    expect(JSON.stringify(steps)).not.toContain("evil.example");
+    // The flagged page is nowhere in what the model gets: only its flagged chunk is kept, for the user's dialog
+    const forModel = steps.map(({ role, content }) => ({ role, content }));
+    expect(JSON.stringify(forModel)).not.toContain(INJECTION);
+    expect(JSON.stringify(forModel)).not.toContain("evil.example");
+    expect((steps[2].metadata as { security: { chunk: string } }).security.chunk).toContain(INJECTION);
     expect(await eventsOf(run.userId)).toContainEqual(
       expect.objectContaining({ check: "decision", reason: "injection", decision: "remove_and_continue", tool: "web_read", host: "site.example" })
     );
@@ -208,16 +210,16 @@ describe("a prompt injection in content from the internet", () => {
     expect((await run.stored()).find((step) => step.role === "tool")?.metadata).toMatchObject({ security: { decision: "remove" } });
   });
 
-  it("taints the conversation: a URL the model makes up afterwards is blocked, now and after a rebuild", async () => {
-    const madeUp = "https://en.wikipedia.org/wiki/Lynx";
-    const run = await chat([[read(PAGE)], [read(madeUp)]]);
+  it("taints the conversation, now and after a rebuild, and still opens the next URL", async () => {
+    const next = "https://en.wikipedia.org/wiki/Lynx";
+    fakes.pages.set(next, "The lynx is a cat.");
+    const run = await chat([[read(PAGE)], [read(next)]]);
     answerPause((await run.paused()).id, run.userId, "remove");
     await run.done;
 
     expect(run.security.context.tainted).toBe(true);
-    expect(run.results[1].result.text).toMatch(/^Blocked: this URL does not come from the user or from a search result\./);
-    expect(run.lines.at(-1)).toMatchObject({ state: "error", label: "Could not read en.wikipedia.org/wiki/Lynx (blocked: unknown URL)" });
-    expect(fakes.webCalls).toEqual(["web_url_read"]); // the made-up URL was never requested
+    expect(run.results[1].result.text).toContain("The lynx is a cat.");
+    expect(fakes.webCalls).toEqual(["web_url_read", "web_url_read"]);
 
     const rebuilt = await openSecurity({
       userId: run.userId,
@@ -230,38 +232,12 @@ describe("a prompt injection in content from the internet", () => {
 
 });
 
-describe("the context while a reply runs", () => {
-  it("is the same in memory as rebuilt from the stored steps", async () => {
-    fakes.searchResults = "1. Lynx facts - https://facts.example/lynx\n2. Lynx photos - https://photos.example/lynx?page=2";
-    fakes.pages.set("https://facts.example/lynx", "Lynxes have tufted ears. See also https://facts.example/bobcat.");
-    const search = { name: "web_search", arguments: { query: "lynx" } };
-    const run = await chat([[search], [read("https://facts.example/lynx")], [read("https://facts.example/bobcat")]], "Tell me about lynxes.");
-    await run.done;
-
-    // Each result made its URLs known for the next call: nothing was blocked or warned about
-    expect(fakes.webCalls).toEqual(["searxng_web_search", "web_url_read", "web_url_read"]);
-    expect((await eventsOf(run.userId)).filter((event) => event.check === "url")).toEqual([]);
-
-    const rebuilt = await openSecurity({
-      userId: run.userId,
-      conversationId: run.conversationId,
-      tools,
-      audit: createAuditLog(run.userId, run.conversationId),
-    });
-    expect([...rebuilt!.context.knownUrls].sort()).toEqual([...run.security.context.knownUrls].sort());
-    expect(rebuilt!.context.knownUrls.has("https://photos.example/lynx?page=2")).toBe(true);
-    expect(rebuilt!.context.tainted).toBe(run.security.context.tainted);
-    expect(rebuilt!.context.sharedText()).toBe(run.security.context.sharedText());
-  });
-
-  it("logs a made-up URL in a clean conversation as a warning, and lets it through", async () => {
+describe("URLs", () => {
+  it("opens a URL the model made up, with no check before the call", async () => {
     fakes.pages.set("https://en.wikipedia.org/wiki/Lynx", "The lynx is a cat.");
     const run = await chat([[read("https://en.wikipedia.org/wiki/Lynx")]], "Tell me about lynxes.");
     await run.done;
     expect(run.results[0].result.text).toContain("The lynx is a cat.");
-    const events = (await eventsOf(run.userId)).filter((event) => event.check === "url");
-    expect(events).toEqual([expect.objectContaining({ verdict: "warn", reason: "url_unknown", host: "en.wikipedia.org" })]);
-    // The log has the host and a hash, not the URL
-    expect(JSON.stringify(events)).not.toContain("wiki/Lynx");
+    expect((await eventsOf(run.userId)).map((event) => event.check).sort()).toEqual(["injection", "virus"]);
   });
 });

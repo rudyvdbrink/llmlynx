@@ -13,6 +13,8 @@ import { addToLastMessage } from "@/server/chat/toolLoop";
 import { fileTextBudget, filesNote } from "@/server/files/history";
 import { prepareMessageFiles } from "@/server/files/prepare";
 import { conversationFiles } from "@/server/files/store";
+import { chatRepos } from "@/server/sandbox/git";
+import { roomError } from "@/server/sandbox/room";
 import { UploadRefused } from "@/server/files/uploads";
 import { createAuditLog } from "@/server/security/audit";
 import { openSecurity } from "@/server/security/engine";
@@ -181,7 +183,10 @@ export async function POST(req: NextRequest) {
   let messageId: string;
   try {
     const problem = (file: { name: string; size: number }) => fileProblem(accept, file);
-    const sent = uploads.length ? { userId: user.id, ids: uploads, problem } : null;
+    // The chat's sandbox holds 100 MB at most, attached files included
+    const current = uploads.length ? await conversationFiles(conversationId) : [];
+    const room = (files: { name: string; size: number }[]) => roomError(current, files);
+    const sent = uploads.length ? { userId: user.id, ids: uploads, problem, room } : null;
     ({ messageId } = await saveUserMessage(conversationId, message, target.modelKey, requestId, sent));
   } catch (err) {
     if (err instanceof UploadRefused) return new Response(err.message, { status: 400 });
@@ -245,7 +250,8 @@ export async function POST(req: NextRequest) {
         : undefined
     );
     // An agent with file tools refers to the files by name
-    const note = hasFileTools(tools) ? filesNote(await conversationFiles(conversationId)) : null;
+    const repos = tools.some((t) => t.name === "git") ? (await chatRepos(conversationId)).map((r) => r.path) : [];
+    const note = hasFileTools(tools) ? filesNote(await conversationFiles(conversationId), repos) : null;
     if (note) history = addToLastMessage(history, note);
     const messages = [...system, ...history];
 

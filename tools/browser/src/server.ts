@@ -1,12 +1,13 @@
-// MCP server (stateless Streamable HTTP on POST /mcp) with two tools:
-// browser_screenshot and browser_read. Every /mcp request needs the bearer
-// token from MCP_AUTH_TOKEN. GET /health answers without one.
+// MCP server (stateless Streamable HTTP on POST /mcp) with three tools:
+// browser_screenshot, browser_read and browser_fetch. Every /mcp request needs
+// the bearer token from MCP_AUTH_TOKEN. GET /health answers without one.
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
+import { download } from "./fetch.js";
 import { MAX_SECTION, readPage, screenshotPage } from "./page.js";
 import { ToolError } from "./url.js";
 
@@ -24,7 +25,10 @@ const digest = (s: string) => createHash("sha256").update(s).digest();
 const TOKEN_DIGEST = digest(`Bearer ${TOKEN}`);
 const authorized = (req: IncomingMessage) => timingSafeEqual(digest(req.headers.authorization || ""), TOKEN_DIGEST);
 
-type ToolContent = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
+type ToolContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string }
+  | { type: "resource"; resource: { uri: string; mimeType: string; blob: string } };
 
 // Errors meant for the model become its tool result; anything else is logged and kept vague
 async function run(name: string, fn: () => Promise<ToolContent[]>) {
@@ -58,6 +62,28 @@ function buildServer(): McpServer {
         return [
           { type: "text", text: shot.text },
           { type: "image", data: shot.jpeg.toString("base64"), mimeType: "image/jpeg" },
+        ];
+      })
+  );
+
+  server.registerTool(
+    "browser_fetch",
+    {
+      description:
+        "Downloads a file (at most 20 MB, within 60 seconds) as it is, through the egress proxy. Returns its " +
+        "URL after redirects, its status, type, name and size as JSON, and the file as an embedded resource.",
+      inputSchema: { url: z.string().describe("The http or https URL to download") },
+    },
+    ({ url }) =>
+      run("browser_fetch", async () => {
+        const file = await download(url);
+        const about = { url: file.url, status: file.status, type: file.type, name: file.name, size: file.data.length };
+        return [
+          { type: "text", text: JSON.stringify(about) },
+          {
+            type: "resource",
+            resource: { uri: `file:///${encodeURIComponent(file.name)}`, mimeType: file.type, blob: file.data.toString("base64") },
+          },
         ];
       })
   );

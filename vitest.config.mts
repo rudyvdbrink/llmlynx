@@ -26,6 +26,7 @@ export default defineConfig({
       FILES_MCP_URL: "http://files.test/mcp",
       SEARCH_MCP_URL: "http://search.test/mcp",
       BROWSER_MCP_URL: "http://browser.test/mcp",
+      CODE_MCP_URL: "http://code.test/mcp",
     },
   },
 });

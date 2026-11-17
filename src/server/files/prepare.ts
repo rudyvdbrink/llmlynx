@@ -42,8 +42,8 @@ export async function prepareMessageFiles(messageId: string, vision: boolean, si
     const file = { ...row, name: row.name!, info: (row.info as FileInfo | null) ?? null };
     if (fileKind(file.name) === "image") {
       if (!vision || row.derived.length) continue;
-      const image = await prepareImage(file, signal);
-      if (image) await saveDerived(file, image, null);
+      const prepared = await prepareImage(file, signal);
+      if ("image" in prepared && prepared.image) await saveDerived(file, prepared.image, null);
       continue;
     }
     const { info } = await fileText(file, signal);

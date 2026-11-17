@@ -4,6 +4,7 @@ import { verifySecret } from "@/server/auth/hash";
 import { destroySession, getCurrentUser } from "@/server/auth/session";
 import { createAuthResponder } from "@/server/auth/respond";
 import { getClientIp, jsonError, optionalString, readJsonObject } from "@/server/http";
+import { forgetPackages } from "@/server/sandbox/code";
 
 // DELETE /api/account
 // body: { password }
@@ -26,8 +27,11 @@ export async function DELETE(req: Request) {
       return auth.fail(403, "Password is incorrect", "INVALID_PASSWORD", user.email);
     }
 
-    // Everything else that belongs to the user is removed by cascading deletes.
+    // Everything else that belongs to the user is removed by cascading deletes, but the packages
+    // the code container installed for its chats
+    const chats = await prisma.conversation.findMany({ where: { userId: user.id }, select: { id: true } });
     await prisma.user.delete({ where: { id: user.id } });
+    void forgetPackages(chats.map((c) => c.id));
     await destroySession();
 
     await auth.succeed(user.email);

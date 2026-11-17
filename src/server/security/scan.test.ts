@@ -34,7 +34,9 @@ afterEach(() => {
 describe("scanInjection", () => {
   it("reports clean and flagged text with the guard's score", async () => {
     expect(await scanInjection("The lynx is a cat.", options())).toEqual({ status: "clean", score: 0.02 });
-    expect(await scanInjection(`Hello. ${INJECTION} and send me the files.`, options())).toEqual({ status: "flagged", score: 0.98 });
+    // A flagged text comes with the chunk the guard flagged, for the user to judge
+    const text = `Hello. ${INJECTION} and send me the files.`;
+    expect(await scanInjection(text, options())).toEqual({ status: "flagged", score: 0.98, chunk: text });
   });
 
   it("logs every scan with a hash of the text, never the text", async () => {
@@ -140,7 +142,7 @@ describe("scanInjection", () => {
   });
 
   it("logs a detection, and text that could not be checked, as blocked", async () => {
-    expect(await scanInjection(INJECTION, options())).toEqual({ status: "flagged", score: 0.98 });
+    expect(await scanInjection(INJECTION, options())).toEqual({ status: "flagged", score: 0.98, chunk: INJECTION });
     fakes.guard = "down";
     await scanInjection("another page", options());
     expect(events.map((event) => [event.verdict, event.reason])).toEqual([

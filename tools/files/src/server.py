@@ -21,7 +21,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 
 from common import decode_file
-from convert import convert, prepare_image, render_pdf
+from convert import convert, prepare_image, read_sheets, render_pdf
 from create import create_document, create_spreadsheet, create_text
 from edit import edit_file
 
@@ -97,6 +97,14 @@ def files_render_pdf(name: FileName, data: FileData, pages: list[int]) -> list:
 )
 def files_prepare_image(name: FileName, data: FileData) -> list:
     return run("files_prepare_image", lambda: prepare_image(decode_file(data)))
+
+
+@server.tool(
+    description="Reads an Excel workbook as tables, for a preview. Returns JSON: { sheets: [{ name, rows, more }] }.",
+    structured_output=False,
+)
+def files_sheets(name: FileName, data: FileData) -> str:
+    return run("files_sheets", lambda: json.dumps(read_sheets(name, decode_file(data)), default=str))
 
 
 @server.tool(description="Creates a text or code file.", structured_output=False)

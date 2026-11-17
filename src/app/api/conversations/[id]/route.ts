@@ -4,7 +4,8 @@ import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { jsonError, optionalString, readJsonObject } from "@/server/http";
 import { deleteUnusedSetups } from "@/server/chat/setup";
-import { DISPLAY_MESSAGE_SELECT, toDisplayMessages } from "@/server/chat/display";
+import { DISPLAY_MESSAGE_SELECT, sharedIds, toDisplayMessages } from "@/server/chat/display";
+import { forgetPackages } from "@/server/sandbox/code";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -33,8 +34,20 @@ export async function GET(_req: Request, ctx: Ctx) {
   });
   if (!conversation) return jsonError("Not found", 404);
 
+  // The files that tool steps shared with the user (share_file), which other steps made
+  const ids = conversation.messages.flatMap((m) => sharedIds(m.metadata));
+  const shared = ids.length
+    ? await prisma.messageAttachment.findMany({
+        where: { id: { in: ids }, deleted: false, message: { conversationId: id } },
+        select: { id: true, name: true, mimeType: true, size: true },
+      })
+    : [];
+  const cards = new Map(shared.map((f) => [f.id, { id: f.id, name: f.name ?? "file", mimeType: f.mimeType, size: f.size ?? 0 }]));
+
   // A reply that used tools is shown as one message with its tool steps
-  return NextResponse.json({ conversation: { ...conversation, messages: toDisplayMessages(conversation.messages) } });
+  return NextResponse.json({
+    conversation: { ...conversation, messages: toDisplayMessages(conversation.messages, cards) },
+  });
 }
 
 // PATCH /api/conversations/:id -> rename and/or pin the conversation
@@ -78,8 +91,10 @@ export async function DELETE(_req: Request, ctx: Ctx) {
 
   const { count } = await prisma.conversation.deleteMany({ where: { id, userId: user.id } });
   if (count === 0) return jsonError("Not found", 404);
-  // Drop the system prompts and options only its replies used
+  // Drop the system prompts and options only its replies used, and the packages its runs had
   await deleteUnusedSetups(user.id);
+  // Not waited for: the container removes unused packages after 30 days anyway
+  void forgetPackages([id]);
 
   return new NextResponse(null, { status: 204 });
 }

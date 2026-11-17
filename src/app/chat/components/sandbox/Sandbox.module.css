@@ -1,0 +1,606 @@
+/* The sandbox panel (SandboxPanel.tsx): the counterpart of the sidebar on the
+   left, with its colours, borders and fonts (see components/sidebar). */
+
+.panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  width: var(--sandbox-width);
+  height: 100dvh;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  transform: translateX(100%);
+  transition: transform 0.38s cubic-bezier(.4,0,.2,1), box-shadow 0.28s ease;
+  will-change: transform;
+}
+.panel.open {
+  transform: translateX(0);
+  box-shadow: 0 8px 28px -4px rgba(0,0,0,0.55);
+}
+
+/* The chevron: at the right edge of the chat while the panel is collapsed, at the
+   height of the left sidebar's toggle; in the panel's top left corner while it is open */
+.toggle {
+  position: absolute;
+  top: 14px;
+  left: -32px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  line-height: 0;
+  cursor: pointer;
+  transition: color 0.18s ease, left 0.38s cubic-bezier(.4,0,.2,1);
+  animation: toggleIn 0.6s ease both;
+}
+.panel.open .toggle { left: 6px; }
+.toggle:hover { color: var(--text); }
+.toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.toggleIcon {
+  width: 18px;
+  height: 18px;
+  transform: rotate(180deg);
+  transition: transform 0.38s cubic-bezier(.4,0,.2,1);
+}
+.panel.open .toggleIcon { transform: none; }
+@keyframes toggleIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.panel.open .content {
+  opacity: 1;
+  transition: opacity 0.22s ease 0.08s;
+}
+
+/* The title sits beside the chevron, on its line */
+.header { padding: 14px 16px 10px 40px; }
+.title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 26px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin: 0 16px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.tab {
+  flex: 1;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.tab:hover { color: var(--text); }
+.tab:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
+.tabActive { background: #1d2a44; color: var(--text); }
+
+.body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-top: 10px;
+}
+
+.empty,
+.note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.empty { padding: 4px 16px; }
+
+/* ===== Files: the tree, and the preview below it ===== */
+
+.files {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.treeList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.filesWithPreview .tree { flex: 0 0 var(--tree-share, 40%); }
+
+.treeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 30px;
+  padding-right: 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.treeRow:hover { background: var(--surface-hover); }
+.treeRow:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
+.treeRowSelected,
+.treeRowSelected:hover {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--amber);
+}
+.treeChevron {
+  flex: none;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+}
+.treeChevronOpen { transform: rotate(90deg); }
+.treeChevronSpace { flex: none; width: 14px; }
+.treeIcon { flex: none; color: var(--muted); }
+.treeName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.treeSize {
+  flex: none;
+  margin-left: auto;
+  padding-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.preview {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+/* On the preview's top border: a drag moves it up or down (FilesTab.tsx). A line shows on it under the pointer. */
+.divider {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: 8px;
+  cursor: row-resize;
+  touch-action: none;
+}
+.divider::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.divider:hover::after { opacity: 1; transition-delay: 0.2s; }
+.divider[data-dragging]::after { opacity: 1; transition-delay: 0s; }
+/* Easier to catch with a finger */
+@media (pointer: coarse) {
+  .divider { top: -9px; height: 16px; }
+  .divider::after { top: 7px; }
+}
+.previewBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px 8px 16px;
+}
+.previewName {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+}
+.versions {
+  flex: none;
+  max-width: 150px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+.previewActions {
+  display: inline-flex;
+  gap: 2px;
+  flex: none;
+}
+.iconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.iconButton:hover,
+.iconButton:focus-visible { color: var(--text); background: var(--surface-hover); outline: none; }
+.iconButton:disabled { opacity: 0.5; cursor: default; }
+.previewBody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 12px 12px 16px;
+}
+
+/* What scrolls in a preview: text, tables, pages */
+.scroll,
+.codeScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
+/* Text and code: line numbers beside the text; long lines scroll sideways */
+.code {
+  display: flex;
+  min-width: max-content;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+}
+.gutter,
+.codeText {
+  margin: 0;
+  padding: 8px 10px;
+  font: inherit;
+  white-space: pre;
+}
+.gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  min-width: 3ch;
+  text-align: right;
+  color: var(--muted);
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  opacity: 0.8;
+}
+.codeText { flex: 1; background: transparent !important; }
+
+.plain {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.markdown {
+  width: auto;
+  font-size: 14px;
+}
+
+.moreButton,
+.linkButton {
+  display: block;
+  margin: 8px 12px 10px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.moreButton:hover,
+.linkButton:hover { color: var(--link-hover); text-decoration: underline; }
+.moreButton:disabled { color: var(--muted); cursor: default; text-decoration: none; }
+
+/* CSV, TSV and Excel */
+.table {
+  border-collapse: collapse;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.table th,
+.table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  text-align: left;
+}
+.table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  font-weight: 600;
+}
+.sheets {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+}
+.sheetTabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.sheetTab {
+  flex: none;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sheetTabActive { color: var(--text); border-color: var(--muted); }
+
+/* Images and SVG: scaled to the panel's width; PDF pages one below the other */
+.image,
+.pdfPage {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0 auto;
+  background: repeating-conic-gradient(#1a2233 0% 25%, #121a29 0% 50%) 50% / 16px 16px;
+}
+.pdfPage {
+  margin: 8px auto;
+  background: #fff;
+}
+
+/* HTML: its page in a sandboxed frame, or its source */
+.htmlView {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 6px;
+}
+.switch {
+  display: inline-flex;
+  align-self: flex-start;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+.switch button {
+  height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.switch .switchActive { background: #1d2a44; color: var(--text); }
+.frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.other { padding: 8px 0; }
+.otherName { margin: 0 0 4px; font-size: 14px; overflow-wrap: anywhere; }
+.otherDownload {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  text-decoration: none;
+}
+.otherDownload:hover { background: var(--surface-hover); }
+
+/* ===== Runs ===== */
+
+.runs {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0 8px 12px;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.runRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.runRow:hover { background: var(--surface-hover); }
+.runRow:focus-visible { outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
+.runLanguage { flex: none; }
+.runStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #86efac;
+  font-size: 12px;
+}
+.runFailed { color: #f0b37a; }
+.runDetail { padding: 4px 8px 12px 28px; }
+.detailTitle {
+  margin: 10px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.detailBox {
+  max-height: 240px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.runDetail .linkButton { margin: 10px 0 0; }
+
+/* ===== Packages ===== */
+
+.packages {
+  flex: 1;
+  min-height: 0;
+  padding: 0 16px 12px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.packages section:first-child .detailTitle { margin-top: 0; }
+.packageTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.packageTable th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+  padding: 4px 8px 4px 0;
+}
+.packageTable td {
+  padding: 5px 8px 5px 0;
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.packageTable td:nth-child(3) { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.packageTable tr:not(.requested) td:first-child { color: var(--muted); }
+
+/* ===== Size and place ===== */
+
+.backdrop { display: none; }
+
+/* Below 1200px the panel opens over the chat, and a backdrop closes it on a click */
+@media (max-width: 1199px) {
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 45;
+    display: block;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: rgba(2, 6, 23, 0.18);
+    appearance: none;
+    cursor: pointer;
+  }
+}
+
+/* Phones: the full width, and the chevron at its top closes it */
+@media (max-width: 760px) {
+  .panel { width: 100vw; border-left: none; }
+  .toggle { top: 10px; left: -36px; padding: 2px; }
+  .toggleIcon { width: 16px; height: 16px; }
+  .header { padding-top: 8px; padding-left: 36px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .toggle,
+  .toggleIcon,
+  .content { transition: none; }
+}

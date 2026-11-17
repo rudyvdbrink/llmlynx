@@ -7,6 +7,7 @@ knows one injection phrase. Tests that need the real model are in test_real_mode
     pip install -r requirements-dev.txt && pytest
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -25,6 +26,9 @@ class Words:
 
     def encode(self, text: str) -> list[int]:
         return [self.ids.setdefault(word, len(self.ids)) for word in text.lower().split()]
+
+    def offsets(self, text: str) -> list[tuple[int, int]]:
+        return [match.span() for match in re.finditer(r"\S+", text)]
 
 
 class PhraseScorer:

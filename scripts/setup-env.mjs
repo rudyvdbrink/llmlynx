@@ -33,6 +33,7 @@ const SECRETS = {
   SEARCH_MCP_TOKEN: "hex",
   BROWSER_MCP_TOKEN: "hex",
   FILES_MCP_TOKEN: "hex",
+  CODE_MCP_TOKEN: "hex",
   SEARXNG_SECRET: "hex",
 };
 

@@ -6,8 +6,22 @@ import type { ToolServer } from "./config";
 
 export type ToolImage = { mimeType: string; data: string }; // data: base64
 
-/** A file a tool made, such as a document the model asked for. */
-export type ToolFile = { name: string; mimeType: string; data: string }; // data: base64
+/**
+ * A file a tool made, such as a document the model asked for, to store in the
+ * chat's sandbox under `name` (its path there). `origin` says it came from
+ * code or the internet (see FileOrigin in server/files/store.ts); `text` and
+ * `info` are what converting it gave, when that was done already, and
+ * `scanned` says its whole text passed the prompt injection scan.
+ */
+export type ToolFile = {
+  name: string;
+  mimeType: string;
+  data: string; // base64
+  origin?: "code" | "internet";
+  text?: string | null;
+  info?: object | null;
+  scanned?: boolean;
+};
 
 /** What a tool returned: its text, any images and files, and whether it reported an error. */
 export type ToolOutput = { text: string; images: ToolImage[]; files: ToolFile[]; isError: boolean };
@@ -20,11 +34,19 @@ type ContentItem = {
   resource?: { uri?: unknown; mimeType?: unknown; blob?: unknown };
 };
 
-/** A file sent as an embedded resource, named by the last part of its URI ("file:///report.docx"). */
+/**
+ * A file sent as an embedded resource, named by the path in its URI
+ * ("file:///report.docx", "file:///out/plot.png"). Callers check the path.
+ */
 function toFile(item: ContentItem): ToolFile | null {
   const { uri, mimeType, blob } = item.resource ?? {};
   if (item.type !== "resource" || typeof uri !== "string" || typeof mimeType !== "string" || typeof blob !== "string") return null;
-  const name = decodeURIComponent(uri.split("/").pop() ?? "");
+  let name: string;
+  try {
+    name = decodeURIComponent(uri.replace(/^file:\/\/\//, ""));
+  } catch {
+    return null;
+  }
   return name ? { name, mimeType, data: blob } : null;
 }
 

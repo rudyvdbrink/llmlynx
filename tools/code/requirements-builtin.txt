@@ -1,0 +1,23 @@
+# The libraries built into every run, so most work needs no install, all pinned
+# (pip download). The ones runs use directly: numpy, pandas, scipy, matplotlib,
+# openpyxl, pillow, pytest. Update them together, and check that the Pi
+# (linux/arm64) has wheels.
+contourpy==1.4.0
+cycler==0.12.1
+et_xmlfile==2.0.0
+fonttools==4.68.0
+iniconfig==2.3.1
+kiwisolver==1.5.1
+matplotlib==3.11.2
+numpy==2.5.5
+openpyxl==3.1.5
+packaging==26.3
+pandas==3.1.1
+pillow==13.0.0
+pluggy==1.7.0
+pygments==2.21.0
+pyparsing==3.3.3
+pytest==9.2.0
+python-dateutil==4.0.0
+scipy==1.18.1
+tzdata==2026.6

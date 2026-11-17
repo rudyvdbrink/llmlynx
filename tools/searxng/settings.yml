@@ -21,3 +21,13 @@ search:
 
 ui:
   static_use_hash: true
+
+# More web engines than the default brave, duckduckgo and google cse, which
+# often refuse a busy instance (too many requests, CAPTCHA) all at once
+engines:
+  - name: bing
+    disabled: false
+  - name: yahoo
+    disabled: false
+  - name: duckduckgo web
+    disabled: false

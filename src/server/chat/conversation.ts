@@ -5,7 +5,9 @@ import { takeUploads, type UploadsToSend } from "@/server/files/uploads";
 import type { ToolFile, ToolImage } from "@/server/tools/mcp";
 import { uniqueName, type FileCard } from "@/lib/files";
 import { parseSelection, toSelection } from "@/lib/selection";
-import type { ChatMessage, PauseDecision, StepSecurity } from "@/lib/types";
+import type { ApprovalDecision, ChatMessage, PauseDecision, StepSecurity } from "@/lib/types";
+import type { RunRecord } from "@/server/tools/definitions";
+import { WHOLE_TEXT } from "@/server/files/store";
 import { saveRequestSetup, type RequestSetupInput } from "./setup";
 
 // Helper to make a short title from the first user message
@@ -204,11 +206,15 @@ export type ToolResultStep = {
   label: string; // what the chat view shows
   error: boolean;
   images: ToolImage[]; // what the model sees, such as a screenshot
-  files: ToolFile[]; // files the tool made for the user
+  files: ToolFile[]; // files the tool made or changed: new versions in the chat's sandbox
+  deletions?: string[]; // the paths of the files the tool deleted from the sandbox
+  repository?: { path: string; git: string }; // a git repository's new .git folder (a gzipped tar, base64)
+  shared?: FileCard[]; // files of the sandbox the tool gives the user (share_file)
+  approval?: { decision: ApprovalDecision }; // what the user chose before code ran in a tainted chat
   security?: StepSecurity; // what the security checks found in the result, which the model then did not get
 };
 
-/** What saveToolResult stored: the ids of the images, and the cards of the files. */
+/** What saveToolResult stored: the ids of the images, and the cards of the files (deletions left out). */
 export type SavedToolResult = { imageIds: string[]; files: FileCard[] };
 
 export type AssistantReply = {
@@ -220,6 +226,8 @@ export type AssistantReply = {
   saveToolResult(step: ToolResultStep): Promise<SavedToolResult>;
   /** Adds what the user chose about a flagged result to the stored step of the call `callId`. */
   saveToolDecision(callId: string, decision: PauseDecision): Promise<void>;
+  /** Stores a run of code or an install of packages of the call `callId`, for the sandbox panel. */
+  saveSandboxRun(callId: string, run: RunRecord): Promise<void>;
   /** Stores the final step. Safe to call more than once; only the first call writes. */
   persist(): Promise<void>;
 };
@@ -255,23 +263,34 @@ export function createAssistantReply({
   // The stored tool steps of this reply by their call's id, with what they keep for the chat view
   const toolSteps = new Map<string, { id: string; metadata: Prisma.InputJsonObject }>();
 
-  /** Stores one step of the reply as the conversation's next message. Returns its id and its attachments, in order. */
-  async function saveStep(data: Omit<Prisma.MessageUncheckedCreateInput, "conversationId" | "position">) {
+  /**
+   * Stores one step of the reply as the conversation's next message, and does
+   * `also` in the same transaction. Returns its id and its attachments, in order.
+   */
+  async function saveStep(
+    data: Omit<Prisma.MessageUncheckedCreateInput, "conversationId" | "position">,
+    also?: (tx: Prisma.TransactionClient) => Promise<unknown>
+  ) {
+    // A clone can store thousands of files at once
     return prisma.$transaction(async (tx) => {
       const position = await nextPosition(tx, conversationId);
       const message = await tx.message.create({
         data: { ...data, conversationId, position },
         select: {
           id: true,
-          attachments: { select: { id: true, name: true, mimeType: true, size: true }, orderBy: { createdAt: "asc" } },
+          attachments: {
+            select: { id: true, name: true, mimeType: true, size: true, deleted: true },
+            orderBy: { createdAt: "asc" },
+          },
         },
       });
       await tx.conversation.update({
         where: { id: conversationId },
         data: { updatedAt: new Date(), model: modelKey },
       });
+      await also?.(tx);
       return message;
-    });
+    }, { timeout: SAVE_TIMEOUT_MS, maxWait: SAVE_TIMEOUT_MS });
   }
 
   async function assistantStep(toolCalls?: StoredToolCall[]) {
@@ -303,32 +322,89 @@ export function createAssistantReply({
         // As with persist(): the reply goes on even if a step cannot be stored.
       }
     },
-    async saveToolResult({ call, content, label, error, images, files, security }) {
+    async saveToolResult({ call, content, label, error, images, files, deletions, repository, shared, approval, security }) {
       const none: SavedToolResult = { imageIds: [], files: [] };
       if (saved) return none;
-      const attachments = [
+      const attachments: Prisma.MessageAttachmentCreateWithoutMessageInput[] = [
         ...images.map((i) => ({ mimeType: i.mimeType, data: Buffer.from(i.data, "base64") })),
-        ...files.map((f) => ({ name: f.name, mimeType: f.mimeType, data: Buffer.from(f.data, "base64") })),
-      ].map((a) => ({ ...a, size: a.data.length }));
-      const metadata: Prisma.InputJsonObject = { label, error, ...(security ? { security } : {}) };
+        ...files.map((f) => ({
+          name: f.name,
+          mimeType: f.mimeType,
+          data: Buffer.from(f.data, "base64"),
+          ...(f.origin ? { origin: f.origin } : {}),
+          ...(f.text !== undefined ? { text: f.text } : {}),
+          ...(f.info ? { info: f.info as Prisma.InputJsonObject } : {}),
+          // Its whole text passed the scan when it arrived: reading it needs no scan (see checkFileRead)
+          ...(f.scanned ? { scans: { [WHOLE_TEXT]: { flagged: false, score: 0 } } } : {}),
+        })),
+        // A deletion holds no data: it marks where the file's history ends
+        ...(deletions ?? []).map((name) => ({
+          name,
+          mimeType: "application/octet-stream",
+          data: Buffer.alloc(0),
+          deleted: true,
+          origin: "code",
+        })),
+      ].map((a) => ({ ...a, size: (a.data as Buffer).length }));
+      const metadata: Prisma.InputJsonObject = {
+        label,
+        error,
+        ...(security ? { security } : {}),
+        ...(shared?.length ? { shared: shared.map((f) => f.id) } : {}),
+        ...(approval ? { approval } : {}),
+      };
       try {
-        const { id, attachments: stored } = await saveStep({
-          role: "tool",
-          content,
-          toolCallId: call.id,
-          toolName: call.name,
-          metadata,
-          attachments: attachments.length ? { create: attachments } : undefined,
-        });
+        // A repository's .git folder changes together with its files
+        const saveRepository = repository
+          ? (tx: Prisma.TransactionClient) => {
+              const git = Buffer.from(repository.git, "base64");
+              return tx.sandboxRepo.upsert({
+                where: { conversationId_path: { conversationId, path: repository.path } },
+                create: { conversationId, path: repository.path, git, size: git.length },
+                update: { git, size: git.length },
+              });
+            }
+          : undefined;
+        const { id, attachments: stored } = await saveStep(
+          {
+            role: "tool",
+            content,
+            toolCallId: call.id,
+            toolName: call.name,
+            metadata,
+            attachments: attachments.length ? { create: attachments } : undefined,
+          },
+          saveRepository
+        );
         toolSteps.set(call.id, { id, metadata });
         return {
           imageIds: stored.filter((a) => a.name === null).map((a) => a.id),
           files: stored
-            .filter((a) => a.name !== null)
+            .filter((a) => a.name !== null && !a.deleted)
             .map((a) => ({ id: a.id, name: a.name!, mimeType: a.mimeType, size: a.size ?? 0 })),
         };
-      } catch {
+      } catch (err) {
+        console.error(`Storing the result of ${call.name} failed: ${(err as Error)?.message || err}`);
         return none;
+      }
+    },
+    async saveSandboxRun(callId, run) {
+      try {
+        await prisma.sandboxRun.create({
+          data: {
+            conversationId,
+            toolCallId: callId,
+            kind: run.kind,
+            language: run.language,
+            code: run.code,
+            output: run.output,
+            status: run.status,
+            durationMs: run.durationMs,
+            ...(run.files ? { files: run.files } : {}),
+          },
+        });
+      } catch (err) {
+        console.error(`Storing a run failed: ${(err as Error)?.message || err}`);
       }
     },
     async saveToolDecision(callId, decision) {

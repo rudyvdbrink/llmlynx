@@ -90,11 +90,16 @@ export async function deleteUpload(userId: string, id: string): Promise<boolean>
 /** A sent message may not have one of its drafts. The message says why, for the user. */
 export class UploadRefused extends Error {}
 
-/** The drafts a message is sent with: `problem` says why the chat cannot take a file, or null. */
+/**
+ * The drafts a message is sent with: `problem` says why the chat cannot take a
+ * file, or null. `room` says why the files do not fit in the chat's sandbox,
+ * or null (see server/sandbox/room.ts).
+ */
 export type UploadsToSend = {
   userId: string;
   ids: string[];
   problem: (file: { name: string; size: number }) => string | null;
+  room?: (files: { name: string; size: number }[]) => string | null;
 };
 
 /** A draft as it moves into a message. */
@@ -111,7 +116,7 @@ export type SentFile = {
  * they are sent with. Throws UploadRefused, and takes none, when one of them
  * is not the user's or cannot go to this chat.
  */
-export async function takeUploads(tx: Prisma.TransactionClient, { userId, ids, problem }: UploadsToSend): Promise<SentFile[]> {
+export async function takeUploads(tx: Prisma.TransactionClient, { userId, ids, problem, room }: UploadsToSend): Promise<SentFile[]> {
   const wanted = [...new Set(ids)];
   const rows = await tx.upload.findMany({ where: { id: { in: wanted }, userId } });
   const drafts = wanted.map((id) => rows.find((row) => row.id === id));
@@ -128,6 +133,8 @@ export async function takeUploads(tx: Prisma.TransactionClient, { userId, ids, p
       info: draft.info as Prisma.InputJsonValue | null,
     });
   }
+  const full = room?.(files.map((f) => ({ name: f.name, size: f.data.length })));
+  if (full) throw new UploadRefused(`The files do not fit: ${full}`);
   await tx.upload.deleteMany({ where: { id: { in: wanted }, userId } });
   return files;
 }

@@ -1,0 +1,16 @@
+# What git takes in the git tool's jails when a repository's own config does
+# not say otherwise (see src/gitrepo.py). The settings that keep git from
+# running other programs are forced there, on its command line, not here.
+[user]
+	name = llmlynx
+	email = agent@llmlynx.invalid
+[init]
+	defaultBranch = main
+[safe]
+	directory = *
+[pull]
+	rebase = false
+[core]
+	quotePath = false
+[advice]
+	detachedHead = false

@@ -1,14 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import styles from "../Chat.module.css";
-import { FileIcon, GlobeIcon, SpannerIcon, WarningIcon } from "@/components/icons";
+import { ChevronRightIcon, FileIcon, GitBranchIcon, GlobeIcon, PackageIcon, SpannerIcon, TerminalIcon, WarningIcon } from "@/components/icons";
 import type { ToolIcon } from "@/lib/agentTools";
-import type { PauseDecision, StepSecurity, ToolStep } from "@/lib/types";
+import type { ApprovalDecision, PauseDecision, StepSecurity, ToolStep } from "@/lib/types";
 
-/** The icon of a tool step: a globe for the web tools, a file for the file tools, a spanner for the rest. */
+/**
+ * The icon of a tool step: a globe for the web tools, a file for the file
+ * tools, a terminal for running code, a package for installing packages, a
+ * spanner for the rest.
+ */
 export function ToolStepIcon({ icon, className }: { icon: ToolIcon; className?: string }) {
   if (icon === "globe") return <GlobeIcon className={className} />;
+  if (icon === "code") return <TerminalIcon className={className} />;
+  if (icon === "package") return <PackageIcon className={className} />;
+  if (icon === "git") return <GitBranchIcon className={className} />;
   return icon === "file" ? <FileIcon className={className} /> : <SpannerIcon className={className} />;
 }
 
@@ -22,19 +29,48 @@ function securityNote({ flag, source = "this source", decision }: StepSecurity):
 }
 
 /**
+ * Text behind a chevron, collapsed at first: what the classifier flagged, or
+ * the code a dialog asks about. It shows as plain text in a box that scrolls,
+ * never as markdown, so no link in it can be clicked and no image in it loads.
+ */
+function Expandable({ label, text }: { label: string; text: string }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement | null>(null);
+  // Opened, the text comes into view, also within the trace's own scrolling area
+  useEffect(() => {
+    if (open) box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [open]);
+  return (
+    <span className={styles.flagged}>
+      <button type="button" className={styles.flaggedToggle} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        <ChevronRightIcon className={styles.thinkingChevron} />
+        {label}
+      </button>
+      {open && (
+        <span ref={box} className={styles.flaggedText}>
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
  * One tool call in a reply's trace: what it did, and a screenshot's thumbnail.
- * When the security checks withheld its result, it says why. While the reply
- * is paused over it (`pauseId`), it is the pause dialog: the user chooses
- * "Remove and continue" or "Stop", and the choice goes to the server, which
- * goes on with the reply or ends it.
+ * When the security checks withheld its result, it says why, and the text they
+ * flagged opens below a chevron. While the reply is paused over it
+ * (`pauseId`), it is a dialog, and the choice goes to the server, which goes
+ * on with the reply or ends it: about flagged content, "Remove and continue"
+ * or "Stop"; about running code in a chat with such content, run it or not.
  */
 export default function ToolLine({ step }: { step: ToolStep }) {
-  const { security } = step;
-  const asking = !!step.pauseId && !security?.decision;
+  const { security, approval } = step;
+  const asking = !!step.pauseId && !!security && !security.decision;
+  const approving = !!step.pauseId && !!approval && !approval.decision;
   // The choice that is on its way to the server
-  const [chosen, setChosen] = useState<PauseDecision | null>(null);
+  const [chosen, setChosen] = useState<PauseDecision | ApprovalDecision | null>(null);
 
-  async function choose(decision: PauseDecision) {
+  async function choose(decision: PauseDecision | ApprovalDecision) {
     setChosen(decision);
     const res = await fetch(`/api/chat/pauses/${encodeURIComponent(step.pauseId ?? "")}`, {
       method: "POST",
@@ -45,8 +81,10 @@ export default function ToolLine({ step }: { step: ToolStep }) {
     if (!res?.ok) setChosen(null);
   }
 
+  const installs = step.name === "install_packages";
+
   return (
-    <div className={`${styles.toolStep} ${step.state === "error" ? styles.toolStepFailed : ""}`}>
+    <div id={`tool-${step.id}`} className={`${styles.toolStep} ${step.state === "error" ? styles.toolStepFailed : ""}`}>
       <ToolStepIcon icon={step.icon} className={styles.toolIcon} />
       <span className={styles.toolLabel} title={step.label}>
         {step.label}
@@ -63,6 +101,32 @@ export default function ToolLine({ step }: { step: ToolStep }) {
           <img src={`/api/attachments/${step.attachmentId}`} alt="" loading="lazy" />
         </a>
       )}
+      {approving && (
+        <div
+          className={`${styles.toolNotice} ${styles.toolNoticeAsking}`}
+          role="alertdialog"
+          aria-label={installs ? "Install these packages?" : "Run this code?"}
+        >
+          <WarningIcon className={styles.warnIcon} />
+          <span>
+            Text in this chat tried to instruct the model. {installs ? "Install these packages?" : "Run this code?"}
+          </span>
+          {approval.detail && <Expandable label={installs ? "Packages" : "Code"} text={approval.detail} />}
+          <span className={styles.choices}>
+            <button type="button" className={styles.choiceButton} onClick={() => choose("run")} disabled={chosen !== null}>
+              {installs ? "Install" : "Run"}
+            </button>
+            <button
+              type="button"
+              className={`${styles.choiceButton} ${styles.choiceSafe}`}
+              onClick={() => choose("skip")}
+              disabled={chosen !== null}
+            >
+              {installs ? "Don't install" : "Don't run"}
+            </button>
+          </span>
+        </div>
+      )}
       {security && (
         <div
           className={`${styles.toolNotice} ${asking ? styles.toolNoticeAsking : ""}`}
@@ -71,6 +135,7 @@ export default function ToolLine({ step }: { step: ToolStep }) {
         >
           <WarningIcon className={styles.warnIcon} />
           <span>{securityNote(security)}</span>
+          {security.chunk && <Expandable label="Flagged text" text={security.chunk} />}
           {asking && (
             <span className={styles.choices}>
               <button
