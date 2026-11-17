@@ -39,7 +39,7 @@ function labels(args: Args, state: ToolState, running: string, done: string, fai
 }
 
 /** What the model gets when the file it names is not there: the names it can use. */
-function missingFile(name: unknown, files: ConversationFile[]): string {
+export function missingFile(name: unknown, files: ConversationFile[]): string {
   const known = files.map((f) => f.name).join(", ");
   const asked = typeof name === "string" && name.trim() ? `There is no file named ${name.trim()}.` : "file is required.";
   return known ? `${asked} The files of this conversation are: ${known}.` : `${asked} This conversation has no files.`;

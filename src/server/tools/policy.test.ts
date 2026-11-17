@@ -8,7 +8,7 @@ const names = (tools: { name: string }[]) => tools.map((t) => t.name);
 describe("the tools of an agent", () => {
   it("gets share_file with any tool that works on files, and not without one", () => {
     expect(names(toolsFor({ tools: ["web_search"] }, ["tools"]))).toEqual(["web_search"]);
-    expect(names(toolsFor({ tools: ["run_code"] }, ["tools"]))).toEqual(["run_code", "share_file"]);
+    expect(names(toolsFor({ tools: ["run_code"] }, ["tools"]))).toEqual(["run_code", "share_file", "undo_file"]);
     expect(names(toolsFor({ tools: ["read_file", "web_fetch"] }, ["tools"]))).toEqual(["read_file", "web_fetch", "share_file"]);
   });
 
@@ -17,6 +17,12 @@ describe("the tools of an agent", () => {
     expect(names(toolsFor({ tools: ["web_search"] }, ["tools", "vision"]))).toEqual(["web_search"]);
     const guidance = toolGuidance(toolsFor({ tools: ["run_code"] }, ["tools", "vision"]), 7);
     expect(guidance).toMatch(/Look at an image file of the conversation, such as one you downloaded or a chart code made, with view_image/);
+  });
+
+  it("gets undo_file with run_code only", () => {
+    expect(names(toolsFor({ tools: ["edit_file", "git"] }, ["tools"]))).not.toContain("undo_file");
+    const guidance = toolGuidance(toolsFor({ tools: ["run_code"] }, ["tools"]), 7);
+    expect(guidance).toMatch(/To take back a change to a file, such as an edit or a run that went wrong, use undo_file/);
   });
 
   it("gets nothing on a model that cannot use tools", () => {
