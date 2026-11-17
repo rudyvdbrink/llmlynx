@@ -55,6 +55,29 @@ export function PlusIcon(props: IconProps) {
   );
 }
 
+// Lucide's "bot"
+export function RobotIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 8V4H8" />
+      <rect width="16" height="12" x="4" y="8" rx="2" />
+      <path d="M2 14h2" />
+      <path d="M20 14h2" />
+      <path d="M15 13v2" />
+      <path d="M9 13v2" />
+    </Icon>
+  );
+}
+
+// Lucide's "message-circle"
+export function SpeechBubbleIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" />
+    </Icon>
+  );
+}
+
 export function PinIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -269,6 +292,20 @@ export function FolderIcon(props: IconProps) {
     <Icon {...props}>
       <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
     </Icon>
+  );
+}
+
+// Not from Lucide: layered dunes in the page's blues, darkest at the top,
+// filling the box they are drawn in (the sandbox button)
+export function DunesIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 32 32" preserveAspectRatio="none" aria-hidden="true">
+      <rect width="32" height="32" fill="#111b2e" />
+      <path d="M0 7C5 4.5 10 3.6 14.6 5.4S19.5 8.4 22.3 7.5S27.5 5.3 32 5V32H0Z" fill="#1b294a" />
+      <path d="M0 13.7C4 12.9 6.2 12 7.8 11.1C10.2 9.4 12.9 8.4 14.8 8.5C18.3 8.7 20.7 10.2 22.2 11.3C25 13.3 27.3 14.5 30 14.7L32 14.2V32H0Z" fill="#253f6d" />
+      <path d="M0 17C3.9 15.6 7 15 9.8 15.6C12.9 16.4 15.6 19.9 20.3 20.1C23.4 20.2 25 18.3 30 14.7L32 14.6V32H0Z" fill="#325b98" />
+      <path d="M0 25.8C7.8 23.4 11.7 20.7 14.8 21C18.3 21.3 21 23.4 23.4 23.8C27.3 24.4 28.9 23.4 32 23V32H0Z" fill="#4080df" />
+    </svg>
   );
 }
 

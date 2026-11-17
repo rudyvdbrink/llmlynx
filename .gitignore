@@ -155,3 +155,4 @@ scrap/
 # Python caches of the guard server (tools/guard)
 __pycache__/
 .pytest_cache/
+docs/

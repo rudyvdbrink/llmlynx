@@ -57,6 +57,11 @@ html[data-dragging="x"] * { cursor: col-resize !important; }
 html[data-dragging="y"] * { cursor: row-resize !important; }
 html[data-dragging] iframe { pointer-events: none; }
 
+/* While the panel on the right is open (AppShell.tsx): on phones it covers the page, which keeps its place under it */
+@media (max-width: 760px) {
+  html[data-right-open] { overflow: hidden; }
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }

@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 import styles from "./AppShell.module.css";
-import Sidebar, { type SidebarProps } from "./sidebar/Sidebar";
+import boxStyles from "./BoxButton.module.css";
+import { ChevronRightIcon, DunesIcon, RobotIcon, SpeechBubbleIcon } from "./icons";
+import Sidebar, { linksToAgents, type SidebarProps } from "./sidebar/Sidebar";
 import { isSidebarOverlay } from "@/lib/viewport";
 import { clamp, followDrag } from "@/lib/drag";
 
@@ -19,21 +21,29 @@ const SANDBOX_BESIDE_MIN_PX = 1200;
 /**
  * Page frame with the collapsible sidebar. On wide screens the page makes room
  * for it; on small screens it opens over the page, and a backdrop closes it on
- * tap. `rightOpen` says a panel on the right is open (the chat's sandbox
- * panel), for which the page makes room on screens from 1200px. From 861px a
- * drag on the inner edge of either changes its width, until the page reloads.
+ * tap. `right` is the panel on the right, when there is one (the chat's
+ * sandbox panel), for which the page makes room on screens from 1200px. From
+ * 861px a drag on the inner edge of either changes its width, until the page
+ * reloads.
+ *
+ * Up to 860px a banner at the top has the buttons that open the sidebar,
+ * start a new conversation, open the panel on the right, and go to the agents
+ * page (when the sidebar's footer links there); the sidebar and the panel open
+ * below it. Opening the sidebar there closes the panel, which would cover it.
  */
 export default function AppShell({
   sidebar,
-  rightOpen = false,
+  right,
   children,
 }: {
   sidebar: Omit<SidebarProps, "collapsed" | "onToggle">;
-  rightOpen?: boolean;
+  right?: { open: boolean; onOpenChange: (open: boolean) => void };
   children: React.ReactNode;
 }) {
+  const rightOpen = !!right?.open;
   const [collapsed, setCollapsed] = useState(false);
   const pageRef = useRef<HTMLElement | null>(null);
+  const agentsLink = linksToAgents(sidebar.footerNavHref);
 
   // The viewport width is unknown during server rendering, so the server always
   // renders the sidebar expanded and this corrects it once after hydration.
@@ -41,6 +51,20 @@ export default function AppShell({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     if (isSidebarOverlay()) setCollapsed(true);
   }, []);
+
+  // While the panel on the right is open, the page under it keeps its place
+  // (on phones, where the panel covers it; see AppShell.module.css)
+  useEffect(() => {
+    if (!rightOpen) return;
+    const html = document.documentElement;
+    html.setAttribute("data-right-open", "");
+    return () => html.removeAttribute("data-right-open");
+  }, [rightOpen]);
+
+  function toggleFromBanner() {
+    if (collapsed) right?.onOpenChange(false);
+    setCollapsed(!collapsed);
+  }
 
   // The widths live in --sidebar-width and --sandbox-width on the page, set
   // here without a render, which a drag would otherwise cause on every move.
@@ -71,6 +95,42 @@ export default function AppShell({
       ref={pageRef}
       className={`${styles.page} ${collapsed ? "" : styles.sidebarOpen} ${rightOpen ? styles.rightOpen : ""}`}
     >
+      <header className={styles.banner}>
+        <button
+          type="button"
+          className={boxStyles.box}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!collapsed}
+          onClick={toggleFromBanner}
+        >
+          <ChevronRightIcon className={`${boxStyles.icon} ${styles.bannerChevron}`} />
+        </button>
+        <button type="button" className={boxStyles.box} aria-label="New conversation" onClick={sidebar.onNewConversation}>
+          <SpeechBubbleIcon className={boxStyles.icon} />
+        </button>
+        {(right || agentsLink) && (
+          <div className={styles.bannerEnd}>
+            {right && (
+              <button
+                type="button"
+                className={`${boxStyles.box} ${boxStyles.filled}`}
+                aria-label={right.open ? "Close the sandbox" : "Open the sandbox"}
+                aria-expanded={right.open}
+                onClick={() => right.onOpenChange(!right.open)}
+              >
+                <DunesIcon className={boxStyles.icon} />
+              </button>
+            )}
+            {agentsLink && (
+              <a href={sidebar.footerNavHref} className={boxStyles.box} aria-label={sidebar.footerNavLabel}>
+                {/* Drawn smaller in its box than the other icons, so a size up */}
+                <RobotIcon size={20} />
+              </a>
+            )}
+          </div>
+        )}
+      </header>
+
       {!collapsed && (
         <button
           type="button"

@@ -337,8 +337,8 @@ if __name__ == "__main__":
     if problem:
         log.error(
             "bubblewrap cannot make a jail here, so no code can run: %s. The container needs the seccomp profile "
-            "of tools/code (user namespaces and mounts in them), and a host without an AppArmor profile that "
-            "forbids mounts.",
+            "of tools/code (user namespaces and mounts in them), systempaths=unconfined (a /proc of its own), and "
+            "a host without an AppArmor profile that forbids mounts.",
             problem,
         )
     threading.Thread(target=sweeper, daemon=True).start()
