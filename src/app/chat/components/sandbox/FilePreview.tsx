@@ -265,7 +265,7 @@ export default function FilePreview({ id, name, mimeType, size }: { id: string; 
   const ext = extensionOf(name);
   if (isInlineImage(mimeType) || isSvg(mimeType)) {
     // eslint-disable-next-line @next/next/no-img-element -- an authenticated API image, not a static asset
-    return <div className={styles.scroll}><img className={styles.image} src={`/api/attachments/${id}`} alt={baseName(name)} /></div>;
+    return <div className={`${styles.scroll} ${styles.imageScroll}`}><img className={styles.image} src={`/api/attachments/${id}`} alt={baseName(name)} /></div>;
   }
   if (isHtml(mimeType)) return <HtmlView id={id} name={name} />;
   if (ext === "md" || ext === "markdown") return <MarkdownView id={id} />;
