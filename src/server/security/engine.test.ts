@@ -1,15 +1,13 @@
-// Tests of the engine: how the checks before a call combine, what the modes
-// do, what happens to content from the internet after a call, and the check
-// of a file from the internet.
+// Tests of the engine: what the modes do, what happens to content from the
+// internet after a call, and the check of a file from the internet.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ToolResult } from "@/server/tools/definitions";
 import { getToolDefinition } from "@/server/tools/definitions";
 import { fakes, INJECTION, SCREENSHOT, SIGNATURE, VIRUS } from "@/test/fakes";
 import type { SecurityEventInput } from "./audit";
-import type { PreCallCheck, Verdict } from "./checks";
 import { createSecurityContext } from "./context";
-import { checkAfterCall, checkBeforeCall, checkFile, flaggedResult, WITHHELD_NOTICE, type SecuritySession } from "./engine";
+import { checkAfterCall, checkFile, flaggedResult, WITHHELD_NOTICE, type SecuritySession } from "./engine";
 import { resetScanners } from "./scan";
 
 vi.mock("@/server/tools/mcp", () => import("@/test/fakes"));
@@ -32,69 +30,17 @@ beforeEach(() => {
   fakes.reset();
   resetScanners();
   events = [];
-  session = { userId: "user-1", audit, context: createSecurityContext(true) };
+  session = { userId: "user-1", audit, context: createSecurityContext() };
 });
 
 afterEach(() => vi.unstubAllEnvs());
 
-describe("before a call", () => {
-  const verdict = (level: Verdict["verdict"], reason: string): Verdict => ({
-    verdict: level,
-    check: "url",
-    reason,
-    message: `message of ${reason}`,
-    note: `note of ${reason}`,
-  });
-  const checks = (...verdicts: (Verdict | null)[]): PreCallCheck[] => verdicts.map((v) => () => v);
-
-  it("lets the strictest verdict win", () => {
-    const blocked = checkBeforeCall(
-      webRead,
-      { url: "https://x.example/" },
-      session,
-      checks(verdict("allow", "a"), verdict("warn", "w"), verdict("block", "b"), null)
-    );
-    expect(blocked).toEqual({ text: "message of b", images: [], files: [], error: true, note: "note of b" });
-    expect(events).toEqual([expect.objectContaining({ tool: "web_read", check: "url", verdict: "block", reason: "b" })]);
-  });
-
-  it("lets a call with a warning run, and logs the warning", () => {
-    expect(checkBeforeCall(webRead, {}, session, checks(verdict("allow", "a"), verdict("warn", "w")))).toBeNull();
-    expect(events).toEqual([expect.objectContaining({ verdict: "warn", reason: "w" })]);
-  });
-
-  it("does not log a plain allow", () => {
-    expect(checkBeforeCall(webRead, {}, session, checks(verdict("allow", "a"), null))).toBeNull();
-    expect(checkBeforeCall(webRead, {}, session, checks(null))).toBeNull();
-    expect(events).toEqual([]);
-  });
-
-  it("applies the URL rules: a made-up URL passes in a clean conversation and is blocked in a tainted one", () => {
-    const url = "https://en.wikipedia.org/wiki/Lynx";
-    expect(checkBeforeCall(webRead, { url }, session)).toBeNull();
-    session.context.tainted = true;
-    const blocked = checkBeforeCall(webRead, { url }, session);
-    expect(blocked).toMatchObject({ error: true, note: "blocked: unknown URL" });
-    expect(blocked?.text).toMatch(/^Blocked: this URL does not come from the user or from a search result\. Find the page with web_search/);
-    expect(events.map((event) => [event.verdict, event.reason, event.host])).toEqual([
-      ["warn", "url_unknown", "en.wikipedia.org"],
-      ["block", "url_unknown_tainted", "en.wikipedia.org"],
-    ]);
-  });
-
-  it("has no setting that switches the checks off", () => {
-    vi.stubEnv("SECURITY_MODE", "off");
-    expect(checkBeforeCall(webRead, {}, session, checks(verdict("block", "b")))).toMatchObject({ error: true });
-  });
-});
-
 describe("after a call: content from the internet", () => {
-  it("passes clean content on, scanned once by each scanner, and learns its URLs", async () => {
+  it("passes clean content on, scanned once by each scanner", async () => {
     const text = "The lynx lives in forests. More: https://site.example/lynx/habitat";
     expect(await after(text)).toEqual(result(text));
     expect(fakes.guardTexts).toEqual([text]);
     expect(fakes.clamdScans).toEqual([text]);
-    expect(session.context.knownUrls.has("https://site.example/lynx/habitat")).toBe(true);
     expect(session.context.tainted).toBe(false);
     expect(events.map((event) => [event.check, event.verdict, event.host])).toEqual([
       ["injection", "allow", "site.example"],
@@ -132,7 +78,6 @@ describe("after a call: content from the internet", () => {
     });
     expect(checked.pause).toBeUndefined();
     expect(session.context.tainted).toBe(false);
-    expect(session.context.knownUrls.size).toBe(0);
     expect(events).toContainEqual(expect.objectContaining({ check: "virus", verdict: "block", reason: "virus", host: "site.example" }));
   });
 
@@ -157,14 +102,13 @@ describe("after a call: content from the internet", () => {
       files: [],
       error: true,
       note: "withheld",
-      security: { flag: "injection", source: "site.example", score: 0.98 },
+      security: { flag: "injection", source: "site.example", score: 0.98, chunk: page },
       pause: { source: "site.example" },
     });
     expect(WITHHELD_NOTICE).toBe("Withheld by llmlynx: the content looked like instructions aimed at the model.");
     expect(session.context.tainted).toBe(true);
-    // Nothing of the page reaches the model: not its text, not its URLs
-    expect(session.context.knownUrls.size).toBe(0);
-    expect(JSON.stringify(checked)).not.toContain("evil.example");
+    // Nothing of the page reaches the model; only the user sees the flagged chunk
+    expect(JSON.stringify({ ...checked, security: undefined })).not.toContain("evil.example");
   });
 
   it("withholds the whole result: no part of a flagged page is passed on", async () => {
@@ -189,7 +133,6 @@ describe("after a call: content from the internet", () => {
       security: { flag: "unchecked", source: "site.example" },
     });
     expect(session.context.tainted).toBe(false);
-    expect(session.context.knownUrls.size).toBe(0);
     // The guard is skipped now: the next result does not wait for it again
     fakes.guard = "up";
     expect((await after("Another page.")).note).toBe("not checked");
@@ -221,12 +164,11 @@ describe("after a call: content from the internet", () => {
     expect(await after(`A file. ${VIRUS}`)).toMatchObject({ error: true, note: "discarded" });
   });
 
-  it("only adds the URLs of results of other tools, which are not from the internet", async () => {
+  it("does not scan the results of other tools, which are not from the internet", async () => {
     const text = `notes.md:\n${INJECTION}\nhttps://files.example/a`;
     expect(await checkAfterCall(readFile, { file: "notes.md" }, result(text), session, signal())).toEqual(result(text));
     expect(fakes.guardTexts).toEqual([]);
     expect(fakes.clamdScans).toEqual([]);
-    expect(session.context.knownUrls.has("https://files.example/a")).toBe(true);
   });
 });
 
@@ -260,7 +202,7 @@ describe("the check of a file from the internet", () => {
 
   it("withholds a file with a prompt injection and asks for the pause dialog, with no way to accept it", async () => {
     const outcome = await check(`Minutes of the meeting. ${INJECTION}`);
-    expect(outcome).toEqual({ outcome: "injection", action: "pause", score: 0.98 });
+    expect(outcome).toEqual({ outcome: "injection", action: "pause", score: 0.98, chunk: `Minutes of the meeting. ${INJECTION}` });
     // It comes without its text: the model gets none of it
     expect("text" in outcome).toBe(false);
     // The same result, and so the same dialog, as a flagged page: the file's name is its source

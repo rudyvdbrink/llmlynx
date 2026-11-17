@@ -1,22 +1,20 @@
 // The security layer's entry point, used by runTool (server/tools/run.ts)
-// and by the upload path (server/files/uploads.ts). It guards against three
+// and by the upload path (server/files/uploads.ts). It guards against two
 // things: text from the internet that tries to instruct the model (prompt
-// injection), URLs that carry conversation data out, and malware. See
-// docs/security.md for what happens on each detection.
+// injection), and malware. See docs/security.md for what happens on each
+// detection.
 //
-// Before a tool call, synchronous checks run on what is in memory
-// (checks.ts). After a call of a tool whose result comes from the internet,
-// the result is scanned (scan.ts) before the model gets anything. A file is
-// checked once, when it arrives (checkFile).
+// After a call of a tool whose result comes from the internet, the result is
+// scanned (scan.ts) before the model gets anything. A file is checked once,
+// when it arrives (checkFile).
 
 import { fileKind } from "@/lib/files";
-import type { PauseDecision, StepSecurity } from "@/lib/types";
+import type { ApprovalDecision, PauseDecision, StepSecurity } from "@/lib/types";
 import { prisma } from "@/server/db/prisma";
 import { convertFile } from "@/server/files/convert";
-import type { FileInfo } from "@/server/files/store";
+import { isUntrusted, rememberedScan, rememberScan, type ConversationFile, type FileInfo } from "@/server/files/store";
 import type { Args, ToolDefinition, ToolResult } from "@/server/tools/definitions";
-import type { AuditLog } from "./audit";
-import { PRE_CALL_CHECKS, strictest, type PreCallCheck } from "./checks";
+import { contentHash, type AuditLog } from "./audit";
 import { contextFromSteps, type SecurityContext } from "./context";
 import { FILE_GUARD_TIMEOUT_MS, TOOL_SCAN_TIMEOUT_MS, UPLOAD_VIRUS_TIMEOUT_MS } from "./limits";
 import { openPause } from "./pause";
@@ -28,6 +26,13 @@ export type SecuritySession = { userId: string; context: SecurityContext; audit:
 
 /** What the model gets, and what is stored, in place of content that looked like a prompt injection. */
 export const WITHHELD_NOTICE = "Withheld by llmlynx: the content looked like instructions aimed at the model.";
+
+// What the dialogs call content that is not from a web page: "Text from the code's output looks like ..."
+const SOURCES: Record<string, string> = {
+  run_code: "the code's output",
+  install_packages: "the install's report",
+  git: "git's output",
+};
 
 // Unicode tag characters are invisible and can carry a hidden prompt
 const TAG_CHARACTERS = /[\u{E0000}-\u{E007F}]/gu;
@@ -49,45 +54,8 @@ export async function openSecurity({
   audit: AuditLog;
 }): Promise<SecuritySession | null> {
   if (!tools.length) return null;
-  const steps = await prisma.message.findMany({
-    where: { conversationId, role: { in: ["user", "tool"] } },
-    orderBy: { position: "asc" },
-    select: {
-      role: true,
-      content: true,
-      metadata: true,
-      attachments: { where: { parentId: null, name: { not: null } }, select: { text: true } },
-    },
-  });
-  return { userId, audit, context: contextFromSteps(steps, tools.some((tool) => tool.name === "web_search")) };
-}
-
-/**
- * The checks before a tool call: no I/O, only what is in memory. Returns the
- * error result the model gets when the call is blocked, or null when it may
- * run. A warning is only logged.
- */
-export function checkBeforeCall(
-  def: ToolDefinition,
-  args: Args,
-  session: SecuritySession,
-  checks: PreCallCheck[] = PRE_CALL_CHECKS
-): ToolResult | null {
-  const action = { tool: def, args };
-  const verdict = strictest(checks.map((check) => check(action, session.context)));
-  if (!verdict || verdict.verdict === "allow") return null;
-
-  const blocked = verdict.verdict === "block";
-  session.audit.add({
-    tool: def.name,
-    check: verdict.check,
-    verdict: blocked ? "block" : "warn",
-    reason: verdict.reason,
-    host: verdict.host,
-    contentHash: verdict.contentHash,
-  });
-  if (!blocked) return null;
-  return { text: verdict.message ?? "Blocked by llmlynx.", images: [], files: [], error: true, note: verdict.note ?? "blocked" };
+  const steps = await prisma.message.findMany({ where: { conversationId, role: "tool" }, select: { metadata: true } });
+  return { userId, audit, context: contextFromSteps(steps) };
 }
 
 /**
@@ -97,7 +65,7 @@ export function checkBeforeCall(
  * not be checked is withheld. `source` is what was flagged: a page's host, or
  * a file name.
  */
-export function flaggedResult(flag: StepSecurity["flag"], source: string, score?: number): ToolResult {
+export function flaggedResult(flag: StepSecurity["flag"], source: string, score?: number, chunk?: string): ToolResult {
   const none = { images: [], files: [], error: true };
   if (flag === "virus") {
     return {
@@ -119,17 +87,17 @@ export function flaggedResult(flag: StepSecurity["flag"], source: string, score?
     ...none,
     text: WITHHELD_NOTICE,
     note: "withheld",
-    security: { flag, source, ...(score !== undefined ? { score } : {}) },
+    security: { flag, source, ...(score !== undefined ? { score } : {}), ...(chunk ? { chunk } : {}) },
     pause: { source },
   };
 }
 
 /**
  * The checks after a tool call. The result of a tool whose output comes from
- * the internet is scanned for a prompt injection and for malware, in
- * parallel; the model gets it only when both pass (see `flaggedResult`
- * otherwise). Every result the model gets adds its URLs to the known ones.
- * Throws only when `signal` aborts.
+ * the internet or from code is scanned for a prompt injection and for
+ * malware, in parallel; the model gets it only when both pass (see
+ * `flaggedResult` otherwise). What a run did to the sandbox stays, also when
+ * its output is withheld. Throws only when `signal` aborts.
  */
 export async function checkAfterCall(
   def: ToolDefinition,
@@ -139,10 +107,8 @@ export async function checkAfterCall(
   signal: AbortSignal
 ): Promise<ToolResult> {
   const { context, audit } = session;
-  if (!def.effects.untrustedOutput) {
-    context.addToolResult(result.text);
-    return result;
-  }
+  // Flagged already, or checked by the tool itself
+  if (result.security || !def.effects.untrustedOutput || result.scanned) return result;
 
   const text = result.text.replace(TAG_CHARACTERS, "");
   const host = hostOf(args.url);
@@ -152,19 +118,73 @@ export async function checkAfterCall(
     scanVirus(Buffer.from(text), scan),
     ...result.images.map((image) => scanVirus(Buffer.from(image.data, "base64"), scan)),
   ]);
-  const source = host ?? def.name.replace(/_/g, " ");
+  const source = host ?? SOURCES[def.name] ?? def.name.replace(/_/g, " ");
+  // What a run of code did to the sandbox happened, whatever it printed: it ran, only its output is withheld
+  const done = {
+    files: result.files,
+    deletions: result.deletions,
+    repository: result.repository,
+    run: result.run,
+    ...(result.run ? { label: def.label(args, "done") } : {}),
+  };
 
-  if (viruses.some((virus) => virus.status === "flagged")) return flaggedResult("virus", source);
+  if (viruses.some((virus) => virus.status === "flagged")) return { ...flaggedResult("virus", source), ...done };
   if (injection.status === "flagged") {
     context.tainted = true;
-    return flaggedResult("injection", source, injection.score);
+    return { ...flaggedResult("injection", source, injection.score, injection.chunk), ...done };
   }
   if (injection.status === "unchecked" || viruses.some((virus) => virus.status === "unchecked")) {
-    return flaggedResult("unchecked", source);
+    return { ...flaggedResult("unchecked", source), ...done };
   }
 
-  context.addToolResult(text);
   return { ...result, text };
+}
+
+/**
+ * The check of `text`, a part of an untrusted file (made by code, or
+ * downloaded), before the model reads it: it is scanned for a prompt
+ * injection, unless that part was scanned before, whose verdict is remembered
+ * with the file. Returns the result the model gets in its place when it is
+ * flagged or could not be checked (see `flaggedResult`), or null when the
+ * model may read it. Hidden Unicode tag characters are removed first: `text`
+ * in the answer is what the model may read. Throws only when `signal` aborts.
+ */
+export async function checkFileRead({
+  file,
+  text,
+  tool,
+  session,
+  signal,
+}: {
+  file: Pick<ConversationFile, "id" | "name" | "origin">;
+  text: string;
+  tool: string;
+  session: SecuritySession;
+  signal: AbortSignal;
+}): Promise<{ blocked: ToolResult } | { text: string }> {
+  if (!isUntrusted(file)) return { text };
+  const clean = text.replace(TAG_CHARACTERS, "");
+  const hash = contentHash(clean);
+  const flagged = (score: number, chunk?: string) => {
+    session.context.tainted = true;
+    return { blocked: flaggedResult("injection", file.name, score, chunk) };
+  };
+
+  const known = await rememberedScan(file.id, hash);
+  if (known) {
+    const about = { tool, check: "injection" as const, contentHash: hash, score: known.score, durationMs: 0 };
+    session.audit.add({ ...about, verdict: known.flagged ? "block" : "allow", reason: known.flagged ? "injection" : "clean" });
+    return known.flagged ? flagged(known.score, known.chunk) : { text: clean };
+  }
+
+  const scan = await scanInjection(clean, { timeoutMs: TOOL_SCAN_TIMEOUT_MS, signal, audit: session.audit, tool });
+  if (scan.status === "unchecked") return { blocked: flaggedResult("unchecked", file.name) };
+  if (scan.status === "flagged") {
+    await rememberScan(file.id, hash, { flagged: true, score: scan.score, ...(scan.chunk ? { chunk: scan.chunk } : {}) });
+    return flagged(scan.score, scan.chunk);
+  }
+  if (scan.status === "clean") await rememberScan(file.id, hash, { flagged: false, score: scan.score });
+  return { text: clean };
 }
 
 /**
@@ -200,6 +220,30 @@ export async function awaitDecision({
   return decision;
 }
 
+/**
+ * Asks the user before code runs in a tainted chat: text that tried to
+ * instruct the model is in it, so it may try to get code run. "run" runs it,
+ * "skip" goes on without the run, and "stop" (no answer in time, or a stopped
+ * chat) ends the reply. `announce` gets the id under which the answer can be sent.
+ */
+export async function awaitApproval({
+  session,
+  tool,
+  signal,
+  announce,
+}: {
+  session: SecuritySession;
+  tool: string;
+  signal: AbortSignal;
+  announce: (pauseId: string) => void;
+}): Promise<ApprovalDecision | "stop"> {
+  const pause = openPause(session.userId, signal, undefined, "approval");
+  announce(pause.id);
+  const decision = await pause.decision;
+  session.audit.add({ tool, check: "decision", verdict: decision === "run" ? "allow" : "block", reason: "tainted", decision });
+  return decision;
+}
+
 /** Where a file comes from: attached by the user, or fetched from the internet by a tool. */
 export type FileSource = "user" | "internet";
 
@@ -213,7 +257,7 @@ export type FileSource = "user" | "internet";
  */
 export type FileCheck =
   | { outcome: "clean"; text: string | null; info: FileInfo | null }
-  | { outcome: "injection"; action: "pause"; score: number }
+  | { outcome: "injection"; action: "pause"; score: number; chunk?: string }
   | { outcome: "virus"; action: "refuse" | "discard"; signature: string }
   | { outcome: "unchecked"; action: "refuse" | "withhold" };
 
@@ -232,12 +276,16 @@ export async function checkFile({
   source,
   audit,
   signal,
+  tool,
+  host,
 }: {
   data: Uint8Array;
   name: string;
   source: FileSource;
   audit: AuditLog;
   signal: AbortSignal;
+  tool?: string; // the tool that fetched it, for the log
+  host?: string | null; // where it came from, for the log
 }): Promise<FileCheck> {
   const user = source === "user";
   const unchecked: FileCheck = { outcome: "unchecked", action: user ? "refuse" : "withhold" };
@@ -247,7 +295,7 @@ export async function checkFile({
   const converting = fileKind(name) === "image" ? null : convertFile(name, data, stopped);
   // Until it is awaited below, so a failure after a virus was found is not left unhandled
   converting?.catch(() => {});
-  const virus = await scanVirus(data, { timeoutMs: UPLOAD_VIRUS_TIMEOUT_MS, signal, audit });
+  const virus = await scanVirus(data, { timeoutMs: UPLOAD_VIRUS_TIMEOUT_MS, signal, audit, tool, host });
   if (virus.status !== "clean") {
     stop.abort();
     return virus.status === "flagged" ? { outcome: "virus", action: user ? "refuse" : "discard", signature: virus.signature } : unchecked;
@@ -267,8 +315,8 @@ export async function checkFile({
   const { text, info } = converted;
   if (user || !text) return { outcome: "clean", text, info };
 
-  const injection = await scanInjection(text, { timeoutMs: FILE_GUARD_TIMEOUT_MS, signal, audit });
-  if (injection.status === "flagged") return { outcome: "injection", action: "pause", score: injection.score };
+  const injection = await scanInjection(text, { timeoutMs: FILE_GUARD_TIMEOUT_MS, signal, audit, tool, host });
+  if (injection.status === "flagged") return { outcome: "injection", action: "pause", score: injection.score, chunk: injection.chunk };
   if (injection.status === "unchecked") return unchecked;
   return { outcome: "clean", text, info };
 }

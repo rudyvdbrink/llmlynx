@@ -257,6 +257,10 @@
   .toolList {
     grid-template-columns: 1fr;
   }
+  /* Select all is the first row of its own; in one column it needs no empty neighbour */
+  .toolListSpacer {
+    display: none;
+  }
 }
 /* The previous model's answer, until the new model's arrives. The delay keeps
    a quick answer from making the page flicker. */

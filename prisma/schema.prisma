@@ -53,6 +53,11 @@ model Conversation {
   updatedAt DateTime  @updatedAt
   messages  Message[]
   securityEvents SecurityEvent[]
+  // The chat's sandbox: its files are the named attachments of its messages (see server/files/store.ts)
+  sandboxRuns     SandboxRun[]
+  sandboxPackages SandboxPackage[]
+  sandboxLocks    SandboxLock[]
+  sandboxRepos    SandboxRepo[]
 
   @@index([userId, updatedAt])
 }
@@ -88,16 +93,18 @@ model Message {
 }
 
 // A file that belongs to a message: one the user attached (user message), one
-// a file tool created (tool step), or a screenshot a tool returned (tool step,
-// no name). Stored in the database, so backups include it and deleting the
-// conversation deletes it.
+// a tool made (tool step: a file tool, a run of code or a download), or a
+// screenshot a tool returned (tool step, no name). Stored in the database, so
+// backups include it and deleting the conversation deletes it. The named ones
+// are the chat's sandbox: the newest version of each name is the current one,
+// older ones are its history (see server/files/store.ts).
 model MessageAttachment {
   id        String   @id @default(uuid())
   messageId String
   message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
   mimeType  String
   data      Bytes
-  name      String?  // the file name; null for a screenshot
+  name      String?  // the file's path in the sandbox, such as "data.csv" or "out/plot.png"; null for a screenshot
   size      Int?     // bytes of data
   text      String?  // the file as the model reads it (markdown); null until converted
   info      Json?    // what converting it found, such as { pages, textlessPages } of a PDF, or { error }
@@ -106,6 +113,15 @@ model MessageAttachment {
   parentId  String?
   parent    MessageAttachment?  @relation("Derived", fields: [parentId], references: [id], onDelete: Cascade)
   derived   MessageAttachment[] @relation("Derived")
+  // Where the file came from when not from the message itself: "code" (a run made or changed it,
+  // or it was edited from such a file) or "internet" (web_fetch). Both are untrusted. null: the
+  // user attached it (user message) or a file tool made it (tool step)
+  origin    String?
+  // A deletion: the run of this tool step deleted the file `name`. Holds no data
+  deleted   Boolean  @default(false)
+  // The prompt injection scans of the parts of its text the model read, by the SHA-256 of the
+  // part: { [hash]: { flagged, score } }. Only untrusted files are scanned, when they are read
+  scans     Json?
   createdAt DateTime @default(now())
 
   @@index([messageId])
@@ -129,6 +145,67 @@ model Upload {
 
   @@index([userId])
   @@index([createdAt])
+}
+
+// A run of code (run_code) or an install of packages (install_packages) in a
+// chat's sandbox, as the sandbox panel lists it. What the model got of it is
+// the tool step of the call; this keeps all of what it printed (up to 1 MB).
+model SandboxRun {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  toolCallId     String       // the call in the chat's trace
+  kind           String       // "run" | "install"
+  language       String       // run: "python" | "javascript" | "typescript" | "shell"; install: "pypi" | "npm"
+  code           String       // the code, or the packages asked for
+  output         String       // what it printed, or what pip or npm reported
+  status         String       // "ok" | "error" | "timeout" | "stopped" | "withheld" | "blocked" | "skipped"
+  durationMs     Int
+  files          Json?        // what the run did to the sandbox: { changed: string[], deleted: string[] }
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// A package installed for a chat's runs (see install_packages).
+model SandboxPackage {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  ecosystem      String       // "pypi" | "npm"
+  name           String
+  version        String
+  requested      Boolean      // asked for by the model, rather than needed by another package
+  installedAt    DateTime     @default(now())
+
+  @@index([conversationId])
+}
+
+// Exactly what a chat's packages of one ecosystem are, so the code container
+// can install them again after it removed them (unused for 30 days, see tools/code).
+model SandboxLock {
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  ecosystem      String       // "pypi" | "npm"
+  requested      Json         // what the model asked for, such as ["pandas>=2", "seaborn"]
+  lock           String       // pypi: "name==version" lines; npm: the package-lock.json
+  updatedAt      DateTime     @updatedAt
+
+  @@id([conversationId, ecosystem])
+}
+
+// A git repository of a chat (see the git tool): a folder of its sandbox, whose
+// files are its work tree, and its .git folder, kept here rather than as files
+// of the sandbox, so that runs of code never see it.
+model SandboxRepo {
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  path           String       // its folder in the sandbox, such as "hello-world"; "" for the sandbox itself
+  git            Bytes        // its .git folder, as a gzipped tar
+  size           Int
+  updatedAt      DateTime     @updatedAt
+
+  @@id([conversationId, path])
 }
 
 // The audit log of the security checks: every scan, every warning and block

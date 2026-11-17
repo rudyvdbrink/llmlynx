@@ -8,9 +8,9 @@ import { prisma } from "@/server/db/prisma";
 
 export type SecurityEventInput = {
   tool?: string; // the tool whose call or result was checked
-  check: "url" | "injection" | "virus" | "decision";
-  verdict: "allow" | "warn" | "block";
-  reason: string; // a reason code, such as "clean", "injection" or "url_exfil"
+  check: "injection" | "virus" | "decision";
+  verdict: "allow" | "block";
+  reason: string; // a reason code, such as "clean" or "injection"
   score?: number;
   host?: string | null;
   contentHash?: string;

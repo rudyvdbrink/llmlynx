@@ -12,11 +12,21 @@ const LABELS: Record<ReplyStatus, string> = { reading: "Reading files…", loadi
 // How long the scrollbar stays visible after the user stops scrolling
 const SCROLLBAR_MS = 1000;
 
-const isRunning = (item: TraceItem): item is { kind: "tool"; step: ToolStep } =>
-  item.kind === "tool" && item.step.state === "running";
+// The reply waits for the user's choice about this step: its result, or whether its code may run (see ToolLine.tsx)
+const isAsking = (item: TraceItem) =>
+  item.kind === "tool" &&
+  !!item.step.pauseId &&
+  ((!!item.step.security && !item.step.security.decision) || (!!item.step.approval && !item.step.approval.decision));
 
-// The reply waits for the user's choice about this step's result (see ToolLine.tsx)
-const isAsking = (item: TraceItem) => item.kind === "tool" && !!item.step.pauseId && !item.step.security?.decision;
+// A running step shows in the status line, unless it asks the user something: then it is in the trace
+const isRunning = (item: TraceItem): item is { kind: "tool"; step: ToolStep } =>
+  item.kind === "tool" && item.step.state === "running" && !isAsking(item);
+
+/** Asks the reply whose trace holds the tool call `id` to show it (the sandbox panel's link to a run). */
+export function showToolCall(id: string) {
+  window.dispatchEvent(new CustomEvent(SHOW_TOOL_EVENT, { detail: id }));
+}
+const SHOW_TOOL_EVENT = "llmlynx:show-tool";
 
 /**
  * Shows what the model does before its reply starts, with one status line
@@ -59,6 +69,19 @@ export default function Thinking({ trace = [], status }: { trace?: TraceItem[]; 
   }, [trace]);
 
   useEffect(() => () => clearTimeout(scrollTimer.current), []);
+
+  // The sandbox panel's link to a run: the trace that holds its call opens, and the call scrolls into view
+  useEffect(() => {
+    function onShow(event: Event) {
+      const id = (event as CustomEvent<string>).detail;
+      if (!trace.some((item) => item.kind === "tool" && item.step.id === id)) return;
+      setOpen(true);
+      // After the panel has opened
+      setTimeout(() => document.getElementById(`tool-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 400);
+    }
+    window.addEventListener(SHOW_TOOL_EVENT, onShow);
+    return () => window.removeEventListener(SHOW_TOOL_EVENT, onShow);
+  }, [trace]);
 
   function onScroll() {
     const el = scrollRef.current;

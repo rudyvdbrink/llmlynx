@@ -16,7 +16,7 @@ describe("the audit log", () => {
     const write = vi.spyOn(prisma.securityEvent, "createMany");
 
     audit.add({ tool: "web_read", check: "injection", verdict: "allow", reason: "clean", score: 0.02, host: "a.example", contentHash: contentHash("page"), durationMs: 12 });
-    audit.add({ tool: "web_read", check: "url", verdict: "warn", reason: "url_unknown", host: "b.example" });
+    audit.add({ tool: "web_fetch", check: "virus", verdict: "allow", reason: "clean", host: "b.example" });
     audit.add({ check: "decision", verdict: "block", reason: "injection", decision: "stop" });
     expect(write).not.toHaveBeenCalled();
     expect(await eventsOf(userId)).toEqual([]);
@@ -26,7 +26,7 @@ describe("the audit log", () => {
     const events = await eventsOf(userId);
     expect(events.map((event) => [event.check, event.verdict, event.reason, event.conversationId])).toEqual([
       ["injection", "allow", "clean", conversationId],
-      ["url", "warn", "url_unknown", conversationId],
+      ["virus", "allow", "clean", conversationId],
       ["decision", "block", "injection", conversationId],
     ]);
     expect(events[0]).toMatchObject({ tool: "web_read", score: 0.02, host: "a.example", durationMs: 12, decision: null });

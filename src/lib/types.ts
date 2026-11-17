@@ -12,6 +12,9 @@ export type ChatMessage = { role: Role; content: string; images?: { mimeType: st
 // What the user chose when a reply paused over flagged content from the internet
 export type PauseDecision = "remove" | "stop";
 
+// What the user chose when a reply in a tainted chat asked before running code: run it, or go on without
+export type ApprovalDecision = "run" | "skip";
+
 // What the security checks found in a tool's result, which the model then did
 // not get: text that looks like instructions aimed at the model ("injection"),
 // malware ("virus"), or content that could not be checked ("unchecked").
@@ -20,6 +23,7 @@ export type StepSecurity = {
   score?: number; // the classifier's score, 0 to 1
   source?: string; // what was flagged: a page's host, or a file name
   decision?: PauseDecision; // what the user chose, once they did
+  chunk?: string; // injection: the text the classifier flagged (its chunk with the highest score), for the user only
 };
 
 // A tool the model called while working on a reply, as the chat view shows it.
@@ -32,6 +36,9 @@ export type ToolStep = {
   state: "running" | "done" | "error";
   attachmentId?: string; // a screenshot, served by /api/attachments/:id
   security?: StepSecurity;
+  // Set on a call that runs code in a tainted chat: the user is asked first, and `decision` is their
+  // answer. `detail` is what would run: the code, or the packages to install
+  approval?: { decision?: ApprovalDecision; detail?: string };
   pauseId?: string; // set while the reply waits for the user's choice about this step
 };
 

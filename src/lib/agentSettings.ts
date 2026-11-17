@@ -34,6 +34,15 @@ export const DEFAULT_SETTINGS: Record<OptionFamily, AgentSettings> = {
   api: {},
 };
 
+/**
+ * The context window an Ollama agent starts with: half of the most its base
+ * model supports (`contextLength`, rounded down to a whole number of tokens),
+ * or DEFAULT_SETTINGS' 2048 when the model does not say.
+ */
+export function defaultContextWindow(contextLength: number | null | undefined): number {
+  return contextLength && contextLength > 1 ? Math.floor(contextLength / 2) : Number(DEFAULT_SETTINGS.ollama.num_ctx);
+}
+
 type Rule =
   | { type: "number"; integer: boolean; isValid: (v: number) => boolean; message: string }
   | { type: "text"; isValid: (v: string) => boolean; message: string };

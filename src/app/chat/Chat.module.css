@@ -16,11 +16,11 @@
   .chatArea { padding-block: 128px; }
 }
 
-/* Fixed logo, centered on the space beside the sidebar (see AppShell.module.css) */
+/* Fixed logo, centered on the space beside the sidebar and the sandbox panel (see AppShell.module.css) */
 .fixedCenterLogo {
   position: fixed;
   top: 96px;
-  left: calc(50% + var(--sidebar-space, 0px) / 2);
+  left: calc(50% + var(--sidebar-space, 0px) / 2 - var(--sandbox-space, 0px) / 2);
   transform: translateX(-50%);
   width: clamp(512px, 50vw, 512px);
   height: 384px;
@@ -838,6 +838,51 @@
   color: var(--text);
 }
 
+/* The text the classifier flagged, behind a chevron like "Show thinking"'s. Plain
+   text in a box that scrolls; links in it are text, so nothing in it loads. */
+.toolNotice > .flagged { grid-column: 2; }
+.flagged {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+.flaggedToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: -4px -8px;
+  padding: 4px 8px;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+.flaggedToggle:hover,
+.flaggedToggle:focus-visible { color: var(--text); outline: none; }
+.flaggedToggle[aria-expanded="true"] .thinkingChevron { transform: rotate(90deg); }
+.flaggedText {
+  display: block;
+  align-self: stretch;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
 /* A user message with files: the files above its bubble, both at the right */
 .messageRow.user.withFiles { flex-direction: column; align-items: flex-end; gap: 6px; }
 
@@ -919,3 +964,95 @@
 .fileImageCaption:hover,
 .fileImageCaption:focus-visible { background: var(--surface-hover); outline: none; }
 .fileImageCaption .fileName { font-size: 13px; }
+
+/* An HTML artifact: its page in a sandboxed frame, with buttons that open it full size and download it */
+.fileFrame { width: min(560px, 100%); max-width: 100%; }
+.fileFrameView {
+  display: block;
+  width: 100%;
+  height: 320px;
+  border: 0;
+  background: #fff;
+}
+.fileFrame .fileImageCaption:hover { background: none; }
+.fileActions { display: inline-flex; align-items: center; gap: 12px; flex: none; }
+.fileActions a { display: inline-flex; padding: 2px; border-radius: 4px; }
+.fileActions a:hover .fileDownload,
+.fileActions a:focus-visible .fileDownload { color: var(--text); }
+.fileActions a:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+
+/* An image shown big (ImageViewer.tsx): over the page, which darkens behind it */
+.viewer[open] {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+  animation: viewerIn 0.16s ease both;
+}
+.viewer::backdrop {
+  background: rgba(2, 6, 23, 0.72);
+  animation: viewerIn 0.16s ease both;
+}
+@keyframes viewerIn {
+  from { opacity: 0; }
+}
+/* The page under it does not scroll, a swipe does not go back in the history,
+   and its scrollbar gutter, which the backdrop does not reach, darkens with it */
+:global(html):has(.viewer[open]) {
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: color-mix(in srgb, rgb(2, 6, 23) 72%, var(--bg));
+}
+.viewerImage {
+  display: block;
+  max-width: calc(100vw - 144px);
+  max-height: calc(100dvh - 112px);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.viewerButton {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(11, 18, 32, 0.75);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.viewerButton:hover { color: var(--text); background: var(--surface-hover); }
+.viewerButton:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; color: var(--text); }
+.viewerPrev { left: 16px; top: 50%; transform: translateY(-50%); }
+.viewerNext { right: 16px; top: 50%; transform: translateY(-50%); }
+.viewerClose { top: 12px; right: 16px; width: 40px; height: 40px; }
+
+/* Phones: the image takes the width, the arrows lie over its edges */
+@media (max-width: 760px) {
+  .viewerImage { max-width: calc(100vw - 24px); border-radius: 6px; }
+  .viewerPrev { left: 8px; }
+  .viewerNext { right: 8px; }
+  .viewerClose { right: 8px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewer[open],
+  .viewer::backdrop { animation: none; }
+}

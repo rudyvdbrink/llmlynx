@@ -1,9 +1,10 @@
 // The back and forth between a model and its tools, for every chat backend:
 // the model answers or calls tools, the tools run, and it continues with the results.
 
-import type { FileCard } from "@/lib/files";
-import type { ToolStep } from "@/lib/types";
-import { awaitDecision } from "@/server/security/engine";
+import { shownInChat, type FileCard } from "@/lib/files";
+import type { ApprovalDecision, ToolStep } from "@/lib/types";
+import { notRun, runCode } from "@/server/sandbox/records";
+import { awaitApproval, awaitDecision } from "@/server/security/engine";
 import { hostOf } from "@/server/security/urls";
 import type { ToolCallContext, ToolDefinition } from "@/server/tools/definitions";
 import { runTool, type ToolResult } from "@/server/tools/run";
@@ -23,6 +24,9 @@ const limitResult = (max: number): ToolResult => ({
   files: [],
   error: true,
 });
+
+// Most characters of the code the user is shown when asked before it runs
+const MAX_DETAIL = 20_000;
 
 /** What a tool call gets from the chat it runs in. */
 export type ChatToolContext = Omit<ToolCallContext, "signal">;
@@ -93,8 +97,12 @@ export async function runToolLoop<Turn extends ModelTurn>({
   isCancelled: () => boolean;
   sendTool: (step: Partial<ToolStep> & { id: string }) => void;
   sendFiles: (files: FileCard[]) => void;
-  /** Announces a pause: `id` is what the user's choice is sent under, `tool` the call's id, `source` what was flagged. */
-  sendPause: (pause: { id: string; tool: string; source: string }) => void;
+  /**
+   * Announces a pause: `id` is what the user's choice is sent under, `tool` the
+   * call's id, `source` what was flagged. `kind` "approval": the user is asked
+   * before code runs, rather than about flagged content.
+   */
+  sendPause: (pause: { id: string; tool: string; source: string; kind?: "approval" }) => void;
   sendError: (message: string) => void;
   /** One request to the model, streamed to the client. `mayCallTools` is false when they are used up. */
   nextTurn: (mayCallTools: boolean) => Promise<Turn>;
@@ -114,14 +122,52 @@ export async function runToolLoop<Turn extends ModelTurn>({
     const icon = def?.icon ?? "spanner";
     sendTool({ id: call.id, name: call.name, icon, label: def?.label(call.arguments, "running") ?? call.name, state: "running" });
 
+    // In a tainted chat, text that tried to instruct the model may try to get code run: the user decides first
+    let approval: { decision: ApprovalDecision } | undefined;
+    const session = toolContext?.security;
+    if (def?.effects.exec && !overLimit && session?.context.tainted) {
+      const decision = await awaitApproval({
+        session,
+        tool: call.name,
+        signal,
+        announce: (id) => {
+          sendTool({ id: call.id, approval: { detail: runCode(call.name, call.arguments).slice(0, MAX_DETAIL) } });
+          sendPause({ id, tool: call.id, source: "", kind: "approval" });
+        },
+      });
+      if (decision === "stop") {
+        await reply.saveToolResult({
+          call,
+          content: "Error: not run: the reply was stopped.",
+          label: `${def.label(call.arguments, "error")} (stopped)`,
+          error: true,
+          images: [],
+          files: [],
+        });
+        sendTool({ id: call.id, state: "error", label: `${def.label(call.arguments, "error")} (stopped)` });
+        return { result: { text: "", images: [], files: [], error: true }, stop: true };
+      }
+      approval = { decision };
+      sendTool({ id: call.id, approval });
+    }
+
     const result: ToolResult = overLimit
       ? limitResult(maxToolCalls)
-      : def
-        ? await runTool(def, call.arguments, { ...toolContext!, signal })
-        : { text: `Error: there is no tool named ${call.name}.`, images: [], files: [], error: true };
+      : approval?.decision === "skip"
+        ? {
+            text: "Error: not run: the user chose not to run it. Go on without it.",
+            images: [],
+            files: [],
+            error: true,
+            note: "not run",
+            run: notRun(call.name, call.arguments, "skipped"),
+          }
+        : def
+          ? await runTool(def, call.arguments, { ...toolContext!, signal })
+          : { text: `Error: there is no tool named ${call.name}.`, images: [], files: [], error: true };
     const state = result.error ? "error" : "done";
     const note = overLimit ? "tool limit reached" : result.note;
-    const label = (def?.label(call.arguments, state) ?? `Could not use ${call.name}`) + (note ? ` (${note})` : "");
+    const label = (result.label ?? def?.label(call.arguments, state) ?? `Could not use ${call.name}`) + (note ? ` (${note})` : "");
     const { security } = result;
     const saved = await reply.saveToolResult({
       call,
@@ -130,11 +176,25 @@ export async function runToolLoop<Turn extends ModelTurn>({
       error: result.error,
       images: result.images,
       files: result.files,
+      deletions: result.deletions,
+      repository: result.repository,
+      shared: result.shared,
+      approval,
       security,
     });
+    // A run whose output the model did not get shows as withheld in the sandbox panel
+    if (result.run) await reply.saveSandboxRun(call.id, security ? { ...result.run, status: "withheld" } : result.run);
     const [attachmentId] = saved.imageIds;
-    sendTool({ id: call.id, label, state, ...(attachmentId ? { attachmentId } : {}), ...(security ? { security } : {}) });
-    if (saved.files.length) sendFiles(saved.files);
+    sendTool({
+      id: call.id,
+      label,
+      state,
+      ...(attachmentId ? { attachmentId } : {}),
+      ...(security ? { security } : {}),
+      ...(approval ? { approval } : {}),
+    });
+    const cards = [...shownInChat(call.name, saved.files), ...(result.shared ?? [])];
+    if (cards.length) sendFiles(cards);
     if (!result.pause || !security || !toolContext?.security) return { result, stop: false };
 
     // The flagged content is withheld and stored as such; what happens next is the user's choice

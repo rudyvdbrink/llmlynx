@@ -75,6 +75,22 @@ def windows(ids: Iterable[int], size: int = CHUNK_TOKENS - 2, stride: int = STRI
         yield window
 
 
+def chunk_text(text: str, first: int, count: int, offsets: Callable[[str], list[tuple[int, int]]]) -> str:
+    """The part of `text` that its tokens `first` to `first + count - 1` cover, from the offsets of each piece's tokens."""
+    spans: list[tuple[int, int]] = []
+    base = 0
+    for piece in pieces(text):
+        for start, end in offsets(piece):
+            spans.append((base + start, base + end))
+            if len(spans) >= first + count:
+                break
+        if len(spans) >= first + count:
+            break
+        base += len(piece)
+    chosen = spans[first : first + count]
+    return text[chosen[0][0] : chosen[-1][1]] if chosen else ""
+
+
 def batches(chunks: Iterable[list[int]], size: int = BATCH_SIZE) -> Iterator[list[list[int]]]:
     """The chunks in lists of at most `size`."""
     batch: list[list[int]] = []
@@ -126,32 +142,46 @@ def scan(
     score: Callable[[list[list[int]]], list[float]],
     threshold: float,
     model: str,
+    offsets: Callable[[str], list[tuple[int, int]]] | None = None,
     turns: Turns | None = None,
     max_seconds: float = MAX_SCAN_SECONDS,
 ) -> dict:
-    """Scores `text`. Returns { score, flagged, chunks, ms, model }, and never the text.
+    """Scores `text`. Returns { score, flagged, chunks, ms, model }, and for a flagged text also `chunk`.
 
     `encode` gives the token ids of a text, and `score` the probability that
     each chunk of a batch is malicious. `score` in the result is the highest
     of the chunks, `flagged` whether it is at or above `threshold`, and
-    `chunks` how many were scored. Raises TooLong when it takes more than
-    `max_seconds`.
+    `chunks` how many were scored. Only a flagged text gets `chunk`: the text
+    that the chunk with the highest score was made of, found from the tokens it
+    was scored on (`offsets` gives where each token of a text is in it), so the
+    user sees what the classifier flagged. It is the text as scored, normalized
+    (see `normalize`). A clean text's result never holds any of it. Raises
+    TooLong when it takes more than `max_seconds`.
     """
     started = time.monotonic()
     turns = turns or Turns()
+    normalized = normalize(text)
     highest = 0.0
+    # Which chunk scored highest, and how many tokens it has: chunk k starts at token k * STRIDE
+    worst, worst_size = -1, 0
     count = 0
-    for batch in batches(windows(token_ids(normalize(text), encode))):
+    for batch in batches(windows(token_ids(normalized, encode))):
         if time.monotonic() - started > max_seconds:
             raise TooLong()
         with turns:
             scores = score(batch)
-        highest = max(highest, *scores)
+        for index, (chunk, chunk_score) in enumerate(zip(batch, scores)):
+            if worst < 0 or chunk_score > highest:
+                highest, worst, worst_size = chunk_score, count + index, len(chunk)
         count += len(batch)
-    return {
+    flagged = bool(highest >= threshold)
+    result = {
         "score": round(float(highest), 4),
-        "flagged": bool(highest >= threshold),
+        "flagged": flagged,
         "chunks": count,
         "ms": round((time.monotonic() - started) * 1000),
         "model": model,
     }
+    if flagged and offsets is not None:
+        result["chunk"] = chunk_text(normalized, worst * STRIDE, worst_size, offsets)
+    return result

@@ -65,3 +65,13 @@ def test_security_article_that_quotes_an_injection_is_reported_with_its_score(mo
     print(f"\nsecurity article: score {result['score']}, flagged {result['flagged']}")
     assert 0.0 <= result["score"] <= 1.0
     assert result["chunks"] == 1
+
+
+def test_a_flagged_page_comes_with_the_chunk_that_was_flagged(model):
+    filler = "The river runs through three countries before it reaches the sea. " * 400
+    result = scan(
+        filler + INJECTIONS[0] + " " + filler, encode=model.encode, score=model.score, offsets=model.offsets, threshold=0.5, model=model.name
+    )
+    assert result["flagged"] is True
+    assert "Ignore all previous instructions" in result["chunk"]
+    assert len(model.encode(result["chunk"])) <= 512

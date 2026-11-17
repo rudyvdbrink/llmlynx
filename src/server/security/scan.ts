@@ -11,8 +11,16 @@ import { clamdScan } from "./clamd";
 import { clamavServer, guardServer } from "./config";
 import { BREAKER_MS, VERDICT_CACHE_SIZE } from "./limits";
 
-/** "empty": there was no text to scan. */
-export type InjectionScan = { status: "clean" | "flagged"; score: number } | { status: "unchecked" | "empty" };
+/**
+ * "empty": there was no text to scan. A flagged scan has the text of the chunk
+ * that scored highest (`chunk`), for the user to judge; the model never gets it.
+ */
+export type InjectionScan =
+  | { status: "clean"; score: number }
+  | { status: "flagged"; score: number; chunk?: string }
+  | { status: "unchecked" | "empty" };
+
+type Verdict = Extract<InjectionScan, { status: "clean" | "flagged" }>;
 
 export type VirusScan = { status: "clean" | "unchecked" } | { status: "flagged"; signature: string };
 
@@ -40,8 +48,9 @@ function createBreaker() {
 const guardBreaker = createBreaker();
 const clamBreaker = createBreaker();
 
-// The newest verdicts of the guard by the SHA-256 of their text, so identical text is never scored twice
-const verdicts = new Map<string, { status: "clean" | "flagged"; score: number }>();
+// The newest verdicts of the guard by the SHA-256 of their text, so identical text is never scored
+// twice; a flagged one keeps the text of its chunk that scored highest
+const verdicts = new Map<string, Verdict>();
 
 function recall(hash: string) {
   const verdict = verdicts.get(hash);
@@ -52,7 +61,7 @@ function recall(hash: string) {
   return verdict;
 }
 
-function remember(hash: string, verdict: { status: "clean" | "flagged"; score: number }) {
+function remember(hash: string, verdict: Verdict) {
   verdicts.set(hash, verdict);
   if (verdicts.size > VERDICT_CACHE_SIZE) verdicts.delete(verdicts.keys().next().value!);
 }
@@ -97,9 +106,12 @@ export async function scanInjection(text: string, { timeoutMs, signal, audit, to
       console.error(`The guard could not scan a text: ${out.text.slice(0, 200)}`);
       return log({ status: "unchecked" });
     }
-    const answer = JSON.parse(out.text) as { score?: unknown; flagged?: unknown };
+    const answer = JSON.parse(out.text) as { score?: unknown; flagged?: unknown; chunk?: unknown };
     if (typeof answer.score !== "number" || typeof answer.flagged !== "boolean") throw new Error("unexpected answer");
-    const verdict = { status: answer.flagged ? ("flagged" as const) : ("clean" as const), score: answer.score };
+    const chunk = typeof answer.chunk === "string" && answer.chunk ? { chunk: answer.chunk } : {};
+    const verdict: Verdict = answer.flagged
+      ? { status: "flagged", score: answer.score, ...chunk }
+      : { status: "clean", score: answer.score };
     remember(hash, verdict);
     return log(verdict);
   } catch (err) {

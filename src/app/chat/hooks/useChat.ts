@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { readNdjson } from "@/lib/ndjson";
 import { parseSelection } from "@/lib/selection";
-import type { FileCard } from "@/lib/files";
+import { withFileCards, type FileCard } from "@/lib/files";
 import { addReasoning, upsertToolStep } from "@/lib/trace";
 import type { DisplayMessage, ReplyStatus, ToolStep, TraceItem } from "@/lib/types";
 
@@ -70,6 +70,8 @@ export function useChat({
   const [replyStatus, setReplyStatus] = useState<ReplyStatus | null>(null);
   // True once the reply's answer shows, and again false while the model uses a tool
   const [answering, setAnswering] = useState(false);
+  // Goes up each time a tool call of a reply ends, so the sandbox panel loads again
+  const [toolsDone, setToolsDone] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   // The send that failed, if the last one did. Sending the same text (and
   // files) again retries it under its request id, so the server does not store it twice.
@@ -172,9 +174,9 @@ export function useChat({
             for (const card of cards) if (card.url) URL.revokeObjectURL(card.url);
             updateUserMessage({ files: line.userFiles });
           }
-          // Files the agent made show below its answer
+          // Files the agent made show below its answer, each once
           if (isFileList(line?.files)) {
-            replyFiles = [...replyFiles, ...line.files];
+            replyFiles = withFileCards(replyFiles, line.files);
             updateReply({ files: replyFiles });
           }
           if (isToolLine(line?.tool)) {
@@ -184,6 +186,7 @@ export function useChat({
             shown = false;
             setAnswering(false);
             updateReply({ trace, content: reply });
+            if (line.tool.state === "done" || line.tool.state === "error") setToolsDone((n) => n + 1);
           }
           // The reply waits: the tool line of that call offers the choice
           if (isPauseLine(line?.pause)) {
@@ -248,5 +251,5 @@ export function useChat({
     setMessages([]);
   }, []);
 
-  return { messages, isStreaming, replyStatus, answering, send, cancel, loadHistory, reset };
+  return { messages, isStreaming, replyStatus, answering, toolsDone, send, cancel, loadHistory, reset };
 }

@@ -4,13 +4,15 @@
 // The model gets llmlynx's own short schemas rather than the servers' own,
 // which have more options than small local models handle well.
 
-import { AGENT_TOOL_INFO, type AgentToolName, type ToolIcon } from "@/lib/agentTools";
+import { AGENT_TOOL_INFO, type ToolIcon, type ToolName } from "@/lib/agentTools";
+import type { FileCard } from "@/lib/files";
 import type { StepSecurity } from "@/lib/types";
 import type { SecuritySession } from "@/server/security/engine";
 import type { ToolServerId } from "./config";
-import { checkStart, shorten, toInteger } from "./args";
+import { checkStart, checkUrl, shortUrl, shorten, toInteger, urlParameter } from "./args";
 import { FILE_TOOLS } from "./fileTools";
 import type { ToolFile, ToolImage } from "./mcp";
+import { SANDBOX_TOOLS } from "./sandboxTools";
 
 export type ToolCapability = "tools" | "vision";
 
@@ -18,15 +20,39 @@ export type ToolState = "running" | "done" | "error";
 
 export type Args = Record<string, unknown>;
 
-/** What a tool call gives the model, and the files it made for the user. */
+/** A run of code or an install of packages, for the sandbox panel's list of runs (the SandboxRun model). */
+export type RunRecord = {
+  kind: "run" | "install";
+  language: string;
+  code: string;
+  output: string;
+  status: "ok" | "error" | "timeout" | "stopped" | "withheld" | "blocked" | "skipped";
+  durationMs: number;
+  files?: { changed: string[]; deleted: string[] };
+};
+
+/**
+ * What a tool call gives the model, and what it did to the chat's sandbox:
+ * the files it made or changed (`files`, stored as new versions) and deleted
+ * (`deletions`, their paths), the files it gives the user (`shared`, which
+ * are in the sandbox already), and a git repository's new .git folder
+ * (`repository`, stored with the files).
+ */
 export type ToolResult = {
   text: string;
   images: ToolImage[];
   files: ToolFile[];
   error: boolean;
   note?: string; // why the call failed, shown after its label in the chat view, such as "discarded"
+  label?: string; // what the chat view shows for the finished call, in place of the tool's own label
   security?: StepSecurity; // what the security checks found in the result; stored with the tool step
   pause?: { source: string }; // the reply waits for the user's choice about what was flagged: a page's host or a file name
+  deletions?: string[];
+  shared?: FileCard[];
+  // The tool ran the security checks on its result itself, such as a download (see checkFile)
+  scanned?: boolean;
+  run?: RunRecord;
+  repository?: { path: string; git: string }; // git: a gzipped tar, base64
 };
 
 /**
@@ -48,15 +74,15 @@ export type ToolCallContext = {
  * both, so a new tool cannot be added without deciding them.
  */
 export type ToolEffects = {
-  fetchesUrl: boolean; // requests a URL the model chose (its `url` argument)
-  untrustedOutput: boolean; // its result comes from the internet
+  untrustedOutput: boolean; // its result comes from the internet, or from code
+  exec: boolean; // runs code in the chat's sandbox: in a tainted chat, the user is asked first
 };
 
 /** The tool to call on the MCP server, or an error text for the model when its arguments are unusable. */
 export type McpCall = { name: string; arguments: Args } | { error: string };
 
 type ToolBase = {
-  name: AgentToolName;
+  name: ToolName;
   icon: ToolIcon;
   description: string;
   parameters: { type: "object"; properties: Record<string, object>; required: string[] };
@@ -90,32 +116,6 @@ const MAX_QUERY_LENGTH = 400;
 const MAX_SECTION = 10;
 const TIME_RANGES = ["day", "week", "month", "year"];
 
-/** "https://www.example.com/a/b?c" -> "example.com/a/b", for labels. */
-function shortUrl(raw: unknown): string {
-  if (typeof raw !== "string") return "a page";
-  try {
-    const url = new URL(raw);
-    const path = url.pathname === "/" ? "" : url.pathname.replace(/\/$/, "");
-    return shorten(url.hostname.replace(/^www\./, "") + path, 48);
-  } catch {
-    return shorten(raw, 48);
-  }
-}
-
-/** The URL to give a tool, or an error text. The MCP servers block private addresses themselves. */
-function checkUrl(raw: unknown): { url: string } | { error: string } {
-  if (typeof raw !== "string" || !raw.trim()) return { error: "url is required." };
-  let url: URL;
-  try {
-    url = new URL(raw.trim());
-  } catch {
-    return { error: `Not a valid URL: ${raw}. Use a full URL that starts with https://.` };
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") return { error: "Only http and https URLs can be opened." };
-  if (url.username || url.password) return { error: "URLs with a user name or password cannot be opened." };
-  return { url: url.href };
-}
-
 /**
  * Page markdown from mcp-searxng without its images ("![alt](url)", also
  * inside links), which tell the model nothing and use up the text budget.
@@ -128,7 +128,21 @@ function withoutImages(markdown: string): string {
     .replace(/\n{3,}/g, "\n\n");
 }
 
-const urlParameter = { type: "string", description: "The full URL, starting with https:// or http://" };
+const isImageSearch = (args: Args) => args.images === true || args.images === "true";
+
+/**
+ * Image results from mcp-searxng's full format, with only what the model
+ * needs: the lines about scores, engines and categories go, and "Image
+ * Source" becomes "Image".
+ */
+function imageResults(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !/^(Relevance Score|Engines|Category):/.test(line))
+    .map((line) => line.replace(/^Image Source:/, "Image:"))
+    .join("\n");
+}
+
 const startParameter = {
   type: "integer",
   description: "For long pages: the character to start reading at, as the previous result says. Default 0",
@@ -140,7 +154,8 @@ const WEB_TOOLS: ToolDefinition[] = [
     icon: AGENT_TOOL_INFO.web_search.icon,
     description:
       "Search the web. Returns the titles, URLs and short descriptions of the top results. " +
-      "Use it for current events, recent facts and anything you are not sure about, and to find pages to read.",
+      "Use it for current events, recent facts and anything you are not sure about, and to find pages to read. " +
+      "With images set to true it finds pictures instead, and each result also gives the URL of the image file itself.",
     parameters: {
       type: "object",
       properties: {
@@ -150,27 +165,34 @@ const WEB_TOOLS: ToolDefinition[] = [
           enum: TIME_RANGES,
           description: "Only results from the last day, week, month or year. Leave out for any time",
         },
+        images: { type: "boolean", description: "true to search for pictures. Default false" },
       },
       required: ["query"],
     },
     server: "search",
     needs: ["tools"],
     timeoutMs: 30_000,
-    effects: { fetchesUrl: false, untrustedOutput: true },
+    effects: { untrustedOutput: true, exec: false },
     label(args, state) {
       const query = typeof args.query === "string" && args.query.trim() ? `: ${shorten(args.query)}` : "";
-      if (state === "running") return `Searching the web${query}`;
-      return state === "done" ? `Searched the web${query}` : `Could not search the web${query}`;
+      const what = isImageSearch(args) ? "the web for images" : "the web";
+      if (state === "running") return `Searching ${what}${query}`;
+      return state === "done" ? `Searched ${what}${query}` : `Could not search ${what}${query}`;
     },
     toMcpCall(args) {
       const query = typeof args.query === "string" ? args.query.trim() : "";
       if (!query) return { error: "query is required." };
       if (query.length > MAX_QUERY_LENGTH) return { error: `query is too long (at most ${MAX_QUERY_LENGTH} characters).` };
       const timeRange = typeof args.time_range === "string" && TIME_RANGES.includes(args.time_range) ? args.time_range : undefined;
+      // Only the full results have the image file's URL ("Image Source")
+      const kind = isImageSearch(args) ? { categories: "images", result_detail: "full" } : { result_detail: "compact" };
       return {
         name: "searxng_web_search",
-        arguments: { query, num_results: 8, result_detail: "compact", ...(timeRange ? { time_range: timeRange } : {}) },
+        arguments: { query, num_results: 8, ...kind, ...(timeRange ? { time_range: timeRange } : {}) },
       };
+    },
+    finish(text, args) {
+      return isImageSearch(args) ? imageResults(text) : text;
     },
   },
   {
@@ -187,7 +209,7 @@ const WEB_TOOLS: ToolDefinition[] = [
     server: "search",
     needs: ["tools"],
     timeoutMs: 30_000,
-    effects: { fetchesUrl: true, untrustedOutput: true },
+    effects: { untrustedOutput: true, exec: false },
     label(args, state) {
       const page = shortUrl(args.url);
       if (state === "running") return `Reading ${page}`;
@@ -226,7 +248,7 @@ const WEB_TOOLS: ToolDefinition[] = [
     server: "browser",
     needs: ["tools"],
     timeoutMs: 60_000,
-    effects: { fetchesUrl: true, untrustedOutput: true },
+    effects: { untrustedOutput: true, exec: false },
     label(args, state) {
       const page = shortUrl(args.url);
       if (state === "running") return `Reading ${page} in a browser`;
@@ -258,7 +280,7 @@ const WEB_TOOLS: ToolDefinition[] = [
     server: "browser",
     needs: ["tools", "vision"],
     timeoutMs: 60_000,
-    effects: { fetchesUrl: true, untrustedOutput: true },
+    effects: { untrustedOutput: true, exec: false },
     label(args, state) {
       const section = toInteger(args.section);
       const where = shortUrl(args.url) + (section && section > 1 ? `, section ${section}` : "");
@@ -277,7 +299,7 @@ const WEB_TOOLS: ToolDefinition[] = [
   },
 ];
 
-export const TOOL_DEFINITIONS: ToolDefinition[] = [...WEB_TOOLS, ...FILE_TOOLS];
+export const TOOL_DEFINITIONS: ToolDefinition[] = [...WEB_TOOLS, ...FILE_TOOLS, ...SANDBOX_TOOLS];
 
 /** The tools in the format of the `tools` request field, which Ollama, Chat Completions and OpenRouter share. */
 export function toFunctionTools(tools: ToolDefinition[]) {

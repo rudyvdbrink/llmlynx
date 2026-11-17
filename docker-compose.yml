@@ -9,8 +9,8 @@
 # which owns these directories on the server. Secrets come from the gitignored
 # .env and .env.local at runtime and are never baked into the image.
 #
-# The agent tools (web search, page reading, screenshots, files) and the
-# security layer's two scanners (prompt injections and viruses, see
+# The agent tools (web search, page reading, screenshots, files, running code)
+# and the security layer's two scanners (prompt injections and viruses, see
 # docs/security.md) are part of the app: they always run. The web tools share
 # the private "tools" network; only the MCP servers and clamd are published, on
 # 127.0.0.1, where the app reaches them. Their tokens must be in .env (not
@@ -138,6 +138,57 @@ services:
     networks: [files]
     restart: unless-stopped
 
+  # MCP server for run_code, install_packages and git (tools/code): runs code
+  # in bubblewrap jails without network, installs packages from PyPI and npm
+  # per chat, and runs git on the chat's repositories. It keeps none of a
+  # chat's files, only its installed packages, on a volume of their own. It
+  # sits on an internal network that reaches nothing but code-egress, its only
+  # way in (the app's calls) and out (installs, to PyPI and npm only; git's
+  # downloads, over HTTPS to public addresses only), and clamd, which scans
+  # what installs download.
+  code:
+    image: llmlynx-code
+    build: ./tools/code
+    environment:
+      MCP_AUTH_TOKEN: ${CODE_MCP_TOKEN:?CODE_MCP_TOKEN is missing from .env. Run npm install or node scripts/setup-env.mjs to add it}
+      # Runs and installs at once on the whole server; each run gets a CPU core of its own
+      CODE_MAX_CONCURRENCY: ${CODE_MAX_CONCURRENCY:-2}
+      PACKAGES_PROXY: http://code-egress:3128
+      GIT_PROXY: http://code-egress:3129
+      CLAMAV_HOST: clamav
+      HOME: /tmp
+    volumes:
+      - code-packages:/packages
+    read_only: true
+    # The runs' folders while they run
+    tmpfs:
+      - /tmp:size=512m
+    cap_drop: [ALL]
+    # Docker's default profile plus user namespaces and mounts inside them,
+    # which bubblewrap needs to make its jails (tools/code/seccomp_profile.json)
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./tools/code/seccomp_profile.json
+    # Used only while code runs: each run may take 512 MB
+    mem_limit: 1536m
+    init: true
+    networks: [code]
+    restart: unless-stopped
+
+  # The code container's only way in and out (tools/code/egress.conf): it
+  # passes the app's calls on to it, lets installs reach PyPI and the npm
+  # registry over HTTPS, and git's downloads reach public addresses over
+  # HTTPS, and nothing else.
+  code-egress:
+    image: ubuntu/squid:6.6-24.04_edge
+    volumes:
+      - ./tools/code/egress.conf:/etc/squid/squid.conf:ro
+    ports:
+      - 127.0.0.1:${CODE_MCP_PORT:-8794}:8794
+    # Not depends_on code: recreating code would stop it. It finds code again by itself.
+    networks: [code, code-egress]
+    restart: unless-stopped
+
   # MCP server that scans text for prompt injections (tools/guard), with Llama
   # Prompt Guard 2 on the CPU. The app calls it for web content and attached
   # files; it is not a tool of the models. The text comes in the call: it keeps
@@ -187,7 +238,8 @@ services:
       - no-new-privileges:true
     # clamd holds about 1 GB of signatures in memory
     mem_limit: 2g
-    networks: [clamav]
+    # Its own network, for the signature updates, and the code container's, to scan what installs download
+    networks: [clamav, code]
     restart: unless-stopped
 
 networks:
@@ -195,8 +247,14 @@ networks:
   files: {}
   guard: {}
   clamav: {}
+  # No route out: the code container reaches code-egress and clamd, and nothing else
+  code:
+    internal: true
+  code-egress: {}
 
 volumes:
   searxng-cache: {}
   # The virus signatures, so a restart does not download them again
   clamav-db: {}
+  # The chats' installed packages and the shared cache of what passed the scan (tools/code)
+  code-packages: {}

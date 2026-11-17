@@ -61,6 +61,10 @@ class Model:
         """The token ids of the text, without special tokens."""
         return self.tokenizer.encode(text, add_special_tokens=False).ids
 
+    def offsets(self, text: str) -> list[tuple[int, int]]:
+        """Where each token of the text is in it, as (start, end); the same tokens as `encode`."""
+        return self.tokenizer.encode(text, add_special_tokens=False).offsets
+
     def score(self, chunks: list[list[int]]) -> list[float]:
         """The probability of the malicious label for each chunk, in one run of the model."""
         rows = [[self.cls, *chunk, self.sep] for chunk in chunks]

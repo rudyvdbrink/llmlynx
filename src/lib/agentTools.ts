@@ -13,11 +13,18 @@ export const AGENT_TOOLS = [
   "edit_file",
   "create_document",
   "create_spreadsheet",
+  "web_fetch",
+  "run_code",
+  "install_packages",
+  "git",
 ] as const;
 
 export type AgentToolName = (typeof AGENT_TOOLS)[number];
 
-export type ToolIcon = "globe" | "spanner" | "file";
+// share_file and view_image have no checkbox: an agent gets them with any tool that works on files (see server/tools/policy.ts)
+export type ToolName = AgentToolName | "share_file" | "view_image";
+
+export type ToolIcon = "globe" | "spanner" | "file" | "code" | "package" | "git";
 
 export const AGENT_TOOL_INFO: Record<AgentToolName, { label: string; help: string; icon: ToolIcon }> = {
   web_search: {
@@ -70,17 +77,49 @@ export const AGENT_TOOL_INFO: Record<AgentToolName, { label: string; help: strin
     help: "Creates Excel workbooks, with formulas.",
     icon: "file",
   },
+  web_fetch: {
+    label: "Download files",
+    help: "Downloads a file from the web, such as a dataset or a report, into the chat's sandbox, for code to work on.",
+    icon: "globe",
+  },
+  run_code: {
+    label: "Run code",
+    help: "Runs Python, JavaScript, TypeScript and shell commands in the chat's sandbox, without network: to calculate, analyse data, make charts and develop software.",
+    icon: "code",
+  },
+  install_packages: {
+    label: "Install packages",
+    help: "Installs packages from PyPI and npm for the chat's code. Works together with Run code.",
+    icon: "package",
+  },
+  git: {
+    label: "Git",
+    help: "Clones public repositories into the chat's sandbox, and works on them with git: history, diffs, branches, commits, merges and pulls. Cannot push.",
+    icon: "git",
+  },
 };
 
-/** The tools that work on files, which get the conversation's list of files. */
-export const FILE_TOOL_NAMES: AgentToolName[] = [
+/** What install_packages needs besides itself: it only works together with run_code. */
+export const TOOL_REQUIRES: Partial<Record<AgentToolName, AgentToolName>> = { install_packages: "run_code" };
+
+/** The tools that work on files, which get the conversation's list of files (the chat's sandbox), and share_file and view_image with it. */
+export const FILE_TOOL_NAMES: ToolName[] = [
   "read_file",
   "view_pdf_pages",
   "create_file",
   "edit_file",
   "create_document",
   "create_spreadsheet",
+  "web_fetch",
+  "run_code",
+  "install_packages",
+  "git",
+  "share_file",
+  "view_image",
 ];
+
+/** The tools whose first call starts the chat's sandbox, which shows the sandbox panel's chevron. */
+export const SANDBOX_TOOL_NAMES: ToolName[] = ["run_code", "install_packages", "web_fetch", "git"];
 
 export function isAgentTool(value: unknown): value is AgentToolName {
   return typeof value === "string" && (AGENT_TOOLS as readonly string[]).includes(value);
@@ -88,12 +127,14 @@ export function isAgentTool(value: unknown): value is AgentToolName {
 
 /** The icon for a tool step in the chat view; tools that no longer exist get the spanner. */
 export function toolIcon(name: string): ToolIcon {
+  if (name === "share_file" || name === "view_image") return "file";
   return isAgentTool(name) ? AGENT_TOOL_INFO[name].icon : "spanner";
 }
 
 /**
  * The agent's tools from a request or the database: known names only, without
- * duplicates, in the order of AGENT_TOOLS. null and undefined mean none.
+ * duplicates, in the order of AGENT_TOOLS. null and undefined mean none. A tool
+ * that only works together with another (TOOL_REQUIRES) is dropped without it.
  */
 export function validateAgentTools(
   input: unknown
@@ -102,7 +143,8 @@ export function validateAgentTools(
   if (!Array.isArray(input)) return { ok: false, message: "tools must be a list of tool names" };
   const unknown = input.find((name) => !isAgentTool(name));
   if (unknown !== undefined) return { ok: false, message: `Unknown tool: ${String(unknown)}` };
-  return { ok: true, value: AGENT_TOOLS.filter((name) => input.includes(name)) };
+  const value = AGENT_TOOLS.filter((name) => input.includes(name));
+  return { ok: true, value: value.filter((name) => !TOOL_REQUIRES[name] || value.includes(TOOL_REQUIRES[name])) };
 }
 
 // Most tool calls an agent may make for one reply (the slider on the agents page); 0 means no limit
@@ -119,4 +161,4 @@ export function validateMaxToolCalls(input: unknown): { ok: true; value: number 
 }
 
 /** Which of its tools an agent can use with its base model, as returned by GET /api/agents/base-model. */
-export type ToolAvailability = { name: AgentToolName; available: boolean; reason?: string };
+export type ToolAvailability = { name: ToolName; available: boolean; reason?: string };

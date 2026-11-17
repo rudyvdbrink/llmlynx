@@ -27,6 +27,9 @@
   --sidebar-width: 304px;
   --sidebar-grip: 32px;
 
+  /* The chat's sandbox panel, on the right (see app/chat/components/sandbox) */
+  --sandbox-width: 420px;
+
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
   /* Bubbles (can be used in multiple pages if desired) */
@@ -47,6 +50,12 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* While a side bar's edge or a divider is dragged (lib/drag.ts) */
+html[data-dragging] { user-select: none; }
+html[data-dragging="x"] * { cursor: col-resize !important; }
+html[data-dragging="y"] * { cursor: row-resize !important; }
+html[data-dragging] iframe { pointer-events: none; }
 
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {

@@ -14,12 +14,20 @@ import {
   useProviderModels,
   useProviderSettings,
 } from "@/hooks/useModelCatalog";
-import { DEFAULT_SETTINGS, optionFamily, type AgentSettings, type OptionFamily, type OptionValue } from "@/lib/agentSettings";
+import {
+  DEFAULT_SETTINGS,
+  defaultContextWindow,
+  optionFamily,
+  type AgentSettings,
+  type OptionFamily,
+  type OptionValue,
+} from "@/lib/agentSettings";
 import {
   AGENT_TOOL_INFO,
   AGENT_TOOLS,
   DEFAULT_MAX_TOOL_CALLS,
   MAX_TOOL_CALLS_LIMIT,
+  TOOL_REQUIRES,
   validateAgentTools,
   validateMaxToolCalls,
   type AgentToolName,
@@ -77,6 +85,12 @@ export default function AgentsClient({
   // Tools are off until the user checks them
   const [tools, setTools] = useState<AgentToolName[]>([]);
   const [maxToolCalls, setMaxToolCalls] = useState(DEFAULT_MAX_TOOL_CALLS);
+  // Whether the Ollama context window is the base model's default (half of what it supports), which
+  // follows the model when it changes, or a value the user set
+  const [numCtxAuto, setNumCtxAuto] = useState(true);
+  // A saved agent that was just opened: whether its context window is its model's default is known
+  // once what that model supports is in
+  const [loadedNumCtx, setLoadedNumCtx] = useState<{ selection: string; value: unknown } | null>(null);
 
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -107,6 +121,21 @@ export default function AgentsClient({
         ? `${providerLabel} retires ${baseModel} on ${expiresOn}. Pick another model before then to keep this agent working.`
         : null;
 
+  // The context window follows the base model while the user has not set it
+  const numCtx = opts.ollama.num_ctx;
+  useEffect(() => {
+    if (family !== "ollama" || infoLoading) return;
+    const fallback = defaultContextWindow(info?.contextLength);
+    if (loadedNumCtx) {
+      if (loadedNumCtx.selection !== selection) return;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- known only once the model's info is in
+      setLoadedNumCtx(null);
+      setNumCtxAuto(loadedNumCtx.value === fallback);
+      return;
+    }
+    if (numCtxAuto && numCtx !== fallback) setOpts((prev) => ({ ...prev, ollama: { ...prev.ollama, num_ctx: fallback } }));
+  }, [family, infoLoading, info, selection, loadedNumCtx, numCtxAuto, numCtx]);
+
   // The check mark after saving goes away by itself
   useEffect(() => {
     if (!saved) return;
@@ -114,11 +143,20 @@ export default function AgentsClient({
     return () => clearTimeout(timer);
   }, [saved]);
 
+  // A tool that only works together with another goes off with it
   function toggleTool(name: AgentToolName, on: boolean) {
-    setTools((prev) => AGENT_TOOLS.filter((t) => (t === name ? on : prev.includes(t))));
+    setTools((prev) => {
+      const next = AGENT_TOOLS.filter((t) => (t === name ? on : prev.includes(t)));
+      return next.filter((t) => !TOOL_REQUIRES[t] || next.includes(TOOL_REQUIRES[t]));
+    });
   }
 
+  // Select all: every tool the base model can use, or none when they are all on already
+  const usableTools = AGENT_TOOLS.filter((name) => !toolAvailability?.some((t) => t.name === name && !t.available));
+  const allToolsOn = usableTools.length > 0 && usableTools.every((name) => tools.includes(name));
+
   function setOpt(optionsFamily: OptionFamily, key: string, value: OptionValue | undefined) {
+    if (optionsFamily === "ollama" && key === "num_ctx") setNumCtxAuto(false);
     setOpts((prev) => {
       const next = { ...prev[optionsFamily] };
       if (value === undefined) delete next[key];
@@ -139,6 +177,8 @@ export default function AgentsClient({
     setAgentName("");
     setSystemPrompt("");
     setOpts(newOptions());
+    setNumCtxAuto(true);
+    setLoadedNumCtx(null);
     setTools([]);
     setMaxToolCalls(DEFAULT_MAX_TOOL_CALLS);
   }
@@ -161,6 +201,11 @@ export default function AgentsClient({
         ...newOptions(),
         [savedFamily]: { ...DEFAULT_SETTINGS[savedFamily], ...(a.settings as AgentSettings) },
       });
+      // A saved agent keeps its context window; it follows a new base model only when it is its model's default
+      setNumCtxAuto(false);
+      setLoadedNumCtx(
+        savedFamily === "ollama" ? { selection: toSelection(base.provider, base.model), value: (a.settings as AgentSettings)?.num_ctx } : null
+      );
       const savedTools = validateAgentTools(a.tools);
       setTools(savedTools.ok ? savedTools.value : []);
       const savedMax = validateMaxToolCalls(a.maxToolCalls);
@@ -413,9 +458,24 @@ export default function AgentsClient({
         <section className={styles.section}>
           <h2 className={styles.sectionTitle}>Tools</h2>
           <div className={`${styles.toolList} ${infoLoading ? styles.toolListLoading : ""}`}>
+            <label className={styles.toolOption}>
+              <input
+                type="checkbox"
+                checked={allToolsOn}
+                onChange={() => setTools(allToolsOn ? [] : usableTools)}
+                disabled={saving || usableTools.length === 0}
+              />
+              <span className={styles.toolOptionText}>
+                <span className={styles.toolOptionLabel}>Select all</span>
+              </span>
+            </label>
+            <div className={styles.toolListSpacer} aria-hidden="true" />
             {AGENT_TOOLS.map((name) => {
               const toolInfo = AGENT_TOOL_INFO[name];
-              const unavailable = toolAvailability?.find((t) => t.name === name && !t.available);
+              const required = TOOL_REQUIRES[name];
+              const unavailable =
+                toolAvailability?.find((t) => t.name === name && !t.available) ??
+                (required && !tools.includes(required) ? { reason: `Needs ${AGENT_TOOL_INFO[required].label}` } : undefined);
               const checked = tools.includes(name);
               return (
                 <label
@@ -499,7 +559,12 @@ export default function AgentsClient({
           values={opts}
           onChange={setOpt}
           onReset={(optionsFamily) => {
-            setOpts((prev) => ({ ...prev, [optionsFamily]: DEFAULT_SETTINGS[optionsFamily] }));
+            const defaults =
+              optionsFamily === "ollama"
+                ? { ...DEFAULT_SETTINGS.ollama, num_ctx: defaultContextWindow(info?.contextLength) }
+                : DEFAULT_SETTINGS[optionsFamily];
+            setOpts((prev) => ({ ...prev, [optionsFamily]: defaults }));
+            if (optionsFamily === "ollama") setNumCtxAuto(true);
             setError(null);
           }}
           disabled={saving}

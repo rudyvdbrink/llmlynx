@@ -24,9 +24,10 @@ MIN_PAGE_TEXT = 20
 # Rendered PDF pages and photos for the model: their longest side, in pixels
 RENDER_SIDE = 1600
 IMAGE_SIDE = 2048
-# Photos up to this size, in a format every model takes, are sent as they are
+# Photos up to this size, in a format every model takes, are sent as they are.
+# Not WebP: Ollama refuses it ("Failed to load image or audio file").
 IMAGE_KEEP_BYTES = 4 * 1024 * 1024
-MODEL_IMAGE_FORMATS = {"JPEG", "PNG", "WEBP"}
+MODEL_IMAGE_FORMATS = {"JPEG", "PNG"}
 EXIF_ORIENTATION = 0x0112
 
 # Images larger than this many pixels are refused (decompression bombs)
@@ -171,3 +172,53 @@ def prepare_image(raw: bytes) -> list:
     else:
         data, mime = _jpeg(image, 85), "image/jpeg"
     return [TextContent(text=f"resized to {image.width}x{image.height}"), _image_content(data, mime)]
+
+
+MAX_SHEET_ROWS = 1000
+MAX_SHEET_COLUMNS = 200
+
+
+def _cell(value) -> str | int | float | bool | None:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def read_sheets(name: str, raw: bytes) -> dict:
+    """An Excel workbook as tables, for a preview: each sheet's values (as last saved), its first MAX_SHEET_ROWS rows."""
+    ext = extension(name)
+    if ext == "xls":
+        import xlrd
+
+        try:
+            book = xlrd.open_workbook(file_contents=raw)
+        except Exception:
+            raise ToolError("This is not an Excel file that can be read.")
+        sheets = []
+        for sheet in book.sheets():
+            rows = [[_cell(sheet.cell_value(r, c)) for c in range(min(sheet.ncols, MAX_SHEET_COLUMNS))] for r in range(min(sheet.nrows, MAX_SHEET_ROWS))]
+            sheets.append({"name": sheet.name, "rows": rows, "more": sheet.nrows > MAX_SHEET_ROWS})
+        return {"sheets": sheets}
+    from openpyxl import load_workbook
+
+    try:
+        book = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception:
+        raise ToolError("This is not an Excel file that can be read.")
+    sheets = []
+    try:
+        for sheet in book.worksheets:
+            rows, more = [], False
+            for index, row in enumerate(sheet.iter_rows(values_only=True, max_col=MAX_SHEET_COLUMNS)):
+                if index >= MAX_SHEET_ROWS:
+                    more = True
+                    break
+                rows.append([_cell(v) for v in row])
+            # Trailing empty rows and columns say nothing
+            while rows and all(v is None for v in rows[-1]):
+                rows.pop()
+            width = max((max((i + 1 for i, v in enumerate(row) if v is not None), default=0) for row in rows), default=0)
+            sheets.append({"name": sheet.title, "rows": [row[:width] for row in rows], "more": more})
+    finally:
+        book.close()
+    return {"sheets": sheets}

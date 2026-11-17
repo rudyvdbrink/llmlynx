@@ -9,7 +9,15 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 const SCRIPT = path.join(import.meta.dirname, "setup-env.mjs");
-const NAMES = ["SECRETS_KEY", "GUARD_MCP_TOKEN", "SEARCH_MCP_TOKEN", "BROWSER_MCP_TOKEN", "FILES_MCP_TOKEN", "SEARXNG_SECRET"];
+const NAMES = [
+  "SECRETS_KEY",
+  "GUARD_MCP_TOKEN",
+  "SEARCH_MCP_TOKEN",
+  "BROWSER_MCP_TOKEN",
+  "FILES_MCP_TOKEN",
+  "CODE_MCP_TOKEN",
+  "SEARXNG_SECRET",
+];
 
 const EXAMPLE = [
   'DATABASE_URL="file:./dev.db"',
@@ -64,7 +72,7 @@ describe("setup-env", () => {
     expect(lines[3]).toMatch(/^SEARCH_MCP_TOKEN=[0-9a-f]{64}$/);
     expect(lines[4]).toMatch(/^GUARD_MCP_TOKEN=[0-9a-f]{64}$/);
     expect(Buffer.from(values("SECRETS_KEY")[0], "base64")).toHaveLength(32);
-    for (const name of ["BROWSER_MCP_TOKEN", "FILES_MCP_TOKEN", "SEARXNG_SECRET"]) {
+    for (const name of ["BROWSER_MCP_TOKEN", "FILES_MCP_TOKEN", "CODE_MCP_TOKEN", "SEARXNG_SECRET"]) {
       expect(values(name)).toEqual([expect.stringMatching(/^[0-9a-f]{64}$/)]);
     }
     expect(new Set(NAMES.map((name) => values(name)[0])).size).toBe(NAMES.length);

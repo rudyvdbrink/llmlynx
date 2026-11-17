@@ -30,7 +30,7 @@ LLMLYNX is designed to be:
 
 ## 🚀 Quick Start
 
-You need Git, Node.js 20.9 or newer, Docker (Docker Desktop on Windows) and [Ollama](https://ollama.ai), running on the same machine.
+You need Git, Node.js 20.9 or newer and Docker (Docker Desktop on Windows). For local models you need [Ollama](https://ollama.ai).
 
 ### Setup on Linux
 
@@ -52,7 +52,7 @@ cd llmlynx
 npm install
 npx prisma generate
 npm run db:migrate
-docker compose up -d searxng mcp-searxng browser egress files guard clamav
+docker compose up -d searxng mcp-searxng browser egress files guard clamav code code-egress
 npm run build
 npm start
 ```
@@ -88,7 +88,7 @@ On the **Agents** page you combine a base model from any connected provider with
   <img src="./public/screen_agents.png" alt="LLMLYNX Logo" />
 </p>
 
-Custom agents can search the web, read pages, take screenshots, and read, create and edit files if their tools are selected. Tools are off by default: on the **Agents** page, each tool has a checkbox. A tool is only offered when the agent's base model supports it (Ollama and the OpenRouter model list say whether a model can call tools and see images).
+Custom agents can search the web, read pages, take screenshots, read, create and edit files, download files, run code and use git if their tools are selected. Tools are off by default: on the **Agents** page, each tool has a checkbox. A tool is only offered when the agent's base model supports it (Ollama and the OpenRouter model list say whether a model can call tools and see images).
 
 | Tool | What it does | Needs |
 |---|---|---|
@@ -102,6 +102,14 @@ Custom agents can search the web, read pages, take screenshots, and read, create
 | Edit files | Find-and-replace edits in text and code files, and in the text of Word, PowerPoint and Excel files, whose formatting stays; Excel cells can be set. Each edit gives a new version | a model that can call tools |
 | Create documents | Word, PDF and PowerPoint files, written by the model in markdown | a model that can call tools |
 | Create spreadsheets | Excel workbooks, with formulas | a model that can call tools |
+| Download files | Downloads a file, such as a dataset or a report, into the chat's sandbox, for code to work on | a model that can call tools |
+| Run code | Runs Python, JavaScript, TypeScript and shell commands (such as pytest or npm test) in the chat's sandbox, without network. numpy, pandas, scipy, matplotlib, openpyxl, pillow and pytest are built in. Charts and pages it makes show in the chat | a model that can call tools |
+| Install packages | Installs packages from PyPI and npm for the chat's code: ready-built wheels only, and npm packages without their install scripts | Run code |
+| Git | Clones public repositories over HTTPS into the chat's sandbox, and runs git on them: history, diffs, branches, commits, merges and pulls. Nothing can be pushed | a model that can call tools |
+
+An agent with any tool that works on files can also give you a file of its sandbox, as a card below its reply.
+
+**The sandbox.** Each chat has a sandbox: the files you attached, and those its tools made, downloaded or changed, in folders. A changed file keeps its older versions. Code runs in a jail of its own per run, with a copy of the chat's files and no network, for at most 120 seconds and 512 MB; only files are kept between runs. A file can be 20 MB, a sandbox 100 MB. A git repository is a folder of the sandbox; its history is kept apart from the sandbox's files (64 MB per repository), where code cannot reach it. Once a chat ran code or downloaded a file, a chevron at the right edge opens the sandbox panel: its files with previews and versions, its runs with their code and output, and its installed packages.
 
 You can set the maximum number of tool calls the agent can perform each turn. The model is told how many it has, and each result says how many are left. When the agent is out of tool calls it answers with what it has found.
 
@@ -116,6 +124,8 @@ The tools run in their own containers:
 | `files` | `tools/files`: reads, creates and edits files, as an MCP server on `127.0.0.1:8792`. Built on [MarkItDown](https://github.com/microsoft/markitdown) (documents to markdown), [pypdfium2](https://github.com/pypdfium2-team/pypdfium2) (PDF pages to images), [python-docx](https://github.com/python-openxml/python-docx), [python-pptx](https://github.com/scanny/python-pptx) and [openpyxl](https://openpyxl.readthedocs.io) (Office files), and [Pandoc](https://pandoc.org) with [Typst](https://typst.app) (documents from markdown). Files come and go in the calls: it keeps nothing and fetches nothing |
 | `guard` | `tools/guard`: scans text for prompt injections with [Llama Prompt Guard 2](https://huggingface.co/meta-llama/Llama-Prompt-Guard-2-22M) on the CPU, as an MCP server on `127.0.0.1:8793`. Not a tool of the models: the app calls it for web content and attached files. See [Security](#security) |
 | `clamav` | [ClamAV](https://www.clamav.net): scans attached files and web content for malware, on `127.0.0.1:3310`. Only its signature updates come from the internet |
+| `code` | `tools/code`: runs code in [bubblewrap](https://github.com/containers/bubblewrap) jails without network (Python and Node.js), installs packages per chat, and runs git, as an MCP server. It reaches nothing but `code-egress` and clamd |
+| `code-egress` | The code container's only way in and out: it passes the app's calls on (`127.0.0.1:8794`), lets installs reach PyPI and npm, and git's downloads reach public addresses over HTTPS, and nothing else |
 
 ---
 
@@ -126,8 +136,10 @@ The tools run in their own containers:
 **Scanning.** Everything an agent gets from the internet is checked on the server before a model sees it. Nothing is sent to an outside service for this. ClamAV scans for viruses, and Llama Prompt Guard 2 scans for prompt injection. Files you attach yourself are scanned for viruses only.
 
 - A virus: the file is refused, or the web content is thrown away.
-- A prompt injection: the reply pauses, and you choose to remove the content and continue, or to stop.
+- A prompt injection: the reply pauses, and you choose to remove the content and continue, or to stop. A chevron shows the text that was flagged.
 - Content that could not be checked is withheld.
+
+**Code.** Code runs in a jail without network, so it cannot reach the internet, your LAN, the app or the other containers, and it gets none of the server's secrets. What it prints is checked like a web page, and the files it makes for viruses. Once text that tried to instruct the model is in a chat, you are asked before code runs. git is not available to code: only the git tool runs it, without network, and its downloads happen in a separate jail that holds nothing of the chat. Pages that code or a model makes show in a sandboxed frame that cannot load or send anything. Details in [docs/security.md](docs/security.md).
 
 The prompt guard is Meta's Llama Prompt Guard 2, in the ONNX versions from [Llama-Prompt-Guard-2-22M-onnx](https://huggingface.co/rudyvdbrink/Llama-Prompt-Guard-2-22M-onnx) (the default) and [Llama-Prompt-Guard-2-86M-onnx](https://huggingface.co/rudyvdbrink/Llama-Prompt-Guard-2-86M-onnx). 
 

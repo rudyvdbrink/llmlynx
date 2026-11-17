@@ -42,7 +42,12 @@ async function open(page: Page, raw: string): Promise<PageInfo> {
   }
   const type = response?.headers()["content-type"] || "";
   if (type && !PAGE_TYPES.test(type)) {
-    throw new ToolError(`This URL is not a web page (${type.split(";")[0]}). Use web_read for PDFs and text files.`);
+    const mime = type.split(";")[0];
+    throw new ToolError(
+      /^image\//i.test(mime)
+        ? `This URL is an image (${mime}), not a web page. To look at it or show it to the user, download it with web_fetch if you have that tool.`
+        : `This URL is not a web page (${mime}). Use web_read for PDFs and text files.`
+    );
   }
   await settle(page, SETTLE_MS);
   return { url: page.url(), title: (await page.title().catch(() => "")) || "", status: response?.status() ?? null };

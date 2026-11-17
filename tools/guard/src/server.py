@@ -49,12 +49,23 @@ server = MCPServer(name="llmlynx-guard", version="1.0.0")
 
 
 @server.tool(
-    description="Scores a text for prompt injections. Returns JSON: { score, flagged, chunks, ms, model }.",
+    description=(
+        "Scores a text for prompt injections. Returns JSON: { score, flagged, chunks, ms, model }, and for a "
+        "flagged text { chunk }: the text of the chunk with the highest score."
+    ),
     structured_output=False,
 )
 def guard_scan_text(text: str) -> str:
     try:
-        result = scan(text, encode=MODEL.encode, score=MODEL.score, threshold=THRESHOLD, model=MODEL.name, turns=TURNS)
+        result = scan(
+            text,
+            encode=MODEL.encode,
+            score=MODEL.score,
+            offsets=MODEL.offsets,
+            threshold=THRESHOLD,
+            model=MODEL.name,
+            turns=TURNS,
+        )
     except TooLong:
         raise ToolError("The text is too long to scan in time.")
     except Exception:

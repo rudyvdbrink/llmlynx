@@ -4,6 +4,8 @@
 
 export const MAX_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_FILES_PER_MESSAGE = 10;
+// All of a chat's files together: its sandbox (the newest version of each file)
+export const MAX_SANDBOX_BYTES = 100 * 1024 * 1024;
 
 // "text": read as it is. "document": converted to text. "image": shown to models that can see images.
 export type FileKind = "text" | "document" | "image";
@@ -19,6 +21,7 @@ const TEXT_EXTENSIONS = [
   "html", "htm", "css", "scss", "js", "mjs", "cjs", "jsx", "ts", "tsx", "py", "ipynb", "go", "rs", "java", "kt",
   "c", "h", "cpp", "hpp", "cc", "cs", "rb", "php", "swift", "sh", "bash", "zsh", "ps1", "bat", "sql", "r", "lua",
   "pl", "scala", "dart", "vue", "svelte", "tex", "bib", "srt", "vtt", "dockerfile", "makefile", "gitignore", "env",
+  "svg",
 ];
 
 const DOCUMENT_TYPES: Record<string, string> = {
@@ -49,6 +52,7 @@ const TEXT_TYPES: Record<string, string> = {
   css: "text/css",
   js: "text/javascript",
   mjs: "text/javascript",
+  svg: "image/svg+xml",
 };
 
 /** "Report.Final.PDF" -> "pdf"; a name without a dot is its own extension ("Dockerfile" -> "dockerfile"). */
@@ -98,11 +102,26 @@ export function fileProblem(accept: AttachAccept, file: { name: string; size: nu
   return null;
 }
 
-/** Images the browser may show inline. Everything else is only ever downloaded. */
+/** Images the browser may show inline. Everything else is only ever downloaded, or shown sandboxed (see isArtifact). */
 export const INLINE_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
 
 export function isInlineImage(mimeType: string): boolean {
   return INLINE_IMAGE_TYPES.includes(mimeType);
+}
+
+/** SVG shows as an image, in which its scripts do not run. */
+export const isSvg = (mimeType: string) => mimeType === "image/svg+xml";
+
+/** HTML shows in a sandboxed frame (see /api/attachments/:id/frame). */
+export const isHtml = (mimeType: string) => mimeType === "text/html";
+
+/**
+ * Files that show in the chat as what they are, rather than as a card to
+ * download: images, SVG and HTML. A run of code shows these in the chat by
+ * itself; its other files only appear in the sandbox panel.
+ */
+export function isArtifact(mimeType: string): boolean {
+  return isInlineImage(mimeType) || isSvg(mimeType) || isHtml(mimeType);
 }
 
 /** 1234567 -> "1.2 MB" */
@@ -139,6 +158,69 @@ export function uniqueName(name: string, taken: string[]): string {
 }
 
 const MAX_NAME_LENGTH = 120;
+// Deep and long enough for the files of a cloned repository
+const MAX_PATH_DEPTH = 16;
+const MAX_PATH_LENGTH = 400;
+
+/** A part of a sandbox path: a safe name (see cleanFileName) that keeps its leading dots, as in ".gitignore". */
+function cleanPathPart(part: string): string {
+  const dots = /^\.*/.exec(part)![0];
+  const name = cleanFileName(part);
+  return dots.length < part.length ? dots + name : name;
+}
+
+/**
+ * A path in a chat's sandbox, such as "out/plot.png": folders separated by
+ * "/", each part a safe name (see cleanPathPart). A leading "/" or "./" and
+ * the sandbox folder ("/sandbox/") are dropped. Null when it climbs out with
+ * "..", is in a .git folder (only the git tool keeps those, apart from the
+ * sandbox's files), is too deep or too long, or names nothing.
+ */
+export function cleanFilePath(raw: string): string | null {
+  const parts = raw
+    .trim()
+    .replace(/\\/g, "/")
+    .replace(/^\/?sandbox\//, "")
+    .split("/")
+    .filter((part) => part && part !== ".");
+  if (!parts.length || parts.includes("..") || parts.length > MAX_PATH_DEPTH) return null;
+  if (parts.some((part) => part.toLowerCase() === ".git")) return null;
+  const path = parts.map(cleanPathPart).join("/");
+  return path.length <= MAX_PATH_LENGTH ? path : null;
+}
+
+/** "out/plot.png" -> "plot.png" */
+export const baseName = (path: string) => path.split("/").pop() ?? path;
+
+/**
+ * Which of the files a tool call stored show in the chat, below the reply: all
+ * that a file tool made; of what a run of code made, only the images, SVG and
+ * HTML (its other files only appear in the sandbox panel, so a run that writes
+ * many files does not flood the chat); nothing that was downloaded or that git
+ * checked out. The model
+ * shows any other file with share_file.
+ */
+export function shownInChat(toolName: string, files: FileCard[]): FileCard[] {
+  if (toolName === "run_code") return files.filter((f) => isArtifact(f.mimeType));
+  if (toolName === "web_fetch" || toolName === "install_packages" || toolName === "git") return [];
+  return files;
+}
+
+/**
+ * The cards below a reply with `added` put in: each file shows once, as its
+ * newest version, in the place where it first showed. A file is a name in the
+ * sandbox (without case), so an edit or a run that changes a file, or sharing
+ * one that shows already, does not add a card.
+ */
+export function withFileCards(cards: FileCard[], added: FileCard[]): FileCard[] {
+  const out = [...cards];
+  for (const card of added) {
+    const i = out.findIndex((c) => c.name.toLowerCase() === card.name.toLowerCase());
+    if (i >= 0) out[i] = card;
+    else out.push(card);
+  }
+  return out;
+}
 
 /** A file name that is safe to store and show: no folders, control characters or reserved characters. */
 export function cleanFileName(raw: string): string {

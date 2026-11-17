@@ -1,17 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import styles from "./Chat.module.css";
 import AppShell from "@/components/AppShell";
 import { useProviderModels } from "@/hooks/useModelCatalog";
 import { DEFAULT_MODELS, hasModel } from "@/lib/providers";
 import { parseSelection, toSelection } from "@/lib/selection";
+import { SANDBOX_TOOL_NAMES } from "@/lib/agentTools";
 import type { SessionUser } from "@/lib/types";
 import { useConversations } from "./hooks/useConversations";
 import { useChat } from "./hooks/useChat";
 import { useAttachAccept } from "./hooks/useAttachAccept";
 import MessageList from "./components/MessageList";
 import Composer from "./components/Composer";
+import SandboxPanel from "./components/sandbox/SandboxPanel";
 
 export default function ChatClientPage({
   user,
@@ -51,7 +53,7 @@ export default function ChatClientPage({
   } = useConversations(selection, setSelection);
 
   // Chat state (messages + streaming)
-  const { messages, isStreaming, replyStatus, answering, send, cancel, loadHistory, reset } = useChat({
+  const { messages, isStreaming, replyStatus, answering, toolsDone, send, cancel, loadHistory, reset } = useChat({
     selection,
     ensureConversation,
     refreshConversations,
@@ -71,6 +73,22 @@ export default function ChatClientPage({
       cancelled = true;
     };
   }, [initialConversationId, openConversation, loadHistory]);
+
+  // The chat has a sandbox from its first run, install or download on: then its panel's chevron shows
+  const hasSandbox = useMemo(
+    () =>
+      messages.some((m) =>
+        m.trace?.some((item) => item.kind === "tool" && (SANDBOX_TOOL_NAMES as string[]).includes(item.step.name))
+      ),
+    [messages]
+  );
+  // Every chat opens with the panel collapsed
+  const [sandboxOpen, setSandboxOpen] = useState(false);
+  const [panelChat, setPanelChat] = useState(activeConversationId);
+  if (panelChat !== activeConversationId) {
+    setPanelChat(activeConversationId);
+    setSandboxOpen(false);
+  }
 
   function clearChat() {
     reset();
@@ -99,6 +117,7 @@ export default function ChatClientPage({
 
   return (
     <AppShell
+      rightOpen={sandboxOpen && hasSandbox}
       sidebar={{
         user,
         model: selection,
@@ -116,6 +135,13 @@ export default function ChatClientPage({
     >
       {/* Inside the page, so it stays centered on the space beside the sidebar */}
       <div className={styles.fixedCenterLogo} aria-hidden="true" />
+      <SandboxPanel
+        conversationId={activeConversationId}
+        available={hasSandbox}
+        open={sandboxOpen}
+        onOpenChange={setSandboxOpen}
+        tick={toolsDone}
+      />
       <div className={styles.chatArea}>
         <MessageList messages={messages} isStreaming={isStreaming} replyStatus={replyStatus} answering={answering} />
         <div className={styles.composerDock}>

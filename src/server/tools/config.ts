@@ -4,7 +4,7 @@
 // containers run on another host. The guard is not a tool of the model: the
 // security checks call it (see guardServer in server/security/config.ts).
 
-export type ToolServerId = "search" | "browser" | "files" | "guard";
+export type ToolServerId = "search" | "browser" | "files" | "guard" | "code";
 
 export type ToolServer = { id: ToolServerId; url: string; token?: string };
 
@@ -13,6 +13,7 @@ const SERVERS: Record<ToolServerId, { url: string; urlEnv: string; tokenEnv: str
   browser: { url: "http://127.0.0.1:8791/mcp", urlEnv: "BROWSER_MCP_URL", tokenEnv: "BROWSER_MCP_TOKEN" }, // tools/browser
   files: { url: "http://127.0.0.1:8792/mcp", urlEnv: "FILES_MCP_URL", tokenEnv: "FILES_MCP_TOKEN" }, // tools/files
   guard: { url: "http://127.0.0.1:8793/mcp", urlEnv: "GUARD_MCP_URL", tokenEnv: "GUARD_MCP_TOKEN" }, // tools/guard
+  code: { url: "http://127.0.0.1:8794/mcp", urlEnv: "CODE_MCP_URL", tokenEnv: "CODE_MCP_TOKEN" }, // tools/code
 };
 
 /** The server's address and bearer token. */

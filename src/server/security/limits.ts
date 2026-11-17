@@ -1,18 +1,5 @@
-// The fixed numbers of the security layer: the thresholds of the URL rules,
-// the timeouts of the scanners, and how long things are kept. None of them is
-// a setting.
-
-// --- URL rules (urls.ts): what makes an unknown URL look like it carries data out
-/** A query string longer than this many characters */
-export const MAX_QUERY_LENGTH = 256;
-/** A path segment or query value of at least this many characters that is encoded data or random looking */
-export const ENCODED_MIN_LENGTH = 40;
-/** Bits per character above which such a segment or value counts as random looking */
-export const MAX_ENTROPY_BITS = 4.0;
-/** Base64 changes between lower case, upper case and digits from one character to the next at least this often; words do not */
-export const BASE64_MIN_CHANGES = 0.3;
-/** A run of this many letters and digits that also occurs in the user's messages or files */
-export const SHARED_RUN_LENGTH = 32;
+// The fixed numbers of the security layer: the timeouts of the scanners, and
+// how long things are kept. None of them is a setting.
 
 // --- Scanners (scan.ts)
 /** How long the scans of a tool result may take, together */
