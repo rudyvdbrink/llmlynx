@@ -38,10 +38,13 @@ export function useChat({
   selection,
   ensureConversation,
   refreshConversations,
+  setLiveCost,
 }: {
   selection: string;
   ensureConversation: () => Promise<string>;
-  refreshConversations: () => void;
+  refreshConversations: () => Promise<void>;
+  // Shows what the conversation cost so far while the reply streams, until the list has it (null)
+  setLiveCost: (live: { id: string; cost: number } | null) => void;
 }) {
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -137,8 +140,9 @@ export function useChat({
 
         const mayCallTools = res.headers.get("X-Tools") === "1";
         await readNdjson(res.body, (obj) => {
-          const line = obj as { status?: unknown; userFiles?: unknown; tool?: unknown };
+          const line = obj as { status?: unknown; userFiles?: unknown; tool?: unknown; cost?: unknown };
           if (isReplyStatus(line?.status)) setReplyStatus(line.status);
+          if (typeof line?.cost === "number") setLiveCost({ id: conversationId, cost: line.cost });
           // The stored copies of the files the user sent replace the browser's
           if (isFileList(line?.userFiles)) {
             for (const card of cards) if (card.url) URL.revokeObjectURL(card.url);
@@ -156,8 +160,6 @@ export function useChat({
           failed = true;
           updateReply({ error: CONNECTION_LOST });
         }
-
-        refreshConversations();
       } catch (err) {
         if ((err as Error)?.name !== "AbortError") {
           failed = true;
@@ -171,9 +173,11 @@ export function useChat({
         show();
         setIsStreaming(false);
         abortRef.current = null;
+        // Also after a stop: the steps the model finished cost what they cost
+        refreshConversations().then(() => setLiveCost(null));
       }
     },
-    [isStreaming, selection, ensureConversation, refreshConversations, updateReply, updateUserMessage]
+    [isStreaming, selection, ensureConversation, refreshConversations, setLiveCost, updateReply, updateUserMessage]
   );
 
   const cancel = useCallback(() => {

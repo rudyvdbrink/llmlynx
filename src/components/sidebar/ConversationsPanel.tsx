@@ -8,6 +8,11 @@ import { PencilIcon, PinIcon, PinOffIcon, SearchIcon, SpeechBubblePlusIcon, Tras
 import type { ConversationList } from "@/hooks/useConversationList";
 import { groupByDate } from "@/lib/dateGroups";
 
+// To the cent; less than a cent shows as such
+function formatCost(usd: number): string {
+  return usd > 0 && usd < 0.01 ? "<$0.01" : `$${usd.toFixed(2)}`;
+}
+
 export default function ConversationsPanel({
   collapsed,
   conversationList,
@@ -70,7 +75,8 @@ export default function ConversationsPanel({
       window.removeEventListener("resize", measure);
       ro?.disconnect();
     };
-  }, [conversations, collapsed]);
+    // The active conversation's cost takes room from its title
+  }, [conversations, collapsed, activeConversationId]);
 
   // Close menu on outside click, scroll, resize, or Escape
   useEffect(() => {
@@ -218,6 +224,12 @@ export default function ConversationsPanel({
                         </span>
                       </button>
 
+                      {isActive && c.cost !== null && (
+                        <span className={styles.conversationCost} title="What this chat cost">
+                          {formatCost(c.cost)}
+                        </span>
+                      )}
+
                       <button
                         type="button"
                         className={styles.kebabBtn}
@@ -232,8 +244,8 @@ export default function ConversationsPanel({
                       >
                         <svg
                           width="18"
-                          height="18"
-                          viewBox="0 0 24 24"
+                          height="6"
+                          viewBox="0 8 24 8"
                           fill="currentColor"
                           aria-hidden="true"
                         >

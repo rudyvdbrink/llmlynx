@@ -4,7 +4,7 @@ import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { jsonError, optionalString, readJsonObject } from "@/server/http";
 
-const SUMMARY_SELECT = { id: true, title: true, model: true, pinnedAt: true, createdAt: true, updatedAt: true } as const;
+const SUMMARY_SELECT = { id: true, title: true, model: true, pinnedAt: true, cost: true, createdAt: true, updatedAt: true } as const;
 const NEWEST_FIRST: Prisma.ConversationOrderByWithRelationInput[] = [{ updatedAt: "desc" }, { id: "desc" }];
 
 const MAX_OLDER = 1000;

@@ -59,6 +59,7 @@ export default function ChatClientPage({
     selection,
     ensureConversation,
     refreshConversations,
+    setLiveCost: conversationList.setLiveCost,
   });
 
   // Opens the conversation picked in the sidebar on another page (/chat?conversation=<id>),

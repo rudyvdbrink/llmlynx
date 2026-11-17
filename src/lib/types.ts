@@ -62,6 +62,7 @@ export type ConversationSummary = {
   title: string | null;
   model: string | null; // a selection string, see lib/selection.ts
   pinnedAt: string | null;
+  cost: number | null; // US dollars spent at OpenAI and OpenRouter; null when no reply came from them
   createdAt: string;
   updatedAt: string;
 };
