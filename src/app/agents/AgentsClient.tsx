@@ -7,6 +7,7 @@ import { CheckIcon } from "@/components/icons";
 import ModelPicker, { type PickerItem } from "@/components/sidebar/ModelPicker";
 import sidebarStyles from "@/components/sidebar/Sidebar.module.css";
 import { useConversationList } from "@/hooks/useConversationList";
+import { useLastChatHref } from "@/hooks/useLastChat";
 import {
   notifyAgentsChanged,
   useAgentList,
@@ -66,6 +67,7 @@ export default function AgentsClient({
 
   // Sidebar state (auth ensured by server)
   const conversationList = useConversationList();
+  const lastChatHref = useLastChatHref();
   const [sidebarSelection, setSidebarSelection] = useState(initialSelection ?? DEFAULT_SELECTION);
   const goToChat = () => router.push("/chat");
   const openInChat = (id: string) => router.push(`/chat?conversation=${encodeURIComponent(id)}`);
@@ -343,7 +345,7 @@ export default function AgentsClient({
         onNewConversation: goToChat,
         onOpenConversation: openInChat,
         footerNavLabel: "Back to chat",
-        footerNavHref: "/chat",
+        footerNavHref: lastChatHref,
       }}
     >
       <div className={`${chatStyles.chatArea} ${styles.agentsArea}`}>

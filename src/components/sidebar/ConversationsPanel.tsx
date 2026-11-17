@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import styles from "./Sidebar.module.css";
 import boxStyles from "../BoxButton.module.css";
-import { PencilIcon, PinIcon, PinOffIcon, SearchIcon, SpeechBubbleIcon, TrashIcon } from "@/components/icons";
+import { PencilIcon, PinIcon, PinOffIcon, SearchIcon, SpeechBubblePlusIcon, TrashIcon } from "@/components/icons";
 import type { ConversationList } from "@/hooks/useConversationList";
 import { groupByDate } from "@/lib/dateGroups";
 
@@ -183,7 +183,7 @@ export default function ConversationsPanel({
             aria-label="New conversation"
             title="New conversation"
           >
-            <SpeechBubbleIcon className={boxStyles.icon} />
+            <SpeechBubblePlusIcon className={boxStyles.icon} />
           </button>
         </div>
       </div>

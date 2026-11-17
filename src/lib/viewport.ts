@@ -14,3 +14,10 @@ const SIDEBAR_OVERLAY_MAX_PX = 860;
 export function isSidebarOverlay(): boolean {
   return typeof window !== "undefined" && window.innerWidth <= SIDEBAR_OVERLAY_MAX_PX;
 }
+
+// How far the page can scroll. Mobile browsers can report a viewport smaller
+// than the visible area, so the larger one is used.
+export function scrollRoom(): number {
+  const root = document.documentElement;
+  return root.scrollHeight - Math.max(root.clientHeight, window.innerHeight);
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useLayoutEffect, useRef } from "react";
+import { scrollRoom } from "@/lib/viewport";
 
 // Keys that scroll the page up
 const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
@@ -18,17 +19,23 @@ function isEditable(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
 }
 
-// How far the page can scroll. Mobile browsers can report a viewport smaller
-// than the visible area, so the larger one is used.
-function scrollRoom(): number {
-  const root = document.documentElement;
-  return root.scrollHeight - Math.max(root.clientHeight, window.innerHeight);
+// On wide screens the composer drops below its resting place while the page is
+// not at its end (--composer-drop in Chat.module.css); `el` is in the chat area
+export function composerDrop(el: Element | null): number {
+  return el ? parseFloat(getComputedStyle(el).getPropertyValue("--composer-drop")) || 0 : 0;
+}
+
+// Where the page shows the end of the messages just above the composer: short
+// of the end of the page while the composer can drop
+function messagesEnd(el: Element | null): number {
+  const drop = composerDrop(el);
+  return drop ? scrollRoom() - drop : document.documentElement.scrollHeight;
 }
 
 /**
- * Keeps the page at the bottom while a reply streams in, until the user scrolls
- * up. Each new reply follows again. When the messages change outside a reply
- * (a conversation is opened), the page scrolls to the end once.
+ * Keeps the end of the messages in view while a reply streams in, until the
+ * user scrolls up. Each new reply follows again. When the messages change
+ * outside a reply (a conversation is opened), the page scrolls there once.
  * Returns a ref for an element at the end of the message list.
  */
 export function useAutoScroll(messages: unknown, isStreaming: boolean) {
@@ -39,7 +46,7 @@ export function useAutoScroll(messages: unknown, isStreaming: boolean) {
     // The render that ends a reply still belongs to it
     const replying = isStreaming || wasStreaming.current;
     wasStreaming.current = isStreaming;
-    if (!replying) endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (!replying) window.scrollTo({ top: messagesEnd(endRef.current), behavior: "smooth" });
   }, [messages, isStreaming]);
 
   useLayoutEffect(() => {
@@ -52,8 +59,15 @@ export function useAutoScroll(messages: unknown, isStreaming: boolean) {
     // Not on touch devices: their keyboard and toolbars move the page by themselves.
     const checkPosition = window.matchMedia("(pointer: fine)").matches;
 
+    // A page further down than the end of the messages, toward where the
+    // composer rests, stays there until the reply has pushed the composer down.
+    // Set when the page is first pinned, and when the user scrolls down.
+    let further = false;
+
     function pin() {
-      window.scrollTo(0, document.documentElement.scrollHeight);
+      const end = messagesEnd(endRef.current);
+      if (window.scrollY > pinnedTop + 2 || end >= window.scrollY) further = window.scrollY > end;
+      if (!further) window.scrollTo(0, end);
       pinnedTop = window.scrollY;
       pinnedRoom = scrollRoom();
     }
