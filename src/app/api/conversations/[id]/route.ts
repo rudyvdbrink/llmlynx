@@ -22,6 +22,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       title: true,
       model: true,
       pinnedAt: true,
+      cost: true,
       createdAt: true,
       updatedAt: true,
       // The user's messages and every step of the replies, tool steps included

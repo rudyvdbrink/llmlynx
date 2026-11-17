@@ -20,6 +20,7 @@ type OutputItem = {
 
 type ResponseBody = {
   output?: OutputItem[];
+  usage?: unknown;
   incomplete_details?: { reason?: string } | null;
   error?: { code?: string; message?: string } | null;
 };
@@ -42,7 +43,7 @@ type ResponsesTurn = ModelTurn & { output: OutputItem[] };
 const SUMMARY_BREAK = "\n\n";
 
 export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
-  const { client, model, messages, tools, signal, writeContent, writeThinking, sendDone } = ctx;
+  const { client, model, messages, tools, signal, writeContent, writeThinking, sendDone, cost } = ctx;
   const instructions = messages
     .filter((m) => m.role === "system")
     .map((m) => m.content)
@@ -68,6 +69,7 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
   type TurnRequest = { items: unknown[]; offered: typeof tools; toolChoice?: "none" };
 
   function request(stream: boolean, { items, offered, toolChoice }: TurnRequest) {
+    cost.startRequest({ instructions, items, tools: toResponsesTools(offered) });
     return withoutRefusedParams(accepted, () =>
       client.responses.create(
         {
@@ -131,6 +133,9 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
           case "response.reasoning_text.delta":
             writeThinking(event.delta ?? "");
             break;
+          case "response.function_call_arguments.delta":
+            cost.addOutput(event.delta ?? "");
+            break;
           case "response.output_item.done":
             if (event.item) items.push(event.item);
             break;
@@ -144,6 +149,7 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
             throw event;
         }
       }
+      await cost.endRequest(response?.usage);
       finish(turn, response, response?.output?.length ? response.output : items);
       sendDone();
     } catch (err) {
@@ -151,6 +157,7 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
 
       // Fallback: non-streaming request, return as a single message (no fake chunking)
       const response = (await request(false, req)) as unknown as ResponseBody;
+      await cost.endRequest(response.usage);
       const output = response.output ?? [];
       const parts = output.flatMap((item) => item.summary?.map((s) => s.text ?? "") ?? []);
       if (parts.length) writeThinking(parts.join(SUMMARY_BREAK));

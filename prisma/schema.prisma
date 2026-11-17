@@ -49,6 +49,7 @@ model Conversation {
   title     String?
   model     String?
   pinnedAt  DateTime? // set while the conversation is pinned to the top of the list
+  cost      Float?    // what its replies cost at OpenAI and OpenRouter, in US dollars; null while none came from them
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   messages  Message[]

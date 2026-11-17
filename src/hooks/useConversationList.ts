@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RECENT_DAYS, startOfDay } from "@/lib/dateGroups";
 import type { ConversationSummary } from "@/lib/types";
 
@@ -22,6 +22,8 @@ export function useConversationList() {
   const [query, setQuery] = useState("");
   const [olderPages, setOlderPages] = useState(0);
   const [data, setData] = useState<ListData>({ key: "", conversations: [], hasOlder: false });
+  // What a conversation cost so far while its reply streams, which the list does not have yet
+  const [liveCost, setLiveCost] = useState<{ id: string; cost: number } | null>(null);
   // Only the latest request may update the list, so a slow response cannot overwrite a newer one.
   const latestRequest = useRef(0);
 
@@ -29,11 +31,11 @@ export function useConversationList() {
   const older = (olderPages + (q ? 1 : 0)) * OLDER_PAGE_SIZE;
   const key = `${q}|${older}`;
 
-  const refresh = useCallback(() => {
+  const refresh = useCallback((): Promise<void> => {
     const request = ++latestRequest.current;
     const params = new URLSearchParams({ since, older: String(older) });
     if (q) params.set("q", q);
-    fetch(`/api/conversations?${params}`)
+    return fetch(`/api/conversations?${params}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((d) => ({ conversations: d.conversations ?? [], hasOlder: !!d.hasOlder }))
       .catch(() => ({ conversations: [], hasOlder: false }))
@@ -63,8 +65,16 @@ export function useConversationList() {
     [refresh]
   );
 
+  const conversations = useMemo(
+    () =>
+      liveCost
+        ? data.conversations.map((c) => (c.id === liveCost.id ? { ...c, cost: liveCost.cost } : c))
+        : data.conversations,
+    [data.conversations, liveCost]
+  );
+
   return {
-    conversations: data.conversations,
+    conversations,
     hasOlder: data.hasOlder,
     // True until the list matches the current search and page count.
     loading: data.key !== key,
@@ -73,6 +83,7 @@ export function useConversationList() {
     loadOlder,
     setPinned,
     refresh,
+    setLiveCost,
   };
 }
 

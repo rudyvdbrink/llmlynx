@@ -188,6 +188,18 @@ type CatalogModel = {
     supported_efforts?: string[] | null;
     default_effort?: string | null;
   } | null;
+  pricing?: TokenPrices | null;
+};
+
+/**
+ * What a model costs per token, in US dollars as decimal text, as OpenRouter
+ * lists it. From `min_prompt_tokens` prompt tokens on, an override's prices apply.
+ */
+export type TokenPrices = {
+  prompt?: string;
+  completion?: string;
+  input_cache_read?: string;
+  overrides?: (TokenPrices & { min_prompt_tokens?: number })[] | null;
 };
 
 // OpenRouter's name for a parameter, where it differs from the option's key
@@ -243,7 +255,7 @@ function toModelInfo(model: CatalogModel): ModelInfo {
 const CATALOG_CACHE_MS = 60 * 60 * 1000;
 const CATALOG_RETRY_MS = 60 * 1000;
 
-let catalog: { at: number; models: Map<string, ModelInfo> } | null = null;
+let catalog: { at: number; models: Map<string, ModelInfo>; prices: Map<string, TokenPrices> } | null = null;
 let catalogTriedAt = 0;
 let catalogLoad: Promise<void> | null = null;
 
@@ -258,14 +270,19 @@ async function loadCatalog() {
     const raw = (await res.json()) as { data?: CatalogModel[] };
     if (!Array.isArray(raw.data)) throw new Error("no model list");
     const models = new Map<string, ModelInfo>();
+    const prices = new Map<string, TokenPrices>();
     for (const model of raw.data) {
       if (!model?.id) continue;
       const info = toModelInfo(model);
       models.set(model.id, info);
+      if (model.pricing) prices.set(model.id, model.pricing);
       // Providers' dated model names, such as gpt-5-2025-08-07
-      if (model.canonical_slug && !models.has(model.canonical_slug)) models.set(model.canonical_slug, info);
+      if (model.canonical_slug && !models.has(model.canonical_slug)) {
+        models.set(model.canonical_slug, info);
+        if (model.pricing) prices.set(model.canonical_slug, model.pricing);
+      }
     }
-    catalog = { at: Date.now(), models };
+    catalog = { at: Date.now(), models, prices };
   } catch (err) {
     console.error(`Cannot load the OpenRouter model catalog: ${(err as Error)?.message || err}`);
   }
@@ -285,12 +302,16 @@ async function getCatalog() {
     });
   }
   if (!catalog && catalogLoad) await catalogLoad;
-  return catalog?.models ?? null;
+  return catalog;
 }
+
+/** The catalog's copy of an OpenAI model, found by its name or its name without a date. */
+const openAIEntry = <T>(entries: Map<string, T>, model: string): T | undefined =>
+  entries.get(`openai/${model}`) ?? entries.get(`openai/${model.replace(/-\d{4}-\d{2}-\d{2}$/, "")}`);
 
 // OpenAI does not say what its models can do, so the catalog's copy of them is used.
 function openAIModelInfo(models: Map<string, ModelInfo>, model: string): ModelInfo {
-  const info = models.get(`openai/${model}`) ?? models.get(`openai/${model.replace(/-\d{4}-\d{2}-\d{2}$/, "")}`);
+  const info = openAIEntry(models, model);
   if (!info) return UNKNOWN_MODEL;
   // OpenAI only takes reasoning levels, not on and off
   const levelsOnly = info.reasoning?.includes("on") ? null : info.reasoning;
@@ -307,9 +328,19 @@ export async function getModelInfo(userId: string, provider: ProviderId, model: 
     const info = await getOllamaModelInfo(await getOllamaUrl(userId), model);
     return { ...UNKNOWN_MODEL, ...info, options: OPTION_KEYS.ollama };
   }
-  const models = await getCatalog();
+  const models = (await getCatalog())?.models;
   if (!models) return UNKNOWN_MODEL;
   return provider === "openai" ? openAIModelInfo(models, model) : (models.get(model) ?? UNKNOWN_MODEL);
+}
+
+/**
+ * What a model costs, or null when unknown. OpenAI's API does not say, so the
+ * catalog's copy of an OpenAI model is used, which has OpenAI's prices.
+ */
+export async function getModelPrices(provider: KeyProviderId, model: string): Promise<TokenPrices | null> {
+  const prices = (await getCatalog())?.prices;
+  if (!prices) return null;
+  return (provider === "openai" ? openAIEntry(prices, model) : prices.get(model)) ?? null;
 }
 
 function sortNames(names: string[]): string[] {

@@ -45,6 +45,8 @@ export const runtime = "nodejs";
 // conversation id in X-Conversation-Id. X-Tools is "1" when the model can call tools.
 // A { pause: { id, tool, source } } line says the reply waits for the user's
 // choice about flagged content, sent with POST /api/chat/pauses/:id.
+// On OpenAI and OpenRouter, { cost } lines say what the conversation cost so far
+// in US dollars: an estimate while a request streams, exact once it ends.
 
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 

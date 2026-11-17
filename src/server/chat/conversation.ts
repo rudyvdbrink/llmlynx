@@ -8,6 +8,7 @@ import { parseSelection, toSelection } from "@/lib/selection";
 import type { ApprovalDecision, ChatMessage, PauseDecision, StepSecurity } from "@/lib/types";
 import type { RunRecord } from "@/server/tools/definitions";
 import { WHOLE_TEXT } from "@/server/files/store";
+import { addConversationCost, conversationCost } from "./cost";
 import { saveRequestSetup, type RequestSetupInput } from "./setup";
 
 // Helper to make a short title from the first user message
@@ -228,6 +229,10 @@ export type AssistantReply = {
   saveToolDecision(callId: string, decision: PauseDecision): Promise<void>;
   /** Stores a run of code or an install of packages of the call `callId`, for the sandbox panel. */
   saveSandboxRun(callId: string, run: RunRecord): Promise<void>;
+  /** What the conversation cost so far, in US dollars; null when nothing it asked for cost anything. */
+  readCost(): Promise<number | null>;
+  /** Adds what a request of the reply cost, in US dollars, to what the conversation cost. */
+  saveCost(usd: number): Promise<void>;
   /** Stores the final step. Safe to call more than once; only the first call writes. */
   persist(): Promise<void>;
 };
@@ -407,6 +412,9 @@ export function createAssistantReply({
         console.error(`Storing a run failed: ${(err as Error)?.message || err}`);
       }
     },
+    readCost: () => conversationCost(conversationId),
+    // Also after the reply was stored: what was asked for was paid
+    saveCost: (usd) => addConversationCost(conversationId, usd),
     async saveToolDecision(callId, decision) {
       const step = toolSteps.get(callId);
       const security = step?.metadata.security;

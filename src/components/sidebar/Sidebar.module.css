@@ -428,7 +428,7 @@
   border-radius: 8px;
   box-sizing: border-box;        /* prevent border overflow */
   display: grid;
-  grid-template-columns: 1fr auto; /* title area + kebab area */
+  grid-template-columns: 1fr auto auto; /* title area + cost (active item only) + kebab area */
   align-items: center;
   font-size: 13px;               /* keep the previous font size */
 }
@@ -456,11 +456,22 @@
   font: inherit;
   cursor: pointer;
   letter-spacing: 0.01em;        /* slightly increased char spacing */
+  align-self: baseline;          /* the cost shares its baseline */
+}
+
+/* What the active conversation cost, left of the kebab, on the title's baseline */
+.conversationCost {
+  grid-column: 2 / 3;
+  align-self: baseline;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Kebab (ellipsis) button, always visible on the right */
 .kebabBtn {
-  grid-column: 2 / 3;
+  grid-column: 3 / 4;
   background: transparent;
   border: none;
   color: var(--muted);
@@ -472,6 +483,12 @@
   cursor: pointer;
   /* Its center is 16px from the item's right edge, in line with the select chevrons */
   margin-right: 1px;
+  /* A line like the title's, on the same baseline: the dots sit half the cap height above it */
+  font: inherit;
+}
+.kebabBtn svg {
+  vertical-align: calc(0.35em - 3px);
+  vertical-align: calc(0.5cap - 3px); /* 3px: half the dots' height */
 }
 .kebabBtn:hover,
 .kebabBtn:focus-visible {

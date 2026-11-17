@@ -8,7 +8,8 @@ import { PROVIDER_LABELS, type KeyProviderId } from "@/lib/providers";
 import type { ChatMessage } from "@/lib/types";
 import { toFunctionTools, type ToolDefinition } from "@/server/tools/definitions";
 import type { AssistantReply } from "./conversation";
-import { RESPONSES_OPTIONS, usesResponsesApi, type ModelInfo } from "./models";
+import { createCostMeter } from "./cost";
+import { getModelPrices, RESPONSES_OPTIONS, usesResponsesApi, type ModelInfo } from "./models";
 import { responsesChat } from "./openaiResponses";
 import {
   isStreamingUnsupported,
@@ -180,7 +181,7 @@ type StreamedCall = { index?: number; id?: string; function?: { name?: string; a
 
 /** A chat on the Chat Completions API, which OpenRouter and OpenAI's models without reasoning use. */
 function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
-  const { client, model, messages, tools, signal, writeContent, writeThinking, sendDone } = ctx;
+  const { client, model, messages, tools, signal, writeContent, writeThinking, sendDone, cost } = ctx;
   // A message's images go in content parts after its text
   const toParams = (list: typeof messages): ChatCompletionMessageParam[] =>
     list.map((m) =>
@@ -208,8 +209,10 @@ function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
       model,
       messages: items,
       ...(offered.length ? { tools: toFunctionTools(offered), ...(toolChoice ? { tool_choice: toolChoice } : {}) } : {}),
-      ...(stream ? { stream: true as const } : {}),
+      // The last part of the stream then says how many tokens it took, for what it cost
+      ...(stream ? { stream: true as const, stream_options: { include_usage: true } } : {}),
     };
+    cost.startRequest(body);
     return waitingOutRateLimit(signal, (retrying) =>
       withoutRefusedParams(accepted, () =>
         client.chat.completions.create({ ...body, ...accepted } as never, { signal, ...(retrying ? { maxRetries: 0 } : {}) })
@@ -237,8 +240,11 @@ function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
       // First attempt: true streaming
       const completion = (await request(true, req)) as unknown as AsyncIterable<{
         choices?: { delta?: { content?: string | null; tool_calls?: StreamedCall[] }; finish_reason?: string | null }[];
+        usage?: unknown;
       }>;
+      let usage: unknown = null;
       for await (const part of completion) {
+        usage = part.usage ?? usage;
         const choice = part.choices?.[0];
         addThinking(reasoningOf(choice?.delta));
         addReasoningDetails(turn.reasoningDetails, choice?.delta);
@@ -254,9 +260,11 @@ function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
           partial.id ??= call.id;
           partial.name += call.function?.name ?? "";
           partial.args += call.function?.arguments ?? "";
+          cost.addOutput(call.function?.arguments ?? "");
         }
         if (choice?.finish_reason) sendDone();
       }
+      await cost.endRequest(usage);
       setCalls();
     } catch (err) {
       if (ctx.isCancelled() || !isStreamingUnsupported(err)) throw err;
@@ -264,7 +272,9 @@ function chatCompletions(ctx: ApiChatContext): ApiChat<CompletionsTurn> {
       // Fallback: non-streaming request, return as a single message (no fake chunking)
       const completion = (await request(false, req)) as unknown as {
         choices?: { message?: { content?: string | null; tool_calls?: StreamedCall[] } }[];
+        usage?: unknown;
       };
+      await cost.endRequest(completion.usage);
       const message = completion.choices?.[0]?.message;
       addContent(message?.content ?? "");
       for (const call of message?.tool_calls ?? []) {
@@ -366,26 +376,6 @@ export function streamOpenAIChat(
       const send = (obj: object) => {
         if (!cancelled) controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
       };
-      const context: ApiChatContext = {
-        client,
-        model,
-        messages,
-        params,
-        tools,
-        signal: abort.signal,
-        isCancelled: () => cancelled,
-        writeContent(text) {
-          if (!text) return;
-          reply.append(text);
-          send({ message: { content: text } });
-        },
-        writeThinking(text) {
-          if (!text) return;
-          reply.appendReasoning(text);
-          send({ message: { thinking: text } });
-        },
-        sendDone: () => send({ done: true }),
-      };
       const run = <Turn extends ModelTurn>(chat: ApiChat<Turn>) =>
         runToolLoop({
           ...chat,
@@ -403,6 +393,32 @@ export function streamOpenAIChat(
 
       send({ status: "thinking" });
       try {
+        // { cost } lines tell the client what the conversation cost so far, while the reply streams
+        const [prices, stored] = await Promise.all([getModelPrices(provider, model), reply.readCost()]);
+        const cost = createCostMeter({ provider, prices, stored, save: reply.saveCost, send: (usd) => send({ cost: usd }) });
+        const context: ApiChatContext = {
+          client,
+          model,
+          messages,
+          params,
+          tools,
+          signal: abort.signal,
+          isCancelled: () => cancelled,
+          writeContent(text) {
+            if (!text) return;
+            reply.append(text);
+            cost.addOutput(text);
+            send({ message: { content: text } });
+          },
+          writeThinking(text) {
+            if (!text) return;
+            reply.appendReasoning(text);
+            cost.addOutput(text);
+            send({ message: { thinking: text } });
+          },
+          sendDone: () => send({ done: true }),
+          cost,
+        };
         await (useResponses ? run(responsesChat(context)) : run(chatCompletions(context)));
         await reply.persist();
         if (!cancelled) controller.close();

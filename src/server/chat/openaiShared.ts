@@ -6,6 +6,7 @@ import type { ChatMessage } from "@/lib/types";
 import type { ToolDefinition } from "@/server/tools/definitions";
 import type { ModelTurn, ToolCallResult } from "./toolLoop";
 import type { StoredToolCall } from "./conversation";
+import type { CostMeter } from "./cost";
 
 /** What a chat backend needs from the stream it writes to, and what it sends the model. */
 export type ApiChatContext = {
@@ -19,6 +20,8 @@ export type ApiChatContext = {
   writeContent: (text: string) => void;
   writeThinking: (text: string) => void;
   sendDone: () => void;
+  /** What the requests cost: each is started and ended on it, and the text the model streams is added */
+  cost: CostMeter;
 };
 
 /** One OpenAI API: how to run a request, and how to add what happened to the next one. */
