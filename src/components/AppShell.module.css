@@ -96,7 +96,7 @@
 
 /* Narrower screens have no room beside it: the sidebar opens over the page,
    below a banner with the buttons (AppShell.tsx) that the side bars have on
-   wide screens. The banner stays in view while the page scrolls. */
+   wide screens. The banner slides away while the page scrolls down. */
 @media (max-width: 860px) {
   .page {
     --banner-height: 52px;
@@ -116,7 +116,9 @@
     padding: 0 12px;
     background: var(--panel);
     border-bottom: 1px solid var(--border);
+    transition: transform 0.25s cubic-bezier(.4,0,.2,1);
   }
+  .bannerAway { transform: translateY(-100%); }
   .bannerEnd {
     display: flex;
     gap: 8px;

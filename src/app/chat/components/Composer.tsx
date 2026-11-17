@@ -2,10 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import styles from "../Chat.module.css";
-import { isNarrowViewport } from "@/lib/viewport";
+import { isNarrowViewport, scrollRoom } from "@/lib/viewport";
 import { PaperclipIcon, XIcon } from "@/components/icons";
 import { acceptAttribute, fileKind, fileProblem, formatSize, MAX_FILES_PER_MESSAGE, type AttachAccept } from "@/lib/files";
 import type { SentFile } from "../hooks/useChat";
+import { composerDrop } from "../hooks/useAutoScroll";
 import { TypeIcon } from "./FileCards";
 
 // How long a note about a file that cannot be attached stays
@@ -65,12 +66,15 @@ export default function Composer({
   const noteTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const canAttach = !!accept && !!agentId && (accept.documents || accept.images);
 
-  // Auto-resize
+  // Auto-resize. Above where it can drop to (see Chat.module.css), the composer
+  // would grow downward with the page; the page scrolls along, so it grows upward.
   useEffect(() => {
     const ta = textAreaRef.current;
     if (!ta) return;
+    const fromEnd = scrollRoom() - window.scrollY;
     ta.style.height = "0px";
     ta.style.height = Math.min(200, ta.scrollHeight) + "px";
+    if (fromEnd < composerDrop(ta)) window.scrollTo(0, scrollRoom() - fromEnd);
   }, [input]);
 
   // The on-screen keyboard shortens the viewport (see the chat layout). While the

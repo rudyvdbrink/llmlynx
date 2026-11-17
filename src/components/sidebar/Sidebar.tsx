@@ -5,7 +5,7 @@ import styles from "./Sidebar.module.css";
 import AccountSection from "./AccountSection";
 import ModelSection from "./ModelSection";
 import ConversationsPanel from "./ConversationsPanel";
-import { RobotIcon } from "@/components/icons";
+import { RobotIcon, SpeechBubbleIcon } from "@/components/icons";
 import type { ConversationList } from "@/hooks/useConversationList";
 import type { SessionUser } from "@/lib/types";
 
@@ -30,7 +30,7 @@ export interface SidebarProps {
   footerNavHref?: string;
 }
 
-/** Whether the footer links to the agents page: then it shows a robot, and on small screens the banner has it (see AppShell.tsx). */
+/** Whether the footer links to the agents page: then it shows a robot, else a speech bubble (back to the chat). On small screens the banner has it (see AppShell.tsx). */
 export const linksToAgents = (href?: string) => href === "/agents";
 
 export default function Sidebar({
@@ -111,16 +111,10 @@ export default function Sidebar({
       </div>
 
       {footerNavHref && footerNavLabel && (
-        <div className={`${styles.sidebarFooter} ${linksToAgents(footerNavHref) ? styles.inBanner : ""}`}>
+        <div className={styles.sidebarFooter}>
           <a href={footerNavHref} className={styles.footerButton}>
             <span className={styles.footerButtonIcon} aria-hidden="true">
-              {linksToAgents(footerNavHref) ? (
-                <RobotIcon />
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M8 5l8 7-8 7V5z" />
-                </svg>
-              )}
+              {linksToAgents(footerNavHref) ? <RobotIcon /> : <SpeechBubbleIcon />}
             </span>
             <span className={styles.footerButtonLabel}>{footerNavLabel}</span>
           </a>

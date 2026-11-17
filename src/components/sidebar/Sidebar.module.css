@@ -587,8 +587,8 @@
   }
 }
 
-/* Small screens: the banner has the toggle (see AppShell.tsx). The sidebar
-   opens below it, and is out of view when collapsed. */
+/* Small screens: the banner has the toggle and the footer's link (see
+   AppShell.tsx). The sidebar opens below it, and is out of view when collapsed. */
 @media (max-width: 860px) {
   .sidebar {
     --collapsed-width: 0px;
@@ -596,14 +596,13 @@
     height: calc(100dvh - var(--banner-height));
   }
   .sidebarToggle,
-  .inBanner {
+  .sidebarFooter {
     display: none;
   }
   .sidebar.collapsed .divider,
   .sidebar.collapsed .modelBlock,
   .sidebar.collapsed .sidebarTitle,
-  .sidebar.collapsed .userEmail,
-  .sidebar.collapsed .sidebarFooter {
+  .sidebar.collapsed .userEmail {
     display: none;
   }
 }

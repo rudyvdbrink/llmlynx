@@ -399,6 +399,8 @@
   margin: 8px auto;
   background: #fff;
 }
+/* An image's box ends at the image, so its rounded corners frame it on all sides */
+.imageScroll { flex: 0 1 auto; }
 
 /* HTML: its page in a sandboxed frame, or its source */
 .htmlView {

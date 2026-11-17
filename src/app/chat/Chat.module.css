@@ -76,7 +76,8 @@
 
 /* Holds the composer at the bottom of the viewport. It extends over the chat
    area's bottom padding, so the composer rests in the same spot whether the
-   page is scrolled to the end or not, and covers the messages scrolling under it. */
+   page is scrolled to the end or not, and covers the messages scrolling under it.
+   Wide screens differ: see below. */
 .composerDock {
   position: sticky;
   bottom: 0;
@@ -98,8 +99,13 @@
   pointer-events: none;
 }
 
+/* On wide screens the composer rests 128px above the end of the page. While the
+   messages scroll under it, it drops by --composer-drop, to 24px above the
+   bottom of the viewport, and rises again with the last bit of the page.
+   Replies are followed with it dropped (hooks/useAutoScroll.ts). */
 @media (min-width: 1024px) {
-  .composerDock { margin-bottom: -128px; padding-bottom: 128px; }
+  .chatArea { --composer-drop: 104px; }
+  .composerDock { margin-bottom: -24px; padding-bottom: 24px; }
 }
 
 @media (max-width: 760px) {

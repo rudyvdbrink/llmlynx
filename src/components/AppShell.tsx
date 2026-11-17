@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import styles from "./AppShell.module.css";
 import boxStyles from "./BoxButton.module.css";
-import { ChevronRightIcon, DunesIcon, RobotIcon, SpeechBubbleIcon } from "./icons";
+import { ChevronRightIcon, DunesIcon, RobotIcon, SpeechBubbleIcon, SpeechBubblePlusIcon } from "./icons";
 import Sidebar, { linksToAgents, type SidebarProps } from "./sidebar/Sidebar";
-import { isSidebarOverlay } from "@/lib/viewport";
+import { isSidebarOverlay, scrollRoom } from "@/lib/viewport";
 import { clamp, followDrag } from "@/lib/drag";
 
 // What a drag on a side bar's edge can make of its width. Between the two stays
@@ -17,6 +17,10 @@ const PAGE_MIN_PX = 360;
 const OVERLAY_GAP_PX = 120;
 // Matches the 1200px breakpoint in AppShell.module.css
 const SANDBOX_BESIDE_MIN_PX = 1200;
+// The banner's height (--banner-height), and how far the page scrolls before it
+// slides away or back
+const BANNER_PX = 52;
+const SCROLL_SLACK_PX = 10;
 
 /**
  * Page frame with the collapsible sidebar. On wide screens the page makes room
@@ -27,9 +31,10 @@ const SANDBOX_BESIDE_MIN_PX = 1200;
  * reloads.
  *
  * Up to 860px a banner at the top has the buttons that open the sidebar,
- * start a new conversation, open the panel on the right, and go to the agents
- * page (when the sidebar's footer links there); the sidebar and the panel open
- * below it. Opening the sidebar there closes the panel, which would cover it.
+ * start a new conversation, open the panel on the right, and follow the
+ * sidebar's footer link (to the agents page, or back to the chat); the sidebar
+ * and the panel open below it. Opening the sidebar there closes the panel, which would cover it.
+ * The banner slides away while the page scrolls down.
  */
 export default function AppShell({
   sidebar,
@@ -43,7 +48,7 @@ export default function AppShell({
   const rightOpen = !!right?.open;
   const [collapsed, setCollapsed] = useState(false);
   const pageRef = useRef<HTMLElement | null>(null);
-  const agentsLink = linksToAgents(sidebar.footerNavHref);
+  const footerLink = !!sidebar.footerNavHref && !!sidebar.footerNavLabel;
 
   // The viewport width is unknown during server rendering, so the server always
   // renders the sidebar expanded and this corrects it once after hydration.
@@ -60,6 +65,25 @@ export default function AppShell({
     html.setAttribute("data-right-open", "");
     return () => html.removeAttribute("data-right-open");
   }, [rightOpen]);
+
+  // The banner slides out of view while the page scrolls down, by the user or a
+  // reply that follows, and back on a scroll up or near the top. It stays while
+  // the sidebar or the panel, which open below it, are open.
+  const [bannerAway, setBannerAway] = useState(false);
+  useEffect(() => {
+    let from = window.scrollY;
+    function onScroll() {
+      const y = window.scrollY;
+      // Moving up to the end is the page getting shorter, or bouncing back on a touch screen
+      const settled = y < from && y >= scrollRoom() - 1;
+      if (y <= BANNER_PX) setBannerAway(false);
+      else if (Math.abs(y - from) < SCROLL_SLACK_PX) return;
+      else if (!settled) setBannerAway(y > from);
+      from = y;
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   function toggleFromBanner() {
     if (collapsed) right?.onOpenChange(false);
@@ -95,7 +119,7 @@ export default function AppShell({
       ref={pageRef}
       className={`${styles.page} ${collapsed ? "" : styles.sidebarOpen} ${rightOpen ? styles.rightOpen : ""}`}
     >
-      <header className={styles.banner}>
+      <header className={`${styles.banner} ${bannerAway && collapsed && !rightOpen ? styles.bannerAway : ""}`}>
         <button
           type="button"
           className={boxStyles.box}
@@ -106,9 +130,9 @@ export default function AppShell({
           <ChevronRightIcon className={`${boxStyles.icon} ${styles.bannerChevron}`} />
         </button>
         <button type="button" className={boxStyles.box} aria-label="New conversation" onClick={sidebar.onNewConversation}>
-          <SpeechBubbleIcon className={boxStyles.icon} />
+          <SpeechBubblePlusIcon className={boxStyles.icon} />
         </button>
-        {(right || agentsLink) && (
+        {(right || footerLink) && (
           <div className={styles.bannerEnd}>
             {right && (
               <button
@@ -121,10 +145,14 @@ export default function AppShell({
                 <DunesIcon className={boxStyles.icon} />
               </button>
             )}
-            {agentsLink && (
+            {footerLink && (
               <a href={sidebar.footerNavHref} className={boxStyles.box} aria-label={sidebar.footerNavLabel}>
-                {/* Drawn smaller in its box than the other icons, so a size up */}
-                <RobotIcon size={20} />
+                {linksToAgents(sidebar.footerNavHref) ? (
+                  // Drawn smaller in its box than the other icons, so a size up
+                  <RobotIcon size={20} />
+                ) : (
+                  <SpeechBubbleIcon className={boxStyles.icon} />
+                )}
               </a>
             )}
           </div>

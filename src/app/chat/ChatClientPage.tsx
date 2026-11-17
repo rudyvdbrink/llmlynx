@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./Chat.module.css";
 import AppShell from "@/components/AppShell";
 import { useProviderModels } from "@/hooks/useModelCatalog";
+import { rememberChat } from "@/hooks/useLastChat";
 import { DEFAULT_MODELS, hasModel } from "@/lib/providers";
 import { parseSelection, toSelection } from "@/lib/selection";
 import { SANDBOX_TOOL_NAMES } from "@/lib/agentTools";
@@ -11,6 +12,7 @@ import type { SessionUser } from "@/lib/types";
 import { useConversations } from "./hooks/useConversations";
 import { useChat } from "./hooks/useChat";
 import { useAttachAccept } from "./hooks/useAttachAccept";
+import { useComposerGlide } from "./hooks/useComposerGlide";
 import MessageList from "./components/MessageList";
 import Composer from "./components/Composer";
 import SandboxPanel from "./components/sandbox/SandboxPanel";
@@ -74,6 +76,9 @@ export default function ChatClientPage({
     };
   }, [initialConversationId, openConversation, loadHistory]);
 
+  // The agents and account pages link back to this conversation
+  useEffect(() => rememberChat(activeConversationId), [activeConversationId]);
+
   // The chat has a sandbox from its first run, install or download on: then its panel's chevron shows
   const hasSandbox = useMemo(
     () =>
@@ -89,6 +94,9 @@ export default function ChatClientPage({
     setPanelChat(activeConversationId);
     setSandboxOpen(false);
   }
+
+  const dockRef = useRef<HTMLDivElement | null>(null);
+  useComposerGlide(dockRef);
 
   function clearChat() {
     reset();
@@ -144,7 +152,7 @@ export default function ChatClientPage({
       />
       <div className={styles.chatArea}>
         <MessageList messages={messages} isStreaming={isStreaming} replyStatus={replyStatus} answering={answering} />
-        <div className={styles.composerDock}>
+        <div ref={dockRef} className={styles.composerDock}>
           <Composer
             key={composerKey}
             isStreaming={isStreaming}

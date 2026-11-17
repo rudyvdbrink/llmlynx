@@ -73,6 +73,7 @@ Settings are in `.env`, which setup creates from `.env.example` with its secrets
 | `SYSTEM_PROMPT` | Default system prompt for Ollama models and agents |
 | `OLLAMA_URL` | Default Ollama server, if it does not run on `http://localhost:11434`. Users can set their own |
 
+
 ### Model providers
 
 Each user connects their own providers on the **Account** page (click your email at the top of the sidebar):
@@ -82,7 +83,7 @@ Each user connects their own providers on the **Account** page (click your email
 
 ### Agents and tools
 
-On the **Agents** page you combine a base model from any connected provider with a system prompt, tools and generation options. All agents appear together under **Agents** in the sidebar.
+On the **Agents** page you combine a base model from any connected provider with a system prompt, tools and generation options. You can decide to enable individual tools for individual agents, including code execution and versioning with git.
 
 <p align="center" style="padding:16px;">
   <img src="./public/screen_agents.png" alt="LLMLYNX Logo" />
@@ -90,7 +91,7 @@ On the **Agents** page you combine a base model from any connected provider with
 
 Custom agents can search the web, read pages, take screenshots, read, create and edit files, download files, run code and use git if their tools are selected. Tools are off by default: on the **Agents** page, each tool has a checkbox. A tool is only offered when the agent's base model supports it (Ollama and the OpenRouter model list say whether a model can call tools and see images).
 
-| Tool | What it does | Needs |
+| Tool | Function | Requires |
 |---|---|---|
 | Web search | Searches the web through a private SearXNG instance | a model that can call tools |
 | Read pages | Reads a page, PDF or text file as text, without running JavaScript | a model that can call tools |
@@ -109,11 +110,15 @@ Custom agents can search the web, read pages, take screenshots, read, create and
 
 An agent with any tool that works on files can also give you a file of its sandbox, as a card below its reply.
 
-**The sandbox.** Each chat has a sandbox: the files you attached, and those its tools made, downloaded or changed, in folders. A changed file keeps its older versions. Code runs in a jail of its own per run, with a copy of the chat's files and no network, for at most 120 seconds and 512 MB; only files are kept between runs. A file can be 20 MB, a sandbox 100 MB. A git repository is a folder of the sandbox; its history is kept apart from the sandbox's files (64 MB per repository), where code cannot reach it. Once a chat ran code or downloaded a file, a chevron at the right edge opens the sandbox panel: its files with previews and versions, its runs with their code and output, and its installed packages.
+### The sandbox
 
-You can set the maximum number of tool calls the agent can perform each turn. The model is told how many it has, and each result says how many are left. When the agent is out of tool calls it answers with what it has found.
+A chat instance can create a dedicated sandbox, which is an isolated environment where code can run and files stored. Files are scanned for viruses before going into the sandbox and before being shown to the user. Code runs in a jail, with only a copy of the chat's files and no network or system file access, so it cannot reach the internet, your LAN, the app or the other containers. The sandbox thus lets the an agent modify and run code safely, and produce artifacts at your request.
 
-The tools run in their own containers:
+<p align="center" style="padding:16px;">
+  <img src="./public/screen_sandbox_plot.png" alt="LLMLYNX Logo" />
+</p>
+
+All tools and guards run in their own containers:
 
 | Container | Purpose |
 |---|---|
@@ -131,17 +136,13 @@ The tools run in their own containers:
 
 ## Security
 
-**Secrets.** Passwords and recovery codes are stored as salted bcrypt hashes, never as plain text. A login session is a random token in a cookie, and the database keeps only a hash of it. API keys for OpenAI and OpenRouter must stay readable to be used, so they are encrypted (AES-256-GCM). Setup creates the encryption key, and a random token for each container. The containers can only be reached from the machine itself, and the tool servers refuse calls without their token.
+**Secrets.** Passwords and recovery codes are stored as salted bcrypt hashes (never plain text). API keys for OpenAI and OpenRouter must stay readable to be used, so they are encrypted (AES-256-GCM). Setup creates the encryption key, and a random token for each container. The containers can only be reached from the machine itself and are gated by an acess token. 
 
 **Scanning.** Everything an agent gets from the internet is checked on the server before a model sees it. Nothing is sent to an outside service for this. ClamAV scans for viruses, and Llama Prompt Guard 2 scans for prompt injection. Files you attach yourself are scanned for viruses only.
 
 - A virus: the file is refused, or the web content is thrown away.
 - A prompt injection: the reply pauses, and you choose to remove the content and continue, or to stop. A chevron shows the text that was flagged.
 - Content that could not be checked is withheld.
-
-**Code.** Code runs in a jail without network, so it cannot reach the internet, your LAN, the app or the other containers, and it gets none of the server's secrets. What it prints is checked like a web page, and the files it makes for viruses. Once text that tried to instruct the model is in a chat, you are asked before code runs. git is not available to code: only the git tool runs it, without network, and its downloads happen in a separate jail that holds nothing of the chat. Pages that code or a model makes show in a sandboxed frame that cannot load or send anything. Details in [docs/security.md](docs/security.md).
-
-The prompt guard is Meta's Llama Prompt Guard 2, in the ONNX versions from [Llama-Prompt-Guard-2-22M-onnx](https://huggingface.co/rudyvdbrink/Llama-Prompt-Guard-2-22M-onnx) (the default) and [Llama-Prompt-Guard-2-86M-onnx](https://huggingface.co/rudyvdbrink/Llama-Prompt-Guard-2-86M-onnx). 
 
 ---
 

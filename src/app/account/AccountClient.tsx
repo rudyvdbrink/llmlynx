@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import { useConversationList } from "@/hooks/useConversationList";
+import { useLastChatHref } from "@/hooks/useLastChat";
 import { DEFAULT_SELECTION } from "@/lib/selection";
 import type { ProviderSettings } from "@/lib/providers";
 import type { SessionUser } from "@/lib/types";
@@ -26,6 +27,7 @@ export default function AccountClient({
 
   // Sidebar state (auth ensured by server)
   const conversationList = useConversationList();
+  const lastChatHref = useLastChatHref();
   const [sidebarSelection, setSidebarSelection] = useState(DEFAULT_SELECTION);
   const goToChat = () => router.push("/chat");
   const openInChat = (id: string) => router.push(`/chat?conversation=${encodeURIComponent(id)}`);
@@ -49,7 +51,7 @@ export default function AccountClient({
         onNewConversation: goToChat,
         onOpenConversation: openInChat,
         footerNavLabel: "Back to chat",
-        footerNavHref: "/chat",
+        footerNavHref: lastChatHref,
       }}
     >
       <div className={`${chatStyles.chatArea} ${styles.accountArea}`}>
