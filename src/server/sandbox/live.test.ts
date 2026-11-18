@@ -22,6 +22,7 @@ import { scanVirus } from "@/server/security/scan";
 import { getToolDefinition, type Args, type ToolResult } from "@/server/tools/definitions";
 import { runTool } from "@/server/tools/run";
 import { addMessage, newConversation, newUser } from "@/test/db";
+import { RUN_MEMORY } from "./code";
 import { scanArchive } from "./git";
 
 const LIVE = process.env.LIVE_SANDBOX === "1";
@@ -411,8 +412,9 @@ describe.skipIf(!LIVE)("the sandbox, live", () => {
   describe("limits", () => {
     it("stops code that takes too much memory or starts too many processes", async () => {
       const chat = await newChat();
-      const memory = await chat.call("run_code", python("x = bytearray(900 * 1024 * 1024)\nprint('done')"));
-      expect(memory.text).toMatch(/more than 512 MB of memory/);
+      // Past the limit of a run (CODE_RUN_MEMORY_MB, 2 GB), within the container's
+      const memory = await chat.call("run_code", python("x = bytearray(2600 * 1024 * 1024)\nprint('done')"));
+      expect(memory.text).toContain(`more than ${RUN_MEMORY} of memory`);
       const fork = await chat.call("run_code", { language: "shell", code: ":(){ :|:& };:" });
       expect(fork.text).toMatch(/more than 128 processes/);
     }, 120_000);

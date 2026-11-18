@@ -52,6 +52,11 @@ function envNumber(name: string, fallback: number): number {
 export const PACKAGES_DOWNLOAD_GB = envNumber("CODE_PACKAGES_DOWNLOAD_GB", 5);
 export const PACKAGES_INSTALLED_GB = envNumber("CODE_PACKAGES_INSTALLED_GB", 10);
 
+// The memory of one run, which the code container also reads from .env (see tools/code/src/jail.py)
+const RUN_MEMORY_MB = Math.floor(envNumber("CODE_RUN_MEMORY_MB", 2048));
+/** The memory of one run, for the model: "2 GB" or "1536 MB". */
+export const RUN_MEMORY = RUN_MEMORY_MB % 1024 === 0 ? `${RUN_MEMORY_MB / 1024} GB` : `${RUN_MEMORY_MB} MB`;
+
 // A run may wait for its turn behind runs of other chats (see CODE_MAX_CONCURRENCY)
 export const RUN_TIMEOUT_MS = 300_000;
 // The container's own limit, 12 minutes per GB to download (see packages.py), and time to answer
