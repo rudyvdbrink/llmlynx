@@ -15,7 +15,7 @@ import { TOOL_SCAN_TIMEOUT_MS, UPLOAD_VIRUS_TIMEOUT_MS } from "@/server/security
 import { scanVirus } from "@/server/security/scan";
 import type { Args, RunRecord, ToolCallContext, ToolResult } from "@/server/tools/definitions";
 import type { ToolFile } from "@/server/tools/mcp";
-import { chatLocks, runInSandbox, type RunOutcome } from "./code";
+import { chatLocks, RUN_MEMORY, runInSandbox, type RunOutcome } from "./code";
 import { withChatLock } from "./lock";
 import { notRun } from "./records";
 import { roomError } from "./room";
@@ -89,7 +89,7 @@ export function clipLines(text: string, budget: number): { text: string; lines: 
 
 const STOPS: Record<NonNullable<RunOutcome["reason"]>, string> = {
   timeout: "yes, after 120 s (the time limit)",
-  memory: "yes, at 512 MB of memory (the limit)",
+  memory: `yes, at ${RUN_MEMORY} of memory (the limit)`,
   processes: "yes, at 128 processes or threads (the limit)",
   output: "yes, at 1 MB of output (the limit)",
 };
@@ -144,7 +144,7 @@ function ending(outcome: RunOutcome): { sentence: string; note?: string } {
       };
     case "memory":
       return {
-        sentence: "Stopped: it used more than 512 MB of memory. Work on the data in parts, rather than loading it all at once.",
+        sentence: `Stopped: it used more than ${RUN_MEMORY} of memory. Work on the data in parts, rather than loading it all at once.`,
         note: "stopped: too much memory",
       };
     case "processes":

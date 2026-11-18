@@ -17,7 +17,7 @@ import { scanVirus } from "@/server/security/scan";
 import { hostOf } from "@/server/security/urls";
 import type { Args, ToolCallContext, ToolResult } from "@/server/tools/definitions";
 import type { ToolFile } from "@/server/tools/mcp";
-import { gitInSandbox, type GitOutcome } from "./code";
+import { gitInSandbox, RUN_MEMORY, type GitOutcome } from "./code";
 import { withChatLock } from "./lock";
 import { roomError } from "./room";
 import { startAndEnd } from "./runCode";
@@ -183,7 +183,7 @@ function ending(outcome: GitOutcome): { sentence: string; note?: string } {
     case "timeout":
       return { sentence: "Stopped: it ran longer than 120 seconds.", note: "stopped after 120 s" };
     case "memory":
-      return { sentence: "Stopped: it used more than 512 MB of memory.", note: "stopped: too much memory" };
+      return { sentence: `Stopped: it used more than ${RUN_MEMORY} of memory.`, note: "stopped: too much memory" };
     case "processes":
       return { sentence: "Stopped: it started too many processes.", note: "stopped: too many processes" };
     case "output":

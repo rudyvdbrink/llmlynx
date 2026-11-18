@@ -23,7 +23,14 @@ import { sandboxRoomError } from "@/server/sandbox/room";
 import { LANGUAGE_LABELS, LANGUAGES, languageOf, runCode } from "@/server/sandbox/runCode";
 import { readRunLog } from "@/server/sandbox/runLog";
 import { FETCH_TIMEOUT_MS, webFetch } from "@/server/sandbox/webFetch";
-import { GIT_TIMEOUT_MS, INSTALL_TIMEOUT_MS, PACKAGES_DOWNLOAD_GB, PACKAGES_INSTALLED_GB, RUN_TIMEOUT_MS } from "@/server/sandbox/code";
+import {
+  GIT_TIMEOUT_MS,
+  INSTALL_TIMEOUT_MS,
+  PACKAGES_DOWNLOAD_GB,
+  PACKAGES_INSTALLED_GB,
+  RUN_MEMORY,
+  RUN_TIMEOUT_MS,
+} from "@/server/sandbox/code";
 import { runGit, splitCommand } from "@/server/sandbox/git";
 import { shortUrl, shorten, urlParameter } from "./args";
 import type { Args, ToolCallContext, ToolDefinition, ToolResult, ToolState } from "./definitions";
@@ -106,7 +113,7 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
       "survive it, not imports, variables or functions, so save what you need to a file. To run a file of the " +
       "sandbox, use shell: python script.py. There is no network: download data with web_fetch first. Built in: " +
       "numpy, pandas, scipy, matplotlib, openpyxl, pillow and pytest for Python; install others with " +
-      "install_packages. Limits: 120 seconds, 512 MB of memory, 1 MB of output. Images, SVG and HTML files it " +
+      `install_packages. Limits: 120 seconds, ${RUN_MEMORY} of memory, 1 MB of output. Images, SVG and HTML files it ` +
       "saves show in the chat; HTML pages cannot load anything from the internet, so put their scripts and data " +
       "in the page. You get the run's id, exit code and duration, what it printed (long output in part: read the rest " +
       "with read_run_log), the failing tests when pytest ran or a JUnit XML or Jest/Vitest JSON report was written, " +

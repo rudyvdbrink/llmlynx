@@ -27,9 +27,19 @@ RUNNER = "/opt/jail/runner.py"
 
 LANGUAGES = ("python", "javascript", "typescript", "shell")
 
+
+def memory_mb() -> int:
+    """The memory of one run, in MB: CODE_RUN_MEMORY_MB (set in .env, see .env.example), or 2048."""
+    try:
+        value = int(float(os.environ.get("CODE_RUN_MEMORY_MB") or 2048))
+    except (ValueError, OverflowError):
+        return 2048
+    return value if value > 0 else 2048
+
+
 # Limits of one run
 RUN_SECONDS = 120
-MEMORY_BYTES = 512 * 1024 * 1024
+MEMORY_BYTES = memory_mb() * 1024 * 1024
 MAX_PROCESSES = 128
 MAX_OUTPUT_BYTES = 1024 * 1024
 MAX_FILE_BYTES = 20 * 1024 * 1024

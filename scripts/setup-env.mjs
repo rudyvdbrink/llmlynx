@@ -41,6 +41,8 @@ const SECRETS = {
 // Settings that compose and the app both read, with the values llmlynx is set
 // up for and the note that goes above one that is appended (see .env.example)
 const SETTINGS = {
+  CODE_RUN_MEMORY_MB: ["2048", "Memory of one run of code, in MB"],
+  CODE_CONTAINER_MEMORY_MB: ["4608", "Memory of the code container, in MB: CODE_MAX_CONCURRENCY runs of CODE_RUN_MEMORY_MB each, and 512"],
   CODE_PACKAGES_DOWNLOAD_GB: ["5", "Most one install of a chat's packages may download, in GB"],
   CODE_PACKAGES_INSTALLED_GB: ["10", "Most a chat's installed packages may take, in GB"],
   CODE_PACKAGES_EXPIRE_DAYS: ["7", "Days without use after which a chat's packages are removed"],

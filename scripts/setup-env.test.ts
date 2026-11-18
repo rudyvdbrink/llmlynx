@@ -18,7 +18,13 @@ const NAMES = [
   "CODE_MCP_TOKEN",
   "SEARXNG_SECRET",
 ];
-const SETTINGS = { CODE_PACKAGES_DOWNLOAD_GB: "5", CODE_PACKAGES_INSTALLED_GB: "10", CODE_PACKAGES_EXPIRE_DAYS: "7" };
+const SETTINGS = {
+  CODE_RUN_MEMORY_MB: "2048",
+  CODE_CONTAINER_MEMORY_MB: "4608",
+  CODE_PACKAGES_DOWNLOAD_GB: "5",
+  CODE_PACKAGES_INSTALLED_GB: "10",
+  CODE_PACKAGES_EXPIRE_DAYS: "7",
+};
 
 const EXAMPLE = [
   'DATABASE_URL="file:./dev.db"',
@@ -121,16 +127,16 @@ describe("setup-env", () => {
     expect(values("CODE_PACKAGES_DOWNLOAD_GB")).toEqual(["2"]);
     expect(values("CODE_PACKAGES_INSTALLED_GB")).toEqual(["20"]);
     expect(values("CODE_PACKAGES_EXPIRE_DAYS")).toEqual(["7"]);
+    expect(env()).toContain("# --- Settings added by scripts/setup-env.mjs\n# Memory of one run of code, in MB\nCODE_RUN_MEMORY_MB=2048\n");
     expect(env()).toContain(
       [
-        "# --- Settings added by scripts/setup-env.mjs",
         "# Most a chat's installed packages may take, in GB",
         "CODE_PACKAGES_INSTALLED_GB=20",
         "# Days without use after which a chat's packages are removed",
         "CODE_PACKAGES_EXPIRE_DAYS=7",
       ].join("\n")
     );
-    expect(output).toContain("added CODE_PACKAGES_EXPIRE_DAYS");
+    expect(output).toContain("added CODE_RUN_MEMORY_MB, CODE_CONTAINER_MEMORY_MB, CODE_PACKAGES_EXPIRE_DAYS;");
     expect(output).toContain("copied CODE_PACKAGES_INSTALLED_GB from .env.local");
 
     // A new checkout gets every setting, from .env.example or added

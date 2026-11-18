@@ -153,6 +153,8 @@ services:
       MCP_AUTH_TOKEN: ${CODE_MCP_TOKEN:?CODE_MCP_TOKEN is missing from .env. Run npm install or node scripts/setup-env.mjs to add it}
       # Runs and installs at once on the whole server; each run gets a CPU core of its own
       CODE_MAX_CONCURRENCY: ${CODE_MAX_CONCURRENCY:-2}
+      # The memory of one run, in MB (see .env.example)
+      CODE_RUN_MEMORY_MB: ${CODE_RUN_MEMORY_MB:-2048}
       # The limits of a chat's packages (see .env.example)
       CODE_PACKAGES_DOWNLOAD_GB: ${CODE_PACKAGES_DOWNLOAD_GB:-5}
       CODE_PACKAGES_INSTALLED_GB: ${CODE_PACKAGES_INSTALLED_GB:-10}
@@ -178,8 +180,8 @@ services:
       - no-new-privileges:true
       - seccomp=./tools/code/seccomp_profile.json
       - systempaths=unconfined
-    # Used only while code runs: each run may take 512 MB
-    mem_limit: 1536m
+    # Used only while code runs: CODE_MAX_CONCURRENCY runs of CODE_RUN_MEMORY_MB each, and the server
+    mem_limit: ${CODE_CONTAINER_MEMORY_MB:-4608}m
     init: true
     networks: [code]
     restart: unless-stopped
