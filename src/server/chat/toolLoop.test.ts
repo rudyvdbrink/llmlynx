@@ -11,7 +11,7 @@ import { openSecurity, WITHHELD_NOTICE } from "@/server/security/engine";
 import { PAUSE_TIMEOUT_MS } from "@/server/security/limits";
 import { answerPause } from "@/server/security/pause";
 import { resetScanners } from "@/server/security/scan";
-import { getToolDefinition } from "@/server/tools/definitions";
+import { getToolDefinition, type ToolDefinition } from "@/server/tools/definitions";
 import { addMessage, eventsOf, newConversation, newUser } from "@/test/db";
 import { fakes, INJECTION, VIRUS } from "@/test/fakes";
 import { createAssistantReply } from "./conversation";
@@ -239,5 +239,97 @@ describe("URLs", () => {
     await run.done;
     expect(run.results[0].result.text).toContain("The lynx is a cat.");
     expect((await eventsOf(run.userId)).map((event) => event.check).sort()).toEqual(["injection", "virus"]);
+  });
+});
+
+describe("a result whose changes cannot be stored", () => {
+  it("tells the model that nothing changed, rather than what the tool said", async () => {
+    const userId = await newUser();
+    const conversationId = await newConversation(userId);
+    const messageId = await addMessage(conversationId, { role: "user", content: "Edit a.txt" });
+    await prisma.messageAttachment.create({ data: { messageId, name: "a.txt", mimeType: "text/plain", data: Buffer.from("now"), size: 3 } });
+    const reply = createAssistantReply({ conversationId, userId, modelKey: "agent:test", model: "ollama:test", setup: {} });
+    // A tool that read a version of a.txt the file no longer has
+    const edit = {
+      ...getToolDefinition("edit_file")!,
+      run: async () => ({
+        text: "Edited a.txt.",
+        images: [],
+        files: [{ name: "a.txt", mimeType: "text/plain", data: Buffer.from("new").toString("base64") }],
+        error: false,
+        expect: [{ name: "a.txt", version: "00000000" }],
+      }),
+    } as unknown as ToolDefinition;
+    const lines: (Partial<ToolStep> & { id: string })[] = [];
+    const results: ToolCallResult[] = [];
+    let turn = 0;
+    await runToolLoop<ModelTurn>({
+      tools: [edit],
+      maxToolCalls: 0,
+      toolContext: { userId, textBudget: 5000, conversationId, vision: false, security: null },
+      reply,
+      signal: new AbortController().signal,
+      isCancelled: () => false,
+      sendTool: (line) => void lines.push(line),
+      sendFiles: () => {},
+      sendPause: () => {},
+      sendError: () => {},
+      nextTurn: async () => ({ content: "", calls: turn++ ? [] : [{ name: "edit_file", arguments: { file: "a.txt" } }] }),
+      plainTurn: async () => ({ content: "", calls: [] }),
+      addCalls: () => {},
+      addResults: (batch) => void results.push(...batch),
+    });
+    expect(results[0].result.text).toMatch(/^Error: stale_version: a\.txt changed since you read it \(you had version 00000000;/);
+    expect(results[0].result.error).toBe(true);
+    expect(lines.at(-1)).toMatchObject({ state: "error", label: "Could not edit a.txt (files changed meanwhile)" });
+    const files = await prisma.messageAttachment.findMany({ where: { message: { conversationId }, name: "a.txt" } });
+    expect(files.map((f) => Buffer.from(f.data).toString())).toEqual(["now"]);
+    const step = await prisma.message.findFirstOrThrow({ where: { conversationId, role: "tool" } });
+    expect(step.content).toMatch(/^Error: stale_version/);
+  });
+});
+
+describe("a call that keeps failing", () => {
+  it("tells the model when it repeats a failing call, and refuses it after three failures, so the model answers", async () => {
+    const userId = await newUser();
+    const conversationId = await newConversation(userId);
+    await addMessage(conversationId, { role: "user", content: "Read the page" });
+    const reply = createAssistantReply({ conversationId, userId, modelKey: "agent:test", model: "ollama:test", setup: {} });
+    // web_read of an ftp address fails every time; the model sends the very same call again and again
+    const same = { name: "web_read", arguments: { url: " ftp://site.example/missing " } };
+    const reordered = { name: "web_read", arguments: { url: "ftp://site.example/missing" } };
+    const results: ToolCallResult[] = [];
+    let turns = 0;
+    let withoutTools = 0;
+    await runToolLoop<ModelTurn>({
+      tools,
+      maxToolCalls: 0,
+      toolContext: { userId, textBudget: 5000, conversationId, vision: false, security: null },
+      reply,
+      signal: new AbortController().signal,
+      isCancelled: () => false,
+      sendTool: () => {},
+      sendFiles: () => {},
+      sendPause: () => {},
+      sendError: () => {},
+      nextTurn: async (mayCallTools) => {
+        if (!mayCallTools) {
+          withoutTools++;
+          return { content: "It did not work.", calls: [] };
+        }
+        turns++;
+        return { content: "", calls: [turns % 2 ? same : reordered] };
+      },
+      plainTurn: async () => ({ content: "", calls: [] }),
+      addCalls: () => {},
+      addResults: (batch) => void results.push(...batch),
+    });
+    const texts = results.map((r) => r.result.text);
+    expect(texts).toHaveLength(4);
+    expect(texts[0]).not.toContain("This exact call");
+    expect(texts[1]).toContain("[This exact call has now failed 2 times. Do not repeat it: change the arguments or the approach.]");
+    expect(texts[2]).toContain("failed 3 times");
+    expect(texts[3]).toBe("Error: not run: this exact call already failed 3 times. Do not call it again. Answer now with what you have, and say what did not work.");
+    expect(withoutTools).toBe(1);
   });
 });

@@ -30,6 +30,7 @@ export const WITHHELD_NOTICE = "Withheld by llmlynx: the content looked like ins
 // What the dialogs call content that is not from a web page: "Text from the code's output looks like ..."
 const SOURCES: Record<string, string> = {
   run_code: "the code's output",
+  read_run_log: "the code's output",
   install_packages: "the install's report",
   git: "git's output",
 };

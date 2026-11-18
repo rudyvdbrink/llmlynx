@@ -121,7 +121,8 @@ describe("run_code", () => {
     fakes.run = { output: "hello\n", changed: { "data.csv": "b", "new.txt": "n" }, deleted: [] };
     const result = await chat.call("run_code", { language: "py", code: "print('hello')" });
     expect(result.error).toBe(false);
-    expect(result.text).toMatch(/^It succeeded in/);
+    // The facts of every run, in the same order
+    expect(result.text).toMatch(/^run: run-[0-9a-f]{12}\nfolder: the sandbox folder\nexit code: 0\nstopped: no\nduration: 0\.0 s\noutput: 1 line\n/);
     expect(result.text).toContain("Output:\nhello");
     expect(result.text).toContain("Files: changed data.csv (1 B), made new.txt (1 B).");
     expect(fakes.runs[0].language).toBe("python");

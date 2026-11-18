@@ -16,7 +16,8 @@ export type AttachAccept = { documents: boolean; images: boolean };
 /** A file as the chat view shows it. `url` is set on a file of a message that is still being sent. */
 export type FileCard = { id: string; name: string; mimeType: string; size: number; url?: string };
 
-const TEXT_EXTENSIONS = [
+// The same list as TEXT_EXTENSIONS in tools/files/src/common.py (a test checks it)
+export const TEXT_EXTENSIONS = [
   "txt", "md", "markdown", "csv", "tsv", "json", "jsonl", "xml", "yaml", "yml", "toml", "ini", "cfg", "conf", "log",
   "html", "htm", "css", "scss", "js", "mjs", "cjs", "jsx", "ts", "tsx", "py", "ipynb", "go", "rs", "java", "kt",
   "c", "h", "cpp", "hpp", "cc", "cs", "rb", "php", "swift", "sh", "bash", "zsh", "ps1", "bat", "sql", "r", "lua",
@@ -196,13 +197,13 @@ export const baseName = (path: string) => path.split("/").pop() ?? path;
  * Which of the files a tool call stored show in the chat, below the reply: all
  * that a file tool made; of what a run of code made, only the images, SVG and
  * HTML (its other files only appear in the sandbox panel, so a run that writes
- * many files does not flood the chat); nothing that was downloaded or that git
- * checked out. The model
- * shows any other file with share_file.
+ * many files does not flood the chat); nothing that was downloaded, that git
+ * checked out, or that edit_files changed in source code (its diff says what
+ * changed). The model shows any other file with share_file.
  */
 export function shownInChat(toolName: string, files: FileCard[]): FileCard[] {
   if (toolName === "run_code") return files.filter((f) => isArtifact(f.mimeType));
-  if (toolName === "web_fetch" || toolName === "install_packages" || toolName === "git") return [];
+  if (["web_fetch", "install_packages", "git", "edit_files"].includes(toolName)) return [];
   return files;
 }
 

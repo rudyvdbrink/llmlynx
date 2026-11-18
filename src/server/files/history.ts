@@ -177,9 +177,10 @@ const ORIGINS: Record<ConversationFile["origin"], string> = {
  * those the user attached, those it created, and those code made or a
  * download fetched in earlier replies, whose tool calls it does not see
  * again. The newest version of each. The files of a git repository in a
- * folder of `repos` are counted, not listed: git lists them.
+ * folder of `repos` are counted, not listed: git lists them, and
+ * search_workspace when the agent has it (`search`).
  */
-export function filesNote(files: ConversationFile[], repos: string[] = []): string | null {
+export function filesNote(files: ConversationFile[], repos: string[] = [], search = false): string | null {
   if (!files.length && !repos.length) return null;
   const folders = repos.filter(Boolean);
   const repoOf = (name: string) => folders.find((r) => name.toLowerCase().startsWith(`${r.toLowerCase()}/`));
@@ -199,7 +200,7 @@ export function filesNote(files: ConversationFile[], repos: string[] = []): stri
   }
   for (const sum of summed.values()) if (!sum.count) entries.push(sum);
   const list = entries.map((e) =>
-    typeof e === "string" ? e : `${e.repo}/ (a git repository: ${e.count} files, ${formatSize(e.size)}; git ls-files lists them)`
+    typeof e === "string" ? e : `${e.repo}/ (a git repository: ${e.count} files, ${formatSize(e.size)}; ${search ? "search_workspace or " : ""}git ls-files lists them)`
   );
   const root = repos.includes("") ? " The sandbox itself is a git repository." : "";
   return `[The files of this conversation, in its sandbox: ${list.join(", ") || "none"}.${root}]`;

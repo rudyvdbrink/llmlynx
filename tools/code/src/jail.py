@@ -133,8 +133,9 @@ def bwrap_command(packages: dict[str, Path], in_fd: int, out_fd: int) -> list[st
     return command
 
 
-def prepare(run_dir: Path, language: str, code: str, files: list[tuple[str, bytes]], core: int, packages: dict):
-    """Writes the run's input: the chat's files, the code, and the runner's config."""
+def prepare(run_dir: Path, language: str, code: str, files: list[tuple[str, bytes]], core: int, packages: dict, cwd: str = ""):
+    """Writes the run's input: the chat's files, the code, and the runner's config. `cwd` is the folder of the
+    sandbox the code runs in, a path checked with safe_path ("" for the sandbox folder itself)."""
     files_dir = run_dir / "in" / "files"
     files_dir.mkdir(parents=True)
     for path, data in files:
@@ -147,6 +148,7 @@ def prepare(run_dir: Path, language: str, code: str, files: list[tuple[str, byte
         env["PYTHONPATH"] = "/opt/packages/python"
     config = {
         "language": language,
+        "cwd": cwd,
         "env": env,
         "core": core,
         "limits": {
@@ -226,8 +228,9 @@ async def run_code(
     files: list[tuple[str, bytes]],
     core: int,
     packages: dict[str, Path],
+    cwd: str = "",
 ) -> RunResult:
-    """Runs `code` in a new jail with `files` in its sandbox folder, on CPU core `core`."""
+    """Runs `code` in a new jail with `files` in its sandbox folder, on CPU core `core`, in its folder `cwd`."""
     if language not in LANGUAGES:
         raise ValueError(f"language must be one of {', '.join(LANGUAGES)}")
     run_dir = RUNS_DIR / uuid.uuid4().hex
@@ -235,7 +238,7 @@ async def run_code(
     started = time.monotonic()
     try:
         out_dir.mkdir(parents=True, mode=0o700)
-        prepare(run_dir, language, code, files, core, packages)
+        prepare(run_dir, language, code, files, core, packages, cwd)
         manifest, output = await run_jail(functools.partial(bwrap_command, packages), run_dir, RUN_SECONDS + GRACE_SECONDS)
         reason = manifest.get("reason")
         exit_code = manifest.get("exit_code")

@@ -32,7 +32,11 @@ SHEET_NAME_FORBIDDEN = re.compile(r"[\[\]:*?/\\]")
 
 def create_text(name: str, content: str) -> list:
     if not is_text(name):
-        raise ToolError(f"{name} is not a text file.")
+        raise ToolError(
+            f"{name} cannot be made with create_file: it makes text and code files, such as .txt, .md, .csv, .json, "
+            ".html, .svg and .py. Use create_document for .docx, .pdf or .pptx, create_spreadsheet for .xlsx, and "
+            "run_code for other formats, such as PNG images."
+        )
     ext = extension(name)
     if ext in ("json", "ipynb"):
         try:

@@ -164,6 +164,7 @@ model SandboxRun {
   output         String       // what it printed, or what pip or npm reported
   status         String       // "ok" | "error" | "timeout" | "stopped" | "withheld" | "blocked" | "skipped"
   durationMs     Int
+  printedBytes   Int?         // what a run printed, also past the output limit, after which nothing was kept
   files          Json?        // what the run did to the sandbox: { changed: string[], deleted: string[] }
   createdAt      DateTime     @default(now())
 

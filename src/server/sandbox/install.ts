@@ -9,6 +9,7 @@
 
 import { prisma } from "@/server/db/prisma";
 import { conversationFiles, fileData, findFile } from "@/server/files/store";
+import { toList } from "@/server/tools/args";
 import type { Args, ToolCallContext, ToolResult } from "@/server/tools/definitions";
 import { chatLocks, installInSandbox, type Ecosystem } from "./code";
 import { withChatLock } from "./lock";
@@ -102,8 +103,10 @@ function installedList(packages: { name: string; version: string; requested: boo
 
 /** The packages the model asked for, from `args.packages` and `args.file`, checked; or an error text. */
 async function requestedSpecs(ecosystem: Ecosystem, args: Args, ctx: ToolCallContext): Promise<string[] | { error: string }> {
-  const specs = Array.isArray(args.packages)
-    ? args.packages.filter((p): p is string => typeof p === "string" && !!p.trim()).map((p) => p.trim())
+  // A list, also as JSON text, or names in plain text
+  const list = toList(args.packages);
+  const specs = list
+    ? list.filter((p): p is string => typeof p === "string" && !!p.trim()).map((p) => p.trim())
     : typeof args.packages === "string" && args.packages.trim()
       ? args.packages.split(/[\s,]+/).filter(Boolean)
       : [];
@@ -173,9 +176,11 @@ export async function installPackages(args: Args, ctx: ToolCallContext): Promise
     const asked = new Set(specs.map((s) => packageName(ecosystem, s)));
     const shown = outcome.packages.map((p) => ({ ...p, requested: asked.has(packageName(ecosystem, p.name)) }));
     const list = installedList(shown);
+    // pip's report is of its dry run, which says "Would install": the result says what was installed
+    const report = outcome.report.replace(/^Would install .*$\n?/gm, "").trim();
     const text = [
       `Installed for this chat from ${REGISTRY_LABELS[ecosystem]}: ${list}. Runs of this chat can use them now.`,
-      outcome.report.trim() ? `What ${ecosystem === "pypi" ? "pip" : "npm"} reported:\n${outcome.report.trim()}` : "",
+      report ? `What ${ecosystem === "pypi" ? "pip" : "npm"} reported:\n${report}` : "",
     ]
       .filter(Boolean)
       .join("\n\n");

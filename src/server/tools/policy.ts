@@ -16,9 +16,11 @@ function unavailableReason(def: ToolDefinition, capabilities: string[] | null): 
 /**
  * The tools a chat can call. Only custom agents get tools for now: an agent
  * gets the tools checked for it, minus those its base model, with
- * `capabilities` (null: unknown), cannot use. share_file and view_image have
- * no checkbox: an agent gets them with any tool that works on files, and
- * undo_file with run_code.
+ * `capabilities` (null: unknown), cannot use. Some tools have no checkbox:
+ * share_file and view_image come with any tool that works on files,
+ * search_workspace with read_file or edit_file, undo_file with run_code or
+ * edit_file, read_run_log with run_code, and edit_files with edit_file when
+ * the agent also runs code or git: it is for changing code.
  */
 export function toolsFor(agent: { tools: unknown } | null, capabilities: string[] | null): ToolDefinition[] {
   if (!agent) return [];
@@ -26,7 +28,11 @@ export function toolsFor(agent: { tools: unknown } | null, capabilities: string[
   if (!checked.ok || checked.value.length === 0) return [];
   const names: ToolName[] = [...checked.value];
   if (names.some((name) => FILE_TOOL_NAMES.includes(name))) names.push("share_file", "view_image");
-  if (names.includes("run_code")) names.push("undo_file");
+  const has = (name: ToolName) => names.includes(name);
+  if (has("read_file") || has("edit_file")) names.push("search_workspace");
+  if (has("edit_file") && (has("run_code") || has("git"))) names.push("edit_files");
+  if (has("run_code") || has("edit_file")) names.push("undo_file");
+  if (has("run_code")) names.push("read_run_log");
   return TOOL_DEFINITIONS.filter((def) => names.includes(def.name) && !unavailableReason(def, capabilities));
 }
 
@@ -78,6 +84,12 @@ export function toolGuidance(tools: ToolDefinition[], maxToolCalls: number, toda
     lines.push("- Files the user attached are in their message. The list of the conversation's files gives the names to use with the file tools.");
   }
   if (has("read_file")) lines.push("- When a file in a message is cut off, read the rest with read_file.");
+  if (has("search_workspace")) {
+    lines.push(
+      "- Find files by path, or text in them, with search_workspace; then read the lines around a match with read_file " +
+        "start_line and end_line, rather than reading whole files."
+    );
+  }
   if (has("view_image")) lines.push("- Look at an image file of the conversation, such as one you downloaded or a chart code made, with view_image.");
   const makers = ["create_file", "create_document", "create_spreadsheet"].filter((name) => has(name as ToolDefinition["name"]));
   if (makers.length) {
@@ -86,11 +98,28 @@ export function toolGuidance(tools: ToolDefinition[], maxToolCalls: number, toda
         "The user gets it as a file card below your reply."
     );
   }
-  if (has("edit_file")) lines.push("- To change a file, use edit_file: it makes a new version and keeps the original.");
+  if (has("edit_file")) {
+    lines.push(
+      "- To change a file, use edit_file: it makes a new version and keeps the original. For a text or code file, give " +
+        "the version read_file or search_workspace gave as expected_version; after a stale_version error, read the file again."
+    );
+  }
+  if (has("edit_files")) lines.push("- To change several code files that belong together, use edit_files: all of them change, or none.");
   if (has("run_code")) {
     lines.push(
       "- Run code with run_code to calculate, analyse data, make charts and develop software, and save results as " +
-        "files in the sandbox: only files are kept between runs."
+        "files in the sandbox: only files are kept between runs. Run a project's checks, such as its tests, from its " +
+        "folder with cwd."
+    );
+    lines.push(
+      "- Never present made-up data as results: report only what runs printed or made. If a run fails, say so, and " +
+        "fix the cause rather than writing the expected result by hand."
+    );
+  }
+  if (has("read_run_log")) {
+    lines.push(
+      "- Output a run's result leaves out is kept: before you quote or rely on any of it, read it with read_run_log " +
+        "(find text, or lines) rather than guessing it or running the code again."
     );
   }
   if (has("install_packages")) {
@@ -126,6 +155,7 @@ export function toolGuidance(tools: ToolDefinition[], maxToolCalls: number, toda
     ...(web ? ["web pages", "search results"] : []),
     ...(files ? ["files"] : []),
     ...(has("run_code") ? ["what code prints"] : []),
+    ...(has("edit_files") ? ["diffs"] : []),
     ...(has("git") ? ["repositories"] : []),
   ];
   const list = sources.length > 1 ? `${sources.slice(0, -1).join(", ")} and ${sources[sources.length - 1]}` : sources[0];

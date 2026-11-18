@@ -46,6 +46,7 @@ export type FakeRun = {
   changed?: Record<string, string>; // path -> contents
   deleted?: string[];
   skipped?: { path: string; reason: string }[];
+  printed_bytes?: number; // by default the length of the output
 };
 
 /** What the fake code container answers to code_git: what the command did, and the files it "made". */
@@ -69,7 +70,8 @@ export const fakes = {
   convertGate: null as Promise<void> | null, // a conversion waits for this
   clamdGate: null as Promise<void> | null, // a virus scan waits for this
   run: {} as FakeRun, // what the next code_run does
-  runs: [] as { chat: string; language: string; code: string; files: string[]; locks: unknown }[], // what code_run got
+  runs: [] as { chat: string; language: string; code: string; files: string[]; locks: unknown; cwd?: unknown }[], // what code_run got
+  edits: 0, // the files_edit calls
   install: { ok: true, report: "Installed.", lock: "", packages: [], scans: [] } as Record<string, unknown>, // code_install's answer
   installs: [] as { chat: string; ecosystem: string; requested: string[] }[], // what code_install got
   git: {} as FakeGit, // what the next code_git does
@@ -96,6 +98,7 @@ export const fakes = {
       git: {},
       gits: [],
       downloads: new Map(),
+      edits: 0,
     });
   },
 };
@@ -147,6 +150,22 @@ export async function callMcpTool(
     if (type === "png" || type === "jpg" || type === "webp") return output("unchanged");
     return output("This is not an image that can be read.", { isError: true });
   }
+  if (name === "files_edit") {
+    // Text edits only, by the rules of tools/files/src/edit.py: each find exactly once, unless all
+    fakes.edits++;
+    let text = Buffer.from(String(args.data), "base64").toString("utf8");
+    const edits = args.edits as { find: string; replace: string; all: boolean }[];
+    for (const [i, edit] of edits.entries()) {
+      const count = text.split(edit.find).length - 1;
+      if (count === 0) return output(`Error executing tool files_edit: Edit ${i + 1}: this text was not found`, { isError: true });
+      if (count > 1 && !edit.all) return output(`Error executing tool files_edit: Edit ${i + 1}: this text occurs ${count} times`, { isError: true });
+      text = edit.all ? text.split(edit.find).join(edit.replace) : text.replace(edit.find, () => edit.replace);
+    }
+    const target = String(args.new_name ?? args.name);
+    return output(`Edited ${args.name}: ${edits.length} edits.`, {
+      files: [{ name: target, mimeType: "text/plain", data: Buffer.from(text).toString("base64") }],
+    });
+  }
   if (name === "code_run") {
     const files = (args.files as { path: string; data: string }[]) ?? [];
     fakes.runs.push({
@@ -155,6 +174,7 @@ export async function callMcpTool(
       code: String(args.code),
       files: files.map((f) => f.path),
       locks: args.locks,
+      cwd: args.cwd,
     });
     const run = fakes.run;
     const changed = Object.entries(run.changed ?? {});
@@ -163,7 +183,7 @@ export async function callMcpTool(
       exit_code: run.exit_code === undefined ? 0 : run.exit_code,
       reason: run.reason ?? null,
       output: run.output ?? "",
-      printed_bytes: (run.output ?? "").length,
+      printed_bytes: run.printed_bytes ?? (run.output ?? "").length,
       duration_ms: 12,
       changed: changed.map(([path]) => path),
       deleted: run.deleted ?? [],
