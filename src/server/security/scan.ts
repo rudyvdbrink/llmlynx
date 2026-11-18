@@ -24,6 +24,10 @@ type Verdict = Extract<InjectionScan, { status: "clean" | "flagged" }>;
 
 export type VirusScan = { status: "clean" | "unchecked" } | { status: "flagged"; signature: string };
 
+// What clamd reports for content it could not scan whole, past one of its limits (AlertExceedsMax in
+// tools/clamav/clamd.conf): not a virus, but not checked either
+const LIMIT_EXCEEDED = "Heuristics.Limits.Exceeded.";
+
 export type ScanOptions = {
   timeoutMs: number;
   signal: AbortSignal; // aborts when the chat or the upload is stopped
@@ -138,7 +142,9 @@ export async function scanVirus(data: Uint8Array, { timeoutMs, signal, audit, to
   if (clamBreaker.isOpen()) return log({ status: "unchecked" });
   try {
     const result = await clamdScan(data, { ...server, timeoutMs, signal });
-    return log(result.infected ? { status: "flagged", signature: result.signature } : { status: "clean" });
+    if (!result.infected) return log({ status: "clean" });
+    if (result.signature.startsWith(LIMIT_EXCEEDED)) return log({ status: "unchecked" });
+    return log({ status: "flagged", signature: result.signature });
   } catch (err) {
     if (signal.aborted) throw err;
     clamBreaker.trip();

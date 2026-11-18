@@ -23,7 +23,7 @@ import { sandboxRoomError } from "@/server/sandbox/room";
 import { LANGUAGE_LABELS, LANGUAGES, languageOf, runCode } from "@/server/sandbox/runCode";
 import { readRunLog } from "@/server/sandbox/runLog";
 import { FETCH_TIMEOUT_MS, webFetch } from "@/server/sandbox/webFetch";
-import { GIT_TIMEOUT_MS, INSTALL_TIMEOUT_MS, RUN_TIMEOUT_MS } from "@/server/sandbox/code";
+import { GIT_TIMEOUT_MS, INSTALL_TIMEOUT_MS, PACKAGES_DOWNLOAD_GB, PACKAGES_INSTALLED_GB, RUN_TIMEOUT_MS } from "@/server/sandbox/code";
 import { runGit, splitCommand } from "@/server/sandbox/git";
 import { shortUrl, shorten, urlParameter } from "./args";
 import type { Args, ToolCallContext, ToolDefinition, ToolResult, ToolState } from "./definitions";
@@ -174,7 +174,8 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
       "requirements.txt or package.json in the sandbox. Only use it when the built-in libraries do not have what " +
       "you need. Python packages install only as ready-built wheels, and npm packages without their install " +
       "scripts: packages that need a build step or an install script do not work. One install may download at most " +
-      "300 MB, so very large packages such as torch do not fit. They stay installed for this chat.",
+      `${PACKAGES_DOWNLOAD_GB} GB, and the chat's packages may take ${PACKAGES_INSTALLED_GB} GB installed. They stay ` +
+      "installed for this chat.",
     parameters: {
       type: "object",
       properties: {

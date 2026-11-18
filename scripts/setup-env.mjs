@@ -1,6 +1,7 @@
 // Prepares a checkout for the stack, so a new checkout or a deploy needs no
 // hand work: it fills in the secrets that llmlynx needs in .env with random
-// values, and creates the directories the app's container mounts. It runs on
+// values, adds the SETTINGS that are missing with their values, and creates
+// the directories the app's container mounts. It runs on
 // npm install, npm run dev and npm run build, and in the deploy workflow before
 // the images are built (docker compose reads the tokens from .env, and stops
 // when the guard's token is missing). Run it by hand with:
@@ -11,9 +12,9 @@
 // as uid 1000, could then not write its database. A directory moved elsewhere
 // with DATA_DIR or LOGS_DIR is left to whoever set it.
 //
-// It never changes a value that is set. A secret counts as set when it has a
-// value in the environment, in .env or in .env.local. Compose reads .env only,
-// so a token that is only in .env.local is copied to .env: the app and its
+// It never changes a value that is set. A secret or setting counts as set when
+// it has a value in the environment, in .env or in .env.local. Compose reads
+// .env only, so a value that is only in .env.local is copied to .env: the app and its
 // container then keep the same one. A missing .env starts as a copy of
 // .env.example, unless .env.local exists. Without .env.example (outside a
 // checkout, such as in the Docker build, whose context leaves out .env*) it
@@ -37,6 +38,14 @@ const SECRETS = {
   SEARXNG_SECRET: "hex",
 };
 
+// Settings that compose and the app both read, with the values llmlynx is set
+// up for and the note that goes above one that is appended (see .env.example)
+const SETTINGS = {
+  CODE_PACKAGES_DOWNLOAD_GB: ["5", "Most one install of a chat's packages may download, in GB"],
+  CODE_PACKAGES_INSTALLED_GB: ["10", "Most a chat's installed packages may take, in GB"],
+  CODE_PACKAGES_EXPIRE_DAYS: ["7", "Days without use after which a chat's packages are removed"],
+};
+
 // Only the app reads these, which also finds them in .env.local
 const APP_ONLY = new Set(["SECRETS_KEY"]);
 
@@ -48,6 +57,7 @@ const MOUNTS = { DATA_DIR: "data", LOGS_DIR: "logs" };
 const CONTAINER_UID = 1000;
 
 const HEADER = "# --- Secrets added by scripts/setup-env.mjs";
+const SETTINGS_HEADER = "# --- Settings added by scripts/setup-env.mjs";
 
 /** The file's text, or null when it does not exist. */
 function read(file) {
@@ -118,33 +128,41 @@ function main() {
 
   const generated = [];
   const copied = [];
-  const appended = [];
+  const added = [];
+  const appended = { [HEADER]: [], [SETTINGS_HEADER]: [] };
 
-  for (const [name, encoding] of Object.entries(SECRETS)) {
+  const entries = [
+    ...Object.entries(SECRETS).map(([name, encoding]) => ({ name, value: () => crypto.randomBytes(32).toString(encoding) })),
+    ...Object.entries(SETTINGS).map(([name, [value, note]]) => ({ name, value: () => value, note })),
+  ];
+  for (const { name, value, note } of entries) {
     const setting = findSetting(lines, name);
     if (process.env[name]?.trim() || setting?.value) continue;
     const fromLocal = findSetting(localLines, name)?.value;
     if (fromLocal && APP_ONLY.has(name)) continue;
-    const line = `${name}=${fromLocal || crypto.randomBytes(32).toString(encoding)}`;
-    (fromLocal ? copied : generated).push(name);
+    const line = `${name}=${fromLocal || value()}`;
+    (fromLocal ? copied : note ? added : generated).push(name);
 
     // In the place .env.example gives it, when there is one
     const index = setting ? setting.index : findPlaceholder(lines, name);
     if (index >= 0) lines[index] = line;
-    else appended.push(line);
+    else if (note) appended[SETTINGS_HEADER].push(`# ${note}`, line);
+    else appended[HEADER].push(line);
   }
-  if (generated.length + copied.length === 0) return;
+  if (generated.length + copied.length + added.length === 0) return;
 
-  if (appended.length) {
+  for (const [header, block] of Object.entries(appended)) {
+    if (!block.length) continue;
     if (lines.length && lines.at(-1).trim() !== "") lines.push("");
-    if (!lines.includes(HEADER)) lines.push(HEADER);
-    lines.push(...appended);
+    if (!lines.includes(header)) lines.push(header);
+    lines.push(...block);
   }
   // Only the owner may read a new .env; an existing one keeps its permissions
   fs.writeFileSync(".env", lines.join(eol) + eol, { mode: 0o600 });
 
   const done = [];
   if (generated.length) done.push(`generated ${generated.join(", ")}`);
+  if (added.length) done.push(`added ${added.join(", ")}`);
   if (copied.length) done.push(`copied ${copied.join(", ")} from .env.local`);
   console.log(`setup-env: ${existing === null ? "created .env, " : ""}${done.join("; ")}.`);
   console.log("setup-env: running containers and the app use them once restarted (docker compose up -d).");

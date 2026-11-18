@@ -42,9 +42,20 @@ export type InstallOutcome = {
 /** A chat's packages per ecosystem: what the model asked for, and exactly what that installed. */
 export type ChatLocks = Partial<Record<Ecosystem, { requested: string[]; lock: string }>>;
 
+/** A positive number from the environment (set in .env, see .env.example), or `fallback`. */
+function envNumber(name: string, fallback: number): number {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+// The limits of a chat's packages, which the code container also reads from .env (see tools/code/src/packages.py)
+export const PACKAGES_DOWNLOAD_GB = envNumber("CODE_PACKAGES_DOWNLOAD_GB", 5);
+export const PACKAGES_INSTALLED_GB = envNumber("CODE_PACKAGES_INSTALLED_GB", 10);
+
 // A run may wait for its turn behind runs of other chats (see CODE_MAX_CONCURRENCY)
 export const RUN_TIMEOUT_MS = 300_000;
-export const INSTALL_TIMEOUT_MS = 420_000;
+// The container's own limit, 12 minutes per GB to download (see packages.py), and time to answer
+export const INSTALL_TIMEOUT_MS = Math.max(300, Math.round(PACKAGES_DOWNLOAD_GB * 720)) * 1000 + 120_000;
 
 export async function chatLocks(conversationId: string): Promise<ChatLocks> {
   const rows = await prisma.sandboxLock.findMany({ where: { conversationId } });
@@ -111,7 +122,8 @@ export async function runInSandbox({
         locks,
       },
       signal,
-      RUN_TIMEOUT_MS
+      // The chat's packages may have to be installed again first, after they were removed (see packages.py, ensure)
+      RUN_TIMEOUT_MS + (Object.keys(locks).length ? INSTALL_TIMEOUT_MS : 0)
     );
     if (out.isError) return { error: serverError(out.text) || "the sandbox could not run the code." };
     const summary = JSON.parse(out.text) as {
@@ -287,7 +299,7 @@ export async function forgetPackages(conversationIds: string[]): Promise<void> {
       timeoutMs: 10_000,
     });
   } catch (err) {
-    // They go after 30 days without use anyway
+    // They go after CODE_PACKAGES_EXPIRE_DAYS without use anyway
     console.error(`Removing the packages of deleted chats failed: ${(err as Error)?.message || err}`);
   }
 }

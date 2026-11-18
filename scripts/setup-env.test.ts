@@ -1,5 +1,5 @@
-// Tests of scripts/setup-env.mjs, which fills in the missing secrets in .env and
-// creates the directories the app's container mounts.
+// Tests of scripts/setup-env.mjs, which fills in the missing secrets and settings
+// in .env and creates the directories the app's container mounts.
 // Each test runs the script in a directory of its own, as npm and the deploy do.
 
 import { spawnSync } from "node:child_process";
@@ -18,6 +18,7 @@ const NAMES = [
   "CODE_MCP_TOKEN",
   "SEARXNG_SECRET",
 ];
+const SETTINGS = { CODE_PACKAGES_DOWNLOAD_GB: "5", CODE_PACKAGES_INSTALLED_GB: "10", CODE_PACKAGES_EXPIRE_DAYS: "7" };
 
 const EXAMPLE = [
   'DATABASE_URL="file:./dev.db"',
@@ -46,7 +47,7 @@ function env(): string {
 /** Runs the script, without the settings of the test environment. */
 function run(extra: Record<string, string> = {}) {
   const environment = { ...process.env, ...extra };
-  for (const name of [...NAMES, "DATA_DIR", "LOGS_DIR"]) if (!(name in extra)) delete environment[name];
+  for (const name of [...NAMES, ...Object.keys(SETTINGS), "DATA_DIR", "LOGS_DIR"]) if (!(name in extra)) delete environment[name];
   const result = spawnSync(process.execPath, [SCRIPT], { cwd: dir, env: environment, encoding: "utf8" });
   expect(result.status, result.stderr).toBe(0);
   return result.stdout;
@@ -109,6 +110,34 @@ describe("setup-env", () => {
     // Added at the end, with the file's own line endings
     expect(env()).toMatch(/^DATABASE_URL=file:\.\/dev\.db\r\n\r\n# --- Secrets added by scripts\/setup-env\.mjs\r\n/);
     expect(env().replace(/\r\n/g, "")).not.toContain("\n");
+  });
+
+  it("adds the missing settings with their values, keeps the ones that are set, and copies them from .env.local", () => {
+    write(".env.example", `${EXAMPLE}CODE_PACKAGES_EXPIRE_DAYS=7\n`);
+    write(".env", "CODE_PACKAGES_DOWNLOAD_GB=2\n");
+    write(".env.local", "CODE_PACKAGES_INSTALLED_GB=20\n");
+    const output = run();
+
+    expect(values("CODE_PACKAGES_DOWNLOAD_GB")).toEqual(["2"]);
+    expect(values("CODE_PACKAGES_INSTALLED_GB")).toEqual(["20"]);
+    expect(values("CODE_PACKAGES_EXPIRE_DAYS")).toEqual(["7"]);
+    expect(env()).toContain(
+      [
+        "# --- Settings added by scripts/setup-env.mjs",
+        "# Most a chat's installed packages may take, in GB",
+        "CODE_PACKAGES_INSTALLED_GB=20",
+        "# Days without use after which a chat's packages are removed",
+        "CODE_PACKAGES_EXPIRE_DAYS=7",
+      ].join("\n")
+    );
+    expect(output).toContain("added CODE_PACKAGES_EXPIRE_DAYS");
+    expect(output).toContain("copied CODE_PACKAGES_INSTALLED_GB from .env.local");
+
+    // A new checkout gets every setting, from .env.example or added
+    fs.rmSync(path.join(dir, ".env"));
+    fs.rmSync(path.join(dir, ".env.local"));
+    run();
+    for (const [name, value] of Object.entries(SETTINGS)) expect(values(name)).toEqual([value]);
   });
 
   it("starts a new .env with the secrets only when .env.local exists", () => {
