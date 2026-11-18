@@ -243,8 +243,18 @@ async def run(command: list[str], cwd: Path, env: dict) -> tuple[int, str]:
 
 
 def tool_env(work: Path) -> dict:
-    """The environment of pip and npm: none of the server's, with a home of their own."""
-    return {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(work), "LANG": "C.UTF-8", "PIP_CONFIG_FILE": os.devnull}
+    """The environment of pip and npm: none of the server's, with a home of their own, and temporary files in
+    `work` on the packages volume: pip unpacks a whole install there first (--target), which does not fit in
+    the container's /tmp, a small tmpfs in memory."""
+    temp = work / "tmp"
+    temp.mkdir(exist_ok=True)
+    return {
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "HOME": str(work),
+        "TMPDIR": str(temp),
+        "LANG": "C.UTF-8",
+        "PIP_CONFIG_FILE": os.devnull,
+    }
 
 
 # --- Resolving: which files make up the packages
