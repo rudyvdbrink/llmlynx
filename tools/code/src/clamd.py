@@ -10,8 +10,20 @@ import struct
 HOST = os.environ.get("CLAMAV_HOST", "clamav")
 PORT = int(os.environ.get("CLAMAV_PORT", "3310"))
 CHUNK_BYTES = 64 * 1024
-# A package file of up to 300 MB (the download limit of an install) on the Pi
-TIMEOUT_SECONDS = 180
+# The largest file clamd takes, its StreamMaxLength (see tools/clamav/clamd.conf): 2 GB, the most ClamAV can scan
+MAX_STREAM_BYTES = 2000 * 1024 * 1024
+# Such a file on the Pi: a little longer than clamd's own MaxScanTime, so that its verdict comes first
+TIMEOUT_SECONDS = 1260
+
+# What clamd reports, with AlertExceedsMax (see tools/clamav/clamd.conf), for a file it could not scan whole
+LIMIT_EXCEEDED = "Heuristics.Limits.Exceeded."
+LIMITS = {
+    "MaxFiles": "it is an archive with more files than the virus scanner checks",
+    "MaxScanSize": "it unpacks to more data than the virus scanner checks",
+    "MaxFileSize": "it holds a file larger than the virus scanner checks",
+    "MaxRecursion": "it nests archives deeper than the virus scanner checks",
+    "MaxScanTime": "scanning it takes longer than the virus scanner allows",
+}
 
 
 class ScanError(Exception):
@@ -28,8 +40,15 @@ def parse_answer(answer: bytes) -> str | None:
     raise ScanError(f"clamd answered: {line or 'nothing'}")
 
 
+def limit_exceeded(signature: str) -> str | None:
+    """Why clamd could not scan a file whole, when `signature` says it could not; None for a detection."""
+    if not signature.startswith(LIMIT_EXCEEDED):
+        return None
+    return LIMITS.get(signature.removeprefix(LIMIT_EXCEEDED), f"it goes past a limit of the virus scanner ({signature})")
+
+
 async def scan_file(path: str) -> str | None:
-    """Scans the file at `path`. Returns None when it is clean, or the virus's signature. Raises ScanError."""
+    """Scans the file at `path`. Returns None when it is clean, or the signature clamd found. Raises ScanError."""
 
     async def scan():
         reader, writer = await asyncio.open_connection(HOST, PORT)

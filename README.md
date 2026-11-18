@@ -65,7 +65,7 @@ Open http://localhost:3000 and sign up.
 
 ### Settings
 
-Settings are in `.env`, which setup creates from `.env.example` with its secrets filled in. The file documents every setting; the most important ones are:
+Settings are in `.env`, which setup creates from `.env.example` with its secrets and package limits filled in. The file documents every setting; the most important ones are:
 
 | Variable | Purpose |
 |---|---|

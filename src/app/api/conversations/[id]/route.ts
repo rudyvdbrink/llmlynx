@@ -94,7 +94,7 @@ export async function DELETE(_req: Request, ctx: Ctx) {
   if (count === 0) return jsonError("Not found", 404);
   // Drop the system prompts and options only its replies used, and the packages its runs had
   await deleteUnusedSetups(user.id);
-  // Not waited for: the container removes unused packages after 30 days anyway
+  // Not waited for: the container removes unused packages after CODE_PACKAGES_EXPIRE_DAYS anyway
   void forgetPackages([id]);
 
   return new NextResponse(null, { status: 204 });

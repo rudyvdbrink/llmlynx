@@ -186,7 +186,7 @@ model SandboxPackage {
 }
 
 // Exactly what a chat's packages of one ecosystem are, so the code container
-// can install them again after it removed them (unused for 30 days, see tools/code).
+// can install them again after it removed them (unused for CODE_PACKAGES_EXPIRE_DAYS, see tools/code).
 model SandboxLock {
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)

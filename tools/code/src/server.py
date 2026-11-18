@@ -327,7 +327,7 @@ app = server.streamable_http_app(
 
 
 def sweeper():
-    """Removes the packages of chats that did not use them for 30 days, now and then."""
+    """Removes the packages of chats that did not use them for CODE_PACKAGES_EXPIRE_DAYS, now and then."""
     while True:
         try:
             packages.sweep()

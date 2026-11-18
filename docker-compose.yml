@@ -153,6 +153,10 @@ services:
       MCP_AUTH_TOKEN: ${CODE_MCP_TOKEN:?CODE_MCP_TOKEN is missing from .env. Run npm install or node scripts/setup-env.mjs to add it}
       # Runs and installs at once on the whole server; each run gets a CPU core of its own
       CODE_MAX_CONCURRENCY: ${CODE_MAX_CONCURRENCY:-2}
+      # The limits of a chat's packages (see .env.example)
+      CODE_PACKAGES_DOWNLOAD_GB: ${CODE_PACKAGES_DOWNLOAD_GB:-5}
+      CODE_PACKAGES_INSTALLED_GB: ${CODE_PACKAGES_INSTALLED_GB:-10}
+      CODE_PACKAGES_EXPIRE_DAYS: ${CODE_PACKAGES_EXPIRE_DAYS:-7}
       PACKAGES_PROXY: http://code-egress:3128
       GIT_PROXY: http://code-egress:3129
       CLAMAV_HOST: clamav

@@ -281,7 +281,7 @@ describe.skipIf(!LIVE)("the sandbox, live", () => {
       const missing = await other.call("run_code", python("import tabulate"));
       expect(missing.text).toMatch(/ModuleNotFoundError/);
 
-      // Removed (unused for 30 days, or the volume was lost): the next run installs them again from the chat's lock
+      // Removed (unused for CODE_PACKAGES_EXPIRE_DAYS, or the volume was lost): the next run installs them again from the chat's lock
       inCode(`rm -rf /packages/chats/${chat.conversationId}`);
       const again = await chat.call("run_code", python("import tabulate; print(tabulate.__version__)"));
       expect(again.text).toContain("installed again");

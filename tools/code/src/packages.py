@@ -4,20 +4,27 @@ Installing and running are kept apart: an install reaches the internet but
 runs no package code, a run executes package code but has no network.
 
 - No package code during an install. Python packages are only installed
-  ready-built (wheels), which pip unpacks without running anything. npm
-  packages are unpacked from their tarballs here, so their install scripts
-  never run; the model is told which packages have one.
+  ready-built (wheels), which pip unpacks without running anything; their
+  bytecode is compiled here, which runs none of it either. npm packages are
+  unpacked from their tarballs here, so their install scripts never run; the
+  model is told which packages have one.
 - Only PyPI and the npm registry. The resolvers (pip and npm, which only read
   metadata) and the downloads go through the egress proxy, which reaches
   pypi.org, files.pythonhosted.org and registry.npmjs.org and nothing else.
   Every file to install must come from those hosts, with the hash the index
   states.
-- Scanned first. Every file that is not in the cache yet is downloaded into a
-  staging folder, checked against its hash and scanned by clamd. Only when all
-  of them are clean is anything installed: into a staging folder, which then
-  replaces the chat's packages. ClamAV scans inside the archives.
-- Kept, but rebuildable. The shared cache keeps the files that passed, by
-  their hash, so a file is not downloaded and scanned twice; no run sees it.
+- Scanned as they are installed. Every package file that is not in the cache
+  yet is downloaded into a staging folder and checked against its hash. The
+  packages are unpacked there, and clamd scans each of their files on its own,
+  as a run will see it: ClamAV's limits for one scan (files in an archive,
+  bytes unpacked) then hold for one file, not for a whole package, and what
+  ClamAV unpacks is what the sandbox gets. A file clamd cannot scan whole
+  (over 2 GB, or an archive in it past its limits) counts as not checked.
+  Only when every file is clean is the bytecode compiled, from the scanned
+  sources, and the folder swapped in for the chat's packages.
+- Kept, but rebuildable. The shared cache keeps the downloads of the installs
+  that passed, by their hash, so none is downloaded twice, and marks the files
+  scanned clean, by their SHA-256, so none is scanned twice; no run sees it.
   A chat's packages are kept until the chat is deleted or did not use them for
   UNUSED_DAYS; the next run installs them again from the chat's lock.
 
@@ -27,17 +34,21 @@ Layout of PACKAGES_DIR (a volume of its own):
   chats/<chat>/<ecosystem>.lock   the SHA-256 of the lock the folder was installed from
   chats/<chat>/.used              touched by every run and install
   cache/pypi/<sha256>/<wheel>, cache/npm/<sha512 hex>.tgz
+  cache/clean/<ab>/<sha256>       a file with this SHA-256 was scanned clean
   staging/                        downloads and installs in progress
 """
 
 import asyncio
 import base64
+import csv
 import hashlib
 import json
+import math
 import os
 import platform
 import re
 import shutil
+import stat
 import tarfile
 import time
 import urllib.request
@@ -51,6 +62,7 @@ import clamd
 PACKAGES_DIR = Path(os.environ.get("CODE_PACKAGES_DIR", "/packages"))
 CHATS = PACKAGES_DIR / "chats"
 CACHE = PACKAGES_DIR / "cache"
+CLEAN = CACHE / "clean"
 STAGING = PACKAGES_DIR / "staging"
 PROXY = os.environ.get("PACKAGES_PROXY", "")
 
@@ -58,13 +70,29 @@ PYPI_INDEX = "https://pypi.org/simple"
 NPM_REGISTRY = "https://registry.npmjs.org/"
 FILE_HOSTS = {"pypi": "files.pythonhosted.org", "npm": "registry.npmjs.org"}
 
+
+def env_number(name: str, default: float) -> float:
+    """A positive number from the environment (set in .env, see .env.example), or `default`."""
+    try:
+        value = float(os.environ.get(name) or default)
+    except ValueError:
+        return default
+    return value if math.isfinite(value) and value > 0 else default
+
+
 # Limits of an install
-MAX_DOWNLOAD_BYTES = 300 * 1024 * 1024
-INSTALL_SECONDS = 300
-MAX_INSTALLED_BYTES = 1024 * 1024 * 1024
-UNUSED_DAYS = 30
+MAX_DOWNLOAD_GB = env_number("CODE_PACKAGES_DOWNLOAD_GB", 5)
+MAX_INSTALLED_GB = env_number("CODE_PACKAGES_INSTALLED_GB", 10)
+MAX_DOWNLOAD_BYTES = int(MAX_DOWNLOAD_GB * 1024**3)
+MAX_INSTALLED_BYTES = int(MAX_INSTALLED_GB * 1024**3)
+# For the downloads, their scans and unpacking on the Pi: 12 minutes per GB to download (as in src/server/sandbox/code.ts)
+INSTALL_SECONDS = max(300, round(MAX_DOWNLOAD_GB * 720))
+UNUSED_DAYS = env_number("CODE_PACKAGES_EXPIRE_DAYS", 7)
 MAX_PACKAGES = 50  # asked for in one install
 MAX_REPORT_CHARS = 20_000
+SCAN_STREAMS = 3  # files clamd scans at once for an install
+# Where a run sees the Python packages (see jail.py): the paths in their bytecode
+RUN_PYTHON_PACKAGES = "/opt/packages/python"
 
 ECOSYSTEMS = ("pypi", "npm")
 FOLDERS = {"pypi": "python", "npm": "node"}
@@ -152,6 +180,11 @@ def npm_requirement(spec: str) -> tuple[str, str]:
             "a version or range such as lodash@^4.17, are allowed; no URLs, paths, git addresses or aliases."
         )
     return name, wanted
+
+
+def canonical(name: str) -> str:
+    """A PyPI name as the index compares it."""
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 def chat_dir(chat: str) -> Path:
@@ -345,7 +378,7 @@ async def resolve_npm(packages: dict[str, str], work: Path) -> tuple[dict, str]:
     return json.loads((project / "package-lock.json").read_text()), output
 
 
-# --- Fetching: the files, from the cache or downloaded, checked and scanned
+# --- Fetching: the package files, from the cache or downloaded and checked against their hash
 
 
 def cache_path(ecosystem: str, item: Item) -> Path:
@@ -367,7 +400,7 @@ def download(ecosystem: str, item: Item, target: Path, budget: int) -> tuple[int
             while chunk := response.read(1 << 20):
                 size += len(chunk)
                 if size > budget:
-                    raise InstallError(f"The packages are larger than {MAX_DOWNLOAD_BYTES // 1024 // 1024} MB to download.")
+                    raise InstallError(f"The packages are larger than {MAX_DOWNLOAD_GB:g} GB to download.")
                 sha256.update(chunk)
                 sha512.update(chunk)
                 f.write(chunk)
@@ -375,55 +408,62 @@ def download(ecosystem: str, item: Item, target: Path, budget: int) -> tuple[int
     return size, found
 
 
-async def fetch(ecosystem: str, items: list[Item], work: Path) -> tuple[dict[str, Path], list[dict], int]:
-    """Each item's file in the cache: downloaded, checked against its hash and scanned first when it is not
-    there yet. Returns the paths by item, what was scanned, and how many bytes were downloaded."""
-    paths, scans, downloaded = {}, [], 0
+async def fetch(ecosystem: str, items: list[Item], work: Path) -> tuple[dict[str, Path], dict[Path, Path], int]:
+    """Each item's file: from the cache, or downloaded into `work` and checked against its hash. Returns the
+    paths by item, the downloads by their place in the cache (see keep), and how many bytes were downloaded."""
+    paths, downloads, downloaded = {}, {}, 0
     for item in items:
         if urlparse(item.url).hostname != FILE_HOSTS[ecosystem]:
             raise InstallError(f"{item.name} would come from {urlparse(item.url).hostname}, which is not allowed.")
         cached = cache_path(ecosystem, item)
-        if cached.exists():
-            paths[item.path or item.name] = cached
+        if cached.exists() or cached in downloads:
+            paths[item.path or item.name] = downloads.get(cached, cached)
             continue
-        temp = work / f"download-{uuid.uuid4().hex}"
+        # Under its own name, which pip goes by
+        temp = work / "downloads" / uuid.uuid4().hex / item.filename
+        temp.parent.mkdir(parents=True)
         size, found = await asyncio.to_thread(download, ecosystem, item, temp, MAX_DOWNLOAD_BYTES - downloaded)
         downloaded += size
         if found != item.hash:
-            raise InstallError(f"{item.filename} does not match the hash the index states, so it was not installed.", scans=scans)
-        started = time.monotonic()
-        try:
-            signature = await clamd.scan_file(str(temp))
-        except clamd.ScanError as err:
-            scans.append({"file": item.filename, "hash": item.hash, "status": "unchecked", "ms": round((time.monotonic() - started) * 1000)})
-            raise InstallError(f"{item.filename} could not be checked for viruses ({err}), so nothing was installed.", scans=scans)
-        ms = round((time.monotonic() - started) * 1000)
-        if signature:
-            scans.append({"file": item.filename, "hash": item.hash, "status": "virus", "signature": signature, "ms": ms})
-            raise InstallError(f"{item.filename} was flagged as malware ({signature}), so nothing was installed.", scans=scans)
-        scans.append({"file": item.filename, "hash": item.hash, "status": "clean", "ms": ms})
+            raise InstallError(f"{item.filename} does not match the hash the index states, so it was not installed.")
+        downloads[cached] = temp
+        paths[item.path or item.name] = temp
+    return paths, downloads, downloaded
+
+
+def keep(downloads: dict[Path, Path]):
+    """The downloads of an install whose files all passed the scan go into the cache."""
+    for cached, temp in downloads.items():
         cached.parent.mkdir(parents=True, exist_ok=True)
         os.replace(temp, cached)
-        paths[item.path or item.name] = cached
-    return paths, scans, downloaded
 
 
 # --- Installing: unpacking into a staging folder, which then replaces the chat's packages
 
 
 async def unpack_pypi(items: list[Item], paths: dict[str, Path], target: Path, work: Path):
-    """pip unpacks the wheels into `target`; installing a wheel runs none of its code."""
+    """pip unpacks the wheels into `target`; installing a wheel runs none of its code. Without bytecode, which
+    compile_bytecode makes once the files passed the scan."""
     if not items:
         target.mkdir(parents=True)
         return
     command = [
         "python3", "-m", "pip", "install", "--no-index", "--no-deps", "--only-binary=:all:", "--target", str(target),
-        "--isolated", "--disable-pip-version-check", "--no-warn-script-location", "--progress-bar", "off",
+        "--no-compile", "--isolated", "--disable-pip-version-check", "--no-warn-script-location", "--progress-bar", "off",
         *[str(paths[item.name]) for item in items],
     ]
     code, output = await run(command, work, tool_env(work))
     if code != 0:
         raise InstallError("pip could not unpack the packages.", report=output)
+
+
+async def compile_bytecode(target: Path, work: Path):
+    """The bytecode of the Python files in `target`, as pip would make it, with the paths a run sees.
+    Compiling runs none of their code; a file that does not compile is left as it is, as pip does."""
+    command = [
+        "python3", "-m", "compileall", "-qq", "-j", "2", "-s", str(target), "-p", RUN_PYTHON_PACKAGES, str(target),
+    ]
+    await run(command, work, tool_env(work))
 
 
 def unpack_tarball(tarball: Path, target: Path):
@@ -474,6 +514,150 @@ def unpack_npm(items: list[Item], paths: dict[str, Path], lock: dict, packages: 
     (target / "package-lock.json").write_text(json.dumps(lock))
 
 
+# --- Scanning: each file of the unpacked packages on its own, as a run will see it
+
+
+@dataclass
+class Scanned:
+    """What clamd said of one file."""
+
+    path: str  # in the staged folder
+    hash: str  # SHA-256
+    status: str  # clean, virus or unchecked
+    ms: int
+    signature: str = ""
+    why: str = ""  # why it is not checked
+
+
+def clean_mark(digest: str) -> Path:
+    return CLEAN / digest[:2] / digest
+
+
+def sha256_of(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        while chunk := f.read(1 << 20):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def unscanned(folder: Path) -> list[tuple[str, Path, int, str]]:
+    """The files in `folder` that were not scanned clean before: (path in it, path, size, SHA-256). Links (to
+    files in it: see link_bins) and empty files are left out."""
+    found = []
+    for parent, _dirs, names in os.walk(folder):
+        for name in names:
+            path = Path(parent, name)
+            info = path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_size == 0:
+                continue
+            digest = sha256_of(path)
+            if not clean_mark(digest).exists():
+                found.append((path.relative_to(folder).as_posix(), path, info.st_size, digest))
+    return found
+
+
+async def scan_one(rel: str, path: Path, size: int, digest: str) -> Scanned:
+    """Scans one file; one that is clean is marked so, by its hash, for the next install."""
+    started = time.monotonic()
+    if size > clamd.MAX_STREAM_BYTES:
+        return Scanned(rel, digest, "unchecked", 0, why=f"it is larger than the {clamd.MAX_STREAM_BYTES / 1e9:.0f} GB the virus scanner takes")
+    try:
+        signature = await clamd.scan_file(str(path))
+    except clamd.ScanError as err:
+        return Scanned(rel, digest, "unchecked", round((time.monotonic() - started) * 1000), why=str(err))
+    ms = round((time.monotonic() - started) * 1000)
+    if signature is None:
+        mark = clean_mark(digest)
+        mark.parent.mkdir(parents=True, exist_ok=True)
+        mark.touch()
+        return Scanned(rel, digest, "clean", ms)
+    limit = clamd.limit_exceeded(signature)
+    if limit:
+        return Scanned(rel, digest, "unchecked", ms, signature=signature, why=limit)
+    return Scanned(rel, digest, "virus", ms, signature=signature)
+
+
+def pypi_owners(target: Path, items: list[Item]) -> dict[str, Item]:
+    """The wheel each installed file came from, by the RECORD pip wrote for it. For the log only: every file
+    is scanned all the same."""
+    by_dist = {(canonical(i.name), i.version): i for i in items}
+    owners = {}
+    for record in target.glob("*.dist-info/RECORD"):
+        name, _, version = record.parent.name.removesuffix(".dist-info").rpartition("-")
+        item = by_dist.get((canonical(name), version))
+        if not item:
+            continue
+        for row in csv.reader(record.read_text(errors="replace").splitlines()):
+            if not row:
+                continue
+            path = os.path.normpath(row[0])
+            # Scripts, which pip puts in bin/ of the target: "../../bin/<name>"
+            owners[f"bin/{os.path.basename(path)}" if path.startswith("../") else path] = item
+    return owners
+
+
+def npm_owner(items: list[Item]):
+    """The tarball each unpacked file came from: the innermost package folder it is in."""
+    by_path = {i.path: i for i in items}
+
+    def owner(rel: str) -> Item | None:
+        parts = rel.split("/")
+        for end in range(len(parts) - 1, 0, -1):
+            item = by_path.get("/".join(parts[:end]))
+            if item:
+                return item
+        return None
+
+    return owner
+
+
+def scan_log(results: list[Scanned], owner) -> list[dict]:
+    """What was scanned, for the app's audit log: one entry per package file with how its files fared; a
+    file of no package (one pip or this code wrote) only when it is not clean."""
+    rank = {"clean": 0, "unchecked": 1, "virus": 2}
+    entries: dict[str, dict] = {}
+    for result in results:
+        item = owner(result.path)
+        if item is None and result.status == "clean":
+            continue
+        key = item.filename if item else result.path
+        entry = entries.setdefault(key, {"file": key, "hash": item.hash if item else result.hash, "status": "clean", "ms": 0, "files": 0})
+        entry["ms"] += result.ms
+        entry["files"] += 1
+        if rank[result.status] > rank[entry["status"]]:
+            entry["status"] = result.status
+            if result.signature:
+                entry["signature"] = result.signature
+    return list(entries.values())
+
+
+async def scan_folder(folder: Path, owner) -> list[dict]:
+    """Scans each file in `folder` that was not scanned clean before, SCAN_STREAMS at a time. Returns the log
+    of the scans (scan_log); raises InstallError when a file is not clean, and then scans no more."""
+    pending = list(reversed(await asyncio.to_thread(unscanned, folder)))
+    results: list[Scanned] = []
+    failed: list[Scanned] = []
+
+    async def worker():
+        while pending and not failed:
+            result = await scan_one(*pending.pop())
+            results.append(result)
+            if result.status != "clean":
+                failed.append(result)
+
+    await asyncio.gather(*(worker() for _ in range(SCAN_STREAMS)))
+    scans = scan_log(results, owner)
+    if failed:
+        bad = failed[0]
+        item = owner(bad.path)
+        where = f"{bad.path} (from {item.filename})" if item else bad.path
+        if bad.status == "virus":
+            raise InstallError(f"{where} was flagged as malware ({bad.signature}), so nothing was installed.", scans=scans)
+        raise InstallError(f"{where} could not be checked for viruses ({bad.why}), so nothing was installed.", scans=scans)
+    return scans
+
+
 def swap_in(chat: str, ecosystem: str, staged: Path, lock: str):
     """The staged folder becomes the chat's packages of `ecosystem`, in one rename."""
     base = chat_dir(chat)
@@ -490,6 +674,11 @@ def swap_in(chat: str, ecosystem: str, staged: Path, lock: str):
 def other_size(chat: str, ecosystem: str) -> int:
     other = chat_dir(chat) / FOLDERS["npm" if ecosystem == "pypi" else "pypi"]
     return folder_size(other) if other.exists() else 0
+
+
+def check_size(chat: str, ecosystem: str, staged: Path, scans: list[dict]):
+    if folder_size(staged) + other_size(chat, ecosystem) > MAX_INSTALLED_BYTES:
+        raise InstallError(f"The chat's packages would take more than {MAX_INSTALLED_GB:g} GB; nothing was installed.", scans=scans)
 
 
 async def install(chat: str, ecosystem: str, requested: list[str], lock: str | None = None) -> InstallResult:
@@ -517,8 +706,11 @@ async def _install(chat: str, ecosystem: str, requested: list[str], lock: str | 
     if ecosystem == "pypi":
         specs = [pypi_requirement(s) for s in (lock.splitlines() if lock else requested) if s.strip()]
         items, report = await resolve_pypi(specs, work, pinned=lock is not None)
-        paths, scans, downloaded = await fetch("pypi", items, work)
+        paths, downloads, downloaded = await fetch("pypi", items, work)
         await unpack_pypi(items, paths, staged, work)
+        check_size(chat, ecosystem, staged, [])
+        scans = await scan_folder(staged, pypi_owners(staged, items).get)
+        await compile_bytecode(staged, work)
         new_lock = "\n".join(sorted(f"{i.name}=={i.version}" for i in items))
     else:
         wanted = dict(npm_requirement(s) for s in requested)
@@ -527,17 +719,19 @@ async def _install(chat: str, ecosystem: str, requested: list[str], lock: str | 
         else:
             lock_data, report = await resolve_npm(wanted, work)
         items = npm_items(lock_data, set(wanted))
-        paths, scans, downloaded = await fetch("npm", items, work)
+        paths, downloads, downloaded = await fetch("npm", items, work)
         await asyncio.to_thread(unpack_npm, items, paths, lock_data, wanted, staged)
+        check_size(chat, ecosystem, staged, [])
+        scans = await scan_folder(staged, npm_owner(items))
         new_lock = json.dumps(lock_data)
         scripted = sorted({i.name for i in items if i.install_script})
         if scripted:
             warnings.append(
                 "These packages have install scripts, which did not run, so they may not work: " + ", ".join(scripted) + "."
             )
-    size = folder_size(staged) + other_size(chat, ecosystem)
-    if size > MAX_INSTALLED_BYTES:
-        raise InstallError(f"The chat's packages would take more than {MAX_INSTALLED_BYTES // 1024 // 1024} MB; nothing was installed.", scans=scans)
+    # With the bytecode
+    check_size(chat, ecosystem, staged, scans)
+    keep(downloads)
     swap_in(chat, ecosystem, staged, new_lock)
     touch(chat)
     packages = [{"name": i.name, "version": i.version, "requested": i.requested} for i in items]
@@ -577,5 +771,6 @@ def sweep(now: float | None = None):
                 shutil.rmtree(base, ignore_errors=True)
     if STAGING.exists():
         for work in STAGING.iterdir():
-            if now - work.stat().st_mtime > 3600:
+            # Never one of an install that may still run
+            if now - work.stat().st_mtime > INSTALL_SECONDS + 600:
                 shutil.rmtree(work, ignore_errors=True)

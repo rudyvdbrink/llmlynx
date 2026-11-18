@@ -63,7 +63,8 @@ async def main():
             result = await packages.install(chat, ecosystem, requested)
             took = time.monotonic() - first
             downloaded = result.downloaded_bytes / 1024
-            print(f"install {ecosystem:<5} {took:6.2f} s, downloaded {downloaded:.0f} KB, scanned {len(result.scans)} file(s)")
+            scanned = sum(scan.get("files", 0) for scan in result.scans)
+            print(f"install {ecosystem:<5} {took:6.2f} s, downloaded {downloaded:.0f} KB, scanned {scanned} file(s)")
             packages.forget([chat])
             again = await timed(lambda: packages.install(chat, ecosystem, requested))
             print(f"install {ecosystem:<5} {again:6.2f} s again, from the cache")

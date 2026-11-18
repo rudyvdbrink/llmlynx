@@ -2,7 +2,7 @@
 // timeout, the circuit breaker, and what is logged.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fakes, INJECTION, SIGNATURE, VIRUS } from "@/test/fakes";
+import { fakes, INJECTION, SIGNATURE, UNSCANNABLE, VIRUS } from "@/test/fakes";
 import { contentHash, type SecurityEventInput } from "./audit";
 import { BREAKER_MS, VERDICT_CACHE_SIZE } from "./limits";
 import { resetScanners, scanInjection, scanVirus } from "./scan";
@@ -178,6 +178,12 @@ describe("scanVirus", () => {
     fakes.clamd = "down";
     await scanVirus(Buffer.from("one"), options());
     expect(await scanInjection("a page", options())).toEqual({ status: "clean", score: 0.02 });
+  });
+
+  it("treats bytes clamd could not scan whole as not checked, not as a virus, and keeps using clamd", async () => {
+    expect(await scanVirus(Buffer.from(`archive ${UNSCANNABLE}`), options())).toEqual({ status: "unchecked" });
+    expect(events[0]).toMatchObject({ verdict: "block", reason: "unchecked" });
+    expect(await scanVirus(Buffer.from("next"), options())).toEqual({ status: "clean" });
   });
 
   it("logs a virus as blocked", async () => {
