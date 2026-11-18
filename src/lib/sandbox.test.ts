@@ -2,11 +2,13 @@
 // paths, which files show in the chat, tables in previews, the tools an agent
 // can check, and the context window an Ollama agent starts with.
 
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultContextWindow } from "./agentSettings";
 import { validateAgentTools } from "./agentTools";
 import { parseDelimited } from "./delimited";
-import { baseName, cleanFilePath, isArtifact, shownInChat, withFileCards, type FileCard } from "./files";
+import { baseName, cleanFilePath, isArtifact, shownInChat, TEXT_EXTENSIONS, withFileCards, type FileCard } from "./files";
 
 const card = (name: string, mimeType: string): FileCard => ({ id: name, name, mimeType, size: 1 });
 
@@ -85,5 +87,15 @@ describe("the agents page", () => {
     expect(defaultContextWindow(40961)).toBe(20480);
     expect(defaultContextWindow(null)).toBe(2048);
     expect(defaultContextWindow(undefined)).toBe(2048);
+  });
+});
+
+describe("text files", () => {
+  it("are the same extensions for the app and the files server", () => {
+    // TEXT_EXTENSIONS = { "txt", "md", ... } in tools/files/src/common.py
+    const python = fs.readFileSync(path.join(import.meta.dirname, "../../tools/files/src/common.py"), "utf8");
+    const set = /^TEXT_EXTENSIONS = \{([^}]*)\}/m.exec(python)![1];
+    const server = [...set.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect([...server].sort()).toEqual([...TEXT_EXTENSIONS].sort());
   });
 });

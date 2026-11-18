@@ -28,6 +28,31 @@ const limitResult = (max: number): ToolResult => ({
 // Most characters of the code the user is shown when asked before it runs
 const MAX_DETAIL = 20_000;
 
+// How often the very same call may fail: the next time it is not run, and the model answers
+const MAX_SAME_FAILURES = 3;
+
+const repeatedResult = (failures: number): ToolResult => ({
+  text:
+    `Error: not run: this exact call already failed ${failures} times. Do not call it again. Answer now with what ` +
+    "you have, and say what did not work.",
+  images: [],
+  files: [],
+  error: true,
+});
+
+/** The same arguments in any order of their keys, and with text trimmed, give the same key. */
+function callKey(call: { name: string; arguments: Record<string, unknown> }): string {
+  const sorted = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(sorted)
+      : value && typeof value === "object"
+        ? Object.fromEntries(Object.keys(value).sort().map((k) => [k, sorted((value as Record<string, unknown>)[k])]))
+        : typeof value === "string"
+          ? value.trim()
+          : value;
+  return `${call.name} ${JSON.stringify(sorted(call.arguments))}`;
+}
+
 /** What a tool call gets from the chat it runs in. */
 export type ChatToolContext = Omit<ToolCallContext, "signal">;
 
@@ -114,10 +139,14 @@ export async function runToolLoop<Turn extends ModelTurn>({
   addResults: (results: ToolCallResult[]) => void;
 }): Promise<void> {
   /**
-   * Runs one tool call (unless `overLimit`) and stores its result. Returns what
-   * the model gets back, and whether the user stopped the reply over it.
+   * Runs one tool call and stores its result; a call that may not run
+   * (`refused`, such as one over the limit) gets that result and note instead.
+   * Returns what the model gets back, and whether the user stopped the reply over it.
    */
-  async function callTool(call: StoredToolCall, overLimit: boolean): Promise<{ result: ToolResult; stop: boolean }> {
+  async function callTool(
+    call: StoredToolCall,
+    refused: { result: ToolResult; note: string } | null
+  ): Promise<{ result: ToolResult; stop: boolean }> {
     const def = tools.find((t) => t.name === call.name);
     const icon = def?.icon ?? "spanner";
     sendTool({ id: call.id, name: call.name, icon, label: def?.label(call.arguments, "running") ?? call.name, state: "running" });
@@ -125,7 +154,7 @@ export async function runToolLoop<Turn extends ModelTurn>({
     // In a tainted chat, text that tried to instruct the model may try to get code run: the user decides first
     let approval: { decision: ApprovalDecision } | undefined;
     const session = toolContext?.security;
-    if (def?.effects.exec && !overLimit && session?.context.tainted) {
+    if (def?.effects.exec && !refused && session?.context.tainted) {
       const decision = await awaitApproval({
         session,
         tool: call.name,
@@ -151,8 +180,8 @@ export async function runToolLoop<Turn extends ModelTurn>({
       sendTool({ id: call.id, approval });
     }
 
-    const result: ToolResult = overLimit
-      ? limitResult(maxToolCalls)
+    let result: ToolResult = refused
+      ? refused.result
       : approval?.decision === "skip"
         ? {
             text: "Error: not run: the user chose not to run it. Go on without it.",
@@ -165,9 +194,10 @@ export async function runToolLoop<Turn extends ModelTurn>({
         : def
           ? await runTool(def, call.arguments, { ...toolContext!, signal })
           : { text: `Error: there is no tool named ${call.name}.`, images: [], files: [], error: true };
-    const state = result.error ? "error" : "done";
-    const note = overLimit ? "tool limit reached" : result.note;
-    const label = (result.label ?? def?.label(call.arguments, state) ?? `Could not use ${call.name}`) + (note ? ` (${note})` : "");
+    let state: "done" | "error" = result.error ? "error" : "done";
+    const note = refused ? refused.note : result.note;
+    const errorLabel = (why: string) => `${def?.label(call.arguments, "error") ?? `Could not use ${call.name}`} (${why})`;
+    let label = (result.label ?? def?.label(call.arguments, state) ?? `Could not use ${call.name}`) + (note ? ` (${note})` : "");
     const { security } = result;
     const saved = await reply.saveToolResult({
       call,
@@ -181,7 +211,16 @@ export async function runToolLoop<Turn extends ModelTurn>({
       shared: result.shared,
       approval,
       security,
+      expect: result.expect,
+      changeset: result.changeset,
+      failedLabel: errorLabel,
     });
+    // Changes that could not be stored, such as files that changed meanwhile: the model is told, and nothing changed
+    if (saved.failure) {
+      result = { ...result, text: saved.failure.text, error: true, files: [], deletions: undefined, repository: undefined, shared: undefined };
+      state = "error";
+      label = errorLabel(saved.failure.note);
+    }
     // A run whose output the model did not get shows as withheld in the sandbox panel
     if (result.run) await reply.saveSandboxRun(call.id, security ? { ...result.run, status: "withheld" } : result.run);
     const [attachmentId] = saved.imageIds;
@@ -214,6 +253,9 @@ export async function runToolLoop<Turn extends ModelTurn>({
   const limited = maxToolCalls > 0;
   let used = 0;
   const allResults: ToolCallResult[] = [];
+  // How often each call failed, by callKey; a call refused for failing too often ends the use of tools
+  const failures = new Map<string, number>();
+  let givenUp = false;
 
   /**
    * The tools are used up: the model answers. A model that keeps calling them,
@@ -231,7 +273,7 @@ export async function runToolLoop<Turn extends ModelTurn>({
   }
 
   for (let round = 1; ; round++) {
-    if (limited && used >= maxToolCalls) return answerWithoutTools();
+    if ((limited && used >= maxToolCalls) || givenUp) return answerWithoutTools();
 
     const turn = await nextTurn(true);
     if (turn.calls.length === 0 || isCancelled()) return;
@@ -248,10 +290,33 @@ export async function runToolLoop<Turn extends ModelTurn>({
     for (const call of calls) {
       const overLimit = limited && used >= maxToolCalls;
       if (!overLimit) used++;
-      const { result, stop } = await callTool(call, overLimit);
+      const key = callKey(call);
+      const failed = failures.get(key) ?? 0;
+      const repeated = !overLimit && failed >= MAX_SAME_FAILURES;
+      if (repeated) givenUp = true;
+      const refused = overLimit
+        ? { result: limitResult(maxToolCalls), note: "tool limit reached" }
+        : repeated
+          ? { result: repeatedResult(failed), note: "failed too often" }
+          : null;
+      const { result, stop } = await callTool(call, refused);
       if (stop) return;
       allResults.push({ call, result });
-      results.push({ call, result: limited && !overLimit ? withCallsLeft(result, used, maxToolCalls) : result });
+      let forModel = result;
+      if (!refused) {
+        if (result.error) failures.set(key, failed + 1);
+        else failures.delete(key);
+        // A model that repeats a failing call is told so, before it is refused
+        if (result.error && failed + 1 > 1) {
+          forModel = {
+            ...result,
+            text:
+              `${result.text}\n\n[This exact call has now failed ${failed + 1} times. Do not repeat it: change the ` +
+              "arguments or the approach.]",
+          };
+        }
+      }
+      results.push({ call, result: limited && !overLimit ? withCallsLeft(forModel, used, maxToolCalls) : forModel });
     }
     addResults(results);
   }

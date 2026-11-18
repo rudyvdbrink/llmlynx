@@ -7,7 +7,7 @@ import { uniqueName, type FileCard } from "@/lib/files";
 import { parseSelection, toSelection } from "@/lib/selection";
 import type { ApprovalDecision, ChatMessage, PauseDecision, StepSecurity } from "@/lib/types";
 import type { RunRecord } from "@/server/tools/definitions";
-import { WHOLE_TEXT } from "@/server/files/store";
+import { staleText, staleVersions, WHOLE_TEXT, type ExpectedVersion, type StaleVersion } from "@/server/files/store";
 import { addConversationCost, conversationCost } from "./cost";
 import { saveRequestSetup, type RequestSetupInput } from "./setup";
 
@@ -198,6 +198,13 @@ export async function loadHistory(conversationId: string, files?: FileHistoryOpt
   }));
 }
 
+/** Thrown in the transaction that stores a tool step whose files changed since the tool read them. */
+class StaleFiles extends Error {
+  constructor(readonly stale: StaleVersion[]) {
+    super("The files changed since the tool read them.");
+  }
+}
+
 /** A tool call as stored in Message.toolCalls. */
 export type StoredToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 
@@ -213,10 +220,18 @@ export type ToolResultStep = {
   shared?: FileCard[]; // files of the sandbox the tool gives the user (share_file)
   approval?: { decision: ApprovalDecision }; // what the user chose before code ran in a tainted chat
   security?: StepSecurity; // what the security checks found in the result, which the model then did not get
+  expect?: ExpectedVersion[]; // the versions its files must still have: else the step is stored as an error, without them
+  changeset?: string; // the id of the files an edit_files call changed together
+  failedLabel?: (note: string) => string; // the label of the step when its changes could not be stored
 };
 
-/** What saveToolResult stored: the ids of the images, and the cards of the files (deletions left out). */
-export type SavedToolResult = { imageIds: string[]; files: FileCard[] };
+/**
+ * What saveToolResult stored: the ids of the images, and the cards of the
+ * files (deletions left out). `failure` is what the model gets instead of the
+ * tool's own text when the step's changes could not be stored, such as files
+ * that changed after the tool read them; `note` says why, after the label.
+ */
+export type SavedToolResult = { imageIds: string[]; files: FileCard[]; failure?: { text: string; note: string } };
 
 export type AssistantReply = {
   append(text: string): void;
@@ -274,10 +289,13 @@ export function createAssistantReply({
    */
   async function saveStep(
     data: Omit<Prisma.MessageUncheckedCreateInput, "conversationId" | "position">,
-    also?: (tx: Prisma.TransactionClient) => Promise<unknown>
+    also?: (tx: Prisma.TransactionClient) => Promise<unknown>,
+    before?: (tx: Prisma.TransactionClient) => Promise<void>
   ) {
     // A clone can store thousands of files at once
     return prisma.$transaction(async (tx) => {
+      // A check that throws stores nothing
+      await before?.(tx);
       const position = await nextPosition(tx, conversationId);
       const message = await tx.message.create({
         data: { ...data, conversationId, position },
@@ -327,7 +345,22 @@ export function createAssistantReply({
         // As with persist(): the reply goes on even if a step cannot be stored.
       }
     },
-    async saveToolResult({ call, content, label, error, images, files, deletions, repository, shared, approval, security }) {
+    async saveToolResult({
+      call,
+      content,
+      label,
+      error,
+      images,
+      files,
+      deletions,
+      repository,
+      shared,
+      approval,
+      security,
+      expect,
+      changeset,
+      failedLabel,
+    }) {
       const none: SavedToolResult = { imageIds: [], files: [] };
       if (saved) return none;
       const attachments: Prisma.MessageAttachmentCreateWithoutMessageInput[] = [
@@ -358,7 +391,15 @@ export function createAssistantReply({
         ...(security ? { security } : {}),
         ...(shared?.length ? { shared: shared.map((f) => f.id) } : {}),
         ...(approval ? { approval } : {}),
+        ...(changeset ? { changeset } : {}),
       };
+      // The files must still be as the tool read them: checked in the transaction that stores the new versions
+      const checkVersions = expect?.length
+        ? async (tx: Prisma.TransactionClient) => {
+            const stale = await staleVersions(tx, conversationId, expect);
+            if (stale.length) throw new StaleFiles(stale);
+          }
+        : undefined;
       try {
         // A repository's .git folder changes together with its files
         const saveRepository = repository
@@ -380,7 +421,8 @@ export function createAssistantReply({
             metadata,
             attachments: attachments.length ? { create: attachments } : undefined,
           },
-          saveRepository
+          saveRepository,
+          checkVersions
         );
         toolSteps.set(call.id, { id, metadata });
         return {
@@ -390,8 +432,23 @@ export function createAssistantReply({
             .map((a) => ({ id: a.id, name: a.name!, mimeType: a.mimeType, size: a.size ?? 0 })),
         };
       } catch (err) {
-        console.error(`Storing the result of ${call.name} failed: ${(err as Error)?.message || err}`);
-        return none;
+        const changes = files.length > 0 || !!deletions?.length || !!repository;
+        if (!(err instanceof StaleFiles)) console.error(`Storing the result of ${call.name} failed: ${(err as Error)?.message || err}`);
+        if (!changes) return none;
+        // The model must not take changes that were not stored for done
+        const failure =
+          err instanceof StaleFiles
+            ? { text: staleText(err.stale), note: "files changed meanwhile" }
+            : { text: "Error: the result could not be stored, so the sandbox did not change. Try again.", note: "not stored" };
+        // The step is stored as the error it became, without its files
+        try {
+          const errorMeta: Prisma.InputJsonObject = { ...metadata, label: failedLabel?.(failure.note) ?? label, error: true };
+          const { id } = await saveStep({ role: "tool", content: failure.text, toolCallId: call.id, toolName: call.name, metadata: errorMeta });
+          toolSteps.set(call.id, { id, metadata: errorMeta });
+        } catch {
+          // As with persist(): the reply goes on even if a step cannot be stored.
+        }
+        return { ...none, failure };
       }
     },
     async saveSandboxRun(callId, run) {
@@ -406,6 +463,8 @@ export function createAssistantReply({
             output: run.output,
             status: run.status,
             durationMs: run.durationMs,
+            ...(run.id ? { id: run.id } : {}),
+            ...(run.printedBytes !== undefined ? { printedBytes: run.printedBytes } : {}),
             ...(run.files ? { files: run.files } : {}),
           },
         });

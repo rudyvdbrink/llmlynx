@@ -113,7 +113,8 @@ server = MCPServer(name="llmlynx-code", version="1.0.0")
 
 @server.tool(
     description=(
-        "Runs code in a new jail with the chat's files in its folder. Returns JSON: { status, exit_code, reason, "
+        "Runs code in a new jail with the chat's files in its folder, in its folder `cwd` of those files when given. "
+        "Returns JSON: { status, exit_code, reason, "
         "output, printed_bytes, duration_ms, changed, deleted, skipped, reinstalled }, and the changed files as "
         "embedded resources (file:///<path>)."
     ),
@@ -125,11 +126,15 @@ async def code_run(
     code: str,
     files: list[FileIn] = [],  # noqa: B006
     locks: dict[str, LockIn] = {},  # noqa: B006
+    cwd: Annotated[str, Field(description="A folder of the chat's files to run in; empty for the sandbox folder")] = "",
 ) -> list:
     try:
         packages.check_chat(chat)
     except ValueError as err:
         raise ToolError(str(err))
+    folder = jail.safe_path(cwd) if cwd.strip() else ""
+    if folder is None:
+        raise ToolError(f"Not a valid folder: {cwd}")
     if language not in jail.LANGUAGES:
         raise ToolError(f"language must be one of: {', '.join(jail.LANGUAGES)}")
     if len(code) > MAX_CODE_CHARS:
@@ -143,7 +148,7 @@ async def code_run(
             raise ToolError(f"The chat's packages could not be installed again: {err}")
         packages.touch(chat)
         try:
-            result = await jail.run_code(language, code, chat_files, core, packages.mounts(chat))
+            result = await jail.run_code(language, code, chat_files, core, packages.mounts(chat), folder)
         except jail.JailError as err:
             log.error("A run failed: %s", err)
             raise ToolError("The sandbox could not run the code.")

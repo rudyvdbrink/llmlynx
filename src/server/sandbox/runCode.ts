@@ -3,8 +3,12 @@
 // and the files it deleted get a deletion. The code is scanned for malware
 // before it runs; every file it made is scanned before it is stored or shown.
 // What it printed is scanned like a web page after the call (see
-// checkAfterCall).
+// checkAfterCall). The result starts with a header of the same facts every
+// time (the run's id, folder, exit code, stop, duration, output), and lists
+// failing tests when a test runner left results it can read (testResults.ts).
+// Output too long for the result is kept whole with the run, for read_run_log.
 
+import { randomBytes } from "node:crypto";
 import { fileKind, formatSize, isArtifact, mimeTypeOf, cleanFilePath } from "@/lib/files";
 import { conversationFiles, fileData } from "@/server/files/store";
 import { TOOL_SCAN_TIMEOUT_MS, UPLOAD_VIRUS_TIMEOUT_MS } from "@/server/security/limits";
@@ -15,6 +19,7 @@ import { chatLocks, runInSandbox, type RunOutcome } from "./code";
 import { withChatLock } from "./lock";
 import { notRun } from "./records";
 import { roomError } from "./room";
+import { describeTestResults, readTestResults } from "./testResults";
 
 export const LANGUAGES = ["python", "javascript", "typescript", "shell"] as const;
 export type Language = (typeof LANGUAGES)[number];
@@ -60,6 +65,70 @@ export function startAndEnd(text: string, budget: number): string {
 }
 
 /**
+ * `text` within `budget` characters, by whole lines where it can: when it is
+ * longer, its first lines and its last ones, where errors show, and which
+ * lines were left out (`left`, from 1), for read_run_log.
+ */
+export function clipLines(text: string, budget: number): { text: string; lines: number; left?: { from: number; to: number } } {
+  const lines = text.split("\n");
+  if (text.length <= budget) return { text, lines: lines.length };
+  const fit = (from: number, step: number, room: number, limit: number) => {
+    let count = 0;
+    let used = 0;
+    while (count < limit && used + lines[from + step * count].length + 1 <= room) used += lines[from + step * count++].length + 1;
+    return count;
+  };
+  const head = fit(0, 1, Math.floor(budget * 0.4), lines.length);
+  const tail = fit(lines.length - 1, -1, budget - Math.floor(budget * 0.4), lines.length - head);
+  // Lines too long to show whole: by characters
+  if (!head || !tail) return { text: startAndEnd(text, budget), lines: lines.length, left: { from: 1, to: lines.length } };
+  const left = { from: head + 1, to: lines.length - tail };
+  const gap = `[... lines ${left.from} to ${left.to} left out ...]`;
+  return { text: [...lines.slice(0, head), gap, ...lines.slice(lines.length - tail)].join("\n"), lines: lines.length, left };
+}
+
+const STOPS: Record<NonNullable<RunOutcome["reason"]>, string> = {
+  timeout: "yes, after 120 s (the time limit)",
+  memory: "yes, at 512 MB of memory (the limit)",
+  processes: "yes, at 128 processes or threads (the limit)",
+  output: "yes, at 1 MB of output (the limit)",
+};
+
+/** The facts every run's result starts with, in the same order. */
+function header(outcome: RunOutcome, id: string, cwd: string, output: string): string {
+  return [
+    `run: ${id}`,
+    `folder: ${cwd || "the sandbox folder"}`,
+    `exit code: ${outcome.reason ? "none (stopped)" : outcome.exitCode}`,
+    `stopped: ${outcome.reason ? STOPS[outcome.reason] : "no"}`,
+    `duration: ${(outcome.durationMs / 1000).toFixed(1)} s`,
+    `output: ${output}`,
+  ].join("\n");
+}
+
+/**
+ * The folder a run runs in (`cwd`, a folder of the sandbox, "" for the
+ * sandbox folder itself), as the files of the sandbox spell it, or an error text.
+ */
+export function workingFolder(raw: unknown, files: { name: string }[]): { cwd: string } | { error: string } {
+  if (raw === undefined || raw === null) return { cwd: "" };
+  // The sandbox folder itself: "", ".", "./", "/" or "/sandbox"
+  if (typeof raw === "string" && /^(\.|\/sandbox|sandbox|\/)?\/?$/.test(raw.trim().replace(/\\/g, "/").replace(/^\.\//, ""))) return { cwd: "" };
+  const path = typeof raw === "string" ? cleanFilePath(raw) : null;
+  if (path) {
+    const prefix = `${path.toLowerCase()}/`;
+    const file = files.find((f) => f.name.startsWith(`${path}/`)) ?? files.find((f) => f.name.toLowerCase().startsWith(prefix));
+    if (file) return { cwd: file.name.slice(0, path.length) };
+  }
+  const folders = [...new Set(files.map((f) => f.name.split("/")).filter((p) => p.length > 1).map((p) => p[0]))].slice(0, 10);
+  return {
+    error:
+      `cwd must be a folder of the sandbox that holds files${typeof raw === "string" ? `; ${raw} is not one` : ""}.` +
+      (folders.length ? ` Its folders are: ${folders.join(", ")}.` : " The sandbox has no folders: leave cwd out."),
+  };
+}
+
+/**
  * How the run ended, in words, for the model, and as a note after the tool
  * line's label. A run stopped at a limit says what to do instead.
  */
@@ -93,6 +162,56 @@ function ending(outcome: RunOutcome): { sentence: string; note?: string } {
   return { sentence: `It failed with exit code ${outcome.exitCode} after ${seconds}.`, note: `exit code ${outcome.exitCode}` };
 }
 
+// A line that runs a program, as models send with language python: "python train.py", "pytest -q", "cd app"
+const COMMAND_LINE = /^(?:python3?|node|npx|npm|pytest|pip3?|bash|sh|cd|ls|cat)\s+[\w./"'-]/;
+
+/**
+ * The lines of `code` that do something: without blank lines and comments
+ * ("#" for Python and shell, "//" and block comments for JavaScript and
+ * TypeScript). Rough, but enough to tell code that does nothing.
+ */
+export function codeLines(language: Language, code: string): string[] {
+  const text = language === "javascript" || language === "typescript" ? code.replace(/\/\*[\s\S]*?\*\//g, "") : code;
+  const comment = language === "javascript" || language === "typescript" ? /^\/\// : /^#/;
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !comment.test(line));
+}
+
+/**
+ * The language to run `code` in: the one the model gave, or for a command
+ * line sent as Python, JavaScript or TypeScript, shell; python when it gave
+ * none. With a note for the model when it is not the one it gave, or an
+ * error text for code that does nothing.
+ */
+export function chooseLanguage(raw: unknown, code: string): { language: Language; note?: string } | { error: string } {
+  const given = typeof raw === "string" && raw.trim() ? languageOf(raw) : null;
+  if (typeof raw === "string" && raw.trim() && !given) {
+    return { error: `language must be one of: ${LANGUAGES.join(", ")} (python if unsure; shell for a command line such as python script.py).` };
+  }
+  const lines = codeLines(given ?? "python", code);
+  if (!lines.length) {
+    return {
+      error:
+        "not run: the code has only comments, so nothing would run. To run a file of the sandbox, use language shell " +
+        "with a command such as python script.py.",
+    };
+  }
+  const commandLine = lines.every((line) => COMMAND_LINE.test(line));
+  if (!given) {
+    const language = commandLine ? "shell" : "python";
+    return { language, note: `language was not given, so it ran as ${language}.` };
+  }
+  if (given !== "shell" && commandLine) {
+    return { language: "shell", note: `It is a command line, so it ran as one: next time, use language shell for it.` };
+  }
+  if (given === "python" && lines.every((line) => /^(import|from)\s/.test(line))) {
+    return { language: given, note: "The code only imports modules, so nothing else ran." };
+  }
+  return { language: given };
+}
+
 /**
  * Runs the model's code (`args.language`, `args.code`) in the chat's
  * sandbox. Throws only when the chat is stopped.
@@ -106,12 +225,15 @@ export async function runCode(args: Args, ctx: ToolCallContext): Promise<ToolRes
     ...(note ? { note } : {}),
     ...(run ? { run } : {}),
   });
-  const language = languageOf(args.language);
-  if (!language) return failure(`language must be one of: ${LANGUAGES.join(", ")}.`);
   if (typeof args.code !== "string" || !args.code.trim()) return failure("code is required.");
   if (args.code.length > MAX_CODE_CHARS) return failure(`code is too long (at most ${MAX_CODE_CHARS} characters).`);
   const code = args.code;
+  const chosen = chooseLanguage(args.language, code);
+  if ("error" in chosen) return failure(chosen.error);
+  const { language } = chosen;
   const security = ctx.security;
+  const folder = workingFolder(args.cwd, await conversationFiles(ctx.conversationId));
+  if ("error" in folder) return failure(folder.error);
   if (!security) return failure("the code could not be checked, so it was not run.");
 
   // The code itself is checked for malware before it runs
@@ -137,12 +259,13 @@ export async function runCode(args: Args, ctx: ToolCallContext): Promise<ToolRes
       conversationId: ctx.conversationId,
       language,
       code,
+      cwd: folder.cwd,
       files: inputs,
       locks: await chatLocks(ctx.conversationId),
       signal: ctx.signal,
     });
     if ("error" in outcome) return failure(outcome.error);
-    return keepResults(outcome, files, language, code, ctx);
+    return keepResults(outcome, files, language, code, folder.cwd, chosen.note, ctx);
   });
 }
 
@@ -152,8 +275,11 @@ async function keepResults(
   current: { name: string; size: number }[],
   language: Language,
   code: string,
+  cwd: string,
+  languageNote: string | undefined,
   ctx: ToolCallContext
 ): Promise<ToolResult> {
+  const id = `run-${randomBytes(6).toString("hex")}`;
   const notes: string[] = [];
   const kept: ToolFile[] = [];
   for (const file of outcome.files) {
@@ -198,13 +324,34 @@ async function keepResults(
     notes.push(`Look at ${images.join(", ")} with view_image to check ${images.length === 1 ? "it" : "them"}.`);
   }
   const { sentence, note } = ending(outcome);
+
+  // What the tests found, when a test runner left results this can read
+  const exists = new Set([...current.map((f) => f.name), ...outcome.files.map((f) => f.name)]);
+  for (const name of deletions) exists.delete(name);
+  const reports = outcome.files.map((f) => ({ name: f.name, data: Buffer.from(f.data, "base64") }));
+  const report = readTestResults(outcome.output, reports, (path) => exists.has(path), cwd);
+  // A run stopped at a limit did not finish its tests: what it printed so far is no result
+  const tests = report && (outcome.reason ? "Tests: no results, as the run was stopped before it ended." : describeTestResults(report));
+
   // Room for the rest of the text in the budget
-  const budget = Math.max(500, ctx.textBudget - 600);
-  const printed = outcome.output.trim() ? startAndEnd(outcome.output.trimEnd(), budget) : "(It printed nothing.)";
+  const budget = Math.max(500, ctx.textBudget - 900 - (tests?.length ?? 0));
+  const trimmed = outcome.output.trimEnd();
+  const clipped = trimmed.trim() ? clipLines(trimmed, budget) : null;
+  const lost = outcome.printedBytes - Buffer.byteLength(outcome.output);
+  const about = [
+    clipped ? `${clipped.lines} line${clipped.lines === 1 ? "" : "s"}` : "none",
+    ...(clipped?.left
+      ? [`lines ${clipped.left.from} to ${clipped.left.to} are left out here: read them, or find text in them, with read_run_log (run ${id})`]
+      : []),
+    ...(lost > 0 ? [`it printed ${formatSize(outcome.printedBytes)}, but only the first 1 MB was kept: the rest is lost`] : []),
+  ].join("; ");
   const text = [
-    sentence,
+    header(outcome, id, cwd, about),
+    ...(languageNote ? [languageNote] : []),
+    ...(outcome.reason ? [sentence] : []),
     ...(outcome.reinstalled.length ? ["The chat's packages were installed again first."] : []),
-    `Output:\n${printed}`,
+    ...(tests ? [tests] : []),
+    `Output:\n${clipped ? clipped.text : "(It printed nothing.)"}`,
     changes.length ? `Files: ${changes.join(", ")}.` : "It made, changed and deleted no files.",
     ...notes,
   ].join("\n\n");
@@ -217,12 +364,14 @@ async function keepResults(
     error: false,
     ...(note ? { note } : {}),
     run: {
+      id,
       kind: "run",
       language,
       code,
       output: outcome.output,
       status: outcome.status,
       durationMs: outcome.durationMs,
+      printedBytes: outcome.printedBytes,
       files: { changed: files.map((f) => f.name), deleted: deletions },
     },
   };

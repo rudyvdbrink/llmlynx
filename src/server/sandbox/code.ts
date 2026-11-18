@@ -78,7 +78,7 @@ async function callCode(tool: string, args: Record<string, unknown>, signal: Abo
 const serverError = (text: string) => text.replace(/^error( executing tool [\w-]+)?:\s*/i, "").trim();
 
 /**
- * Runs `code` in the chat's sandbox with its `files` (paths and contents).
+ * Runs `code` in the chat's sandbox with its `files` (paths and contents), in its folder `cwd`.
  * Returns what the run did, or an error text for the model when the
  * container could not run it. Throws only when `signal` aborts.
  */
@@ -86,6 +86,7 @@ export async function runInSandbox({
   conversationId,
   language,
   code,
+  cwd = "",
   files,
   locks,
   signal,
@@ -93,6 +94,7 @@ export async function runInSandbox({
   conversationId: string;
   language: string;
   code: string;
+  cwd?: string; // the folder of the sandbox it runs in; "" for the sandbox folder itself
   files: { path: string; data: Buffer }[];
   locks: ChatLocks;
   signal: AbortSignal;
@@ -104,6 +106,7 @@ export async function runInSandbox({
         chat: conversationId,
         language,
         code,
+        ...(cwd ? { cwd } : {}),
         files: files.map((f) => ({ path: f.path, data: f.data.toString("base64") })),
         locks,
       },

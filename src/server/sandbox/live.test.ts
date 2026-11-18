@@ -196,7 +196,27 @@ describe.skipIf(!LIVE)("the sandbox, live", () => {
       expect(pytest.text).toMatch(/1 passed/);
       const npm = await chat.call("run_code", { language: "shell", code: "npm test" });
       expect(npm.text).toMatch(/pass 1/);
-      expect(npm.text).toMatch(/It succeeded/);
+      expect(npm.text).toMatch(/^exit code: 0$/m);
+    }, 120_000);
+
+    it("runs checks in a project's folder, and lists the failing tests with the line each points to", async () => {
+      const chat = await newChat({
+        "app/calc.py": "def add(a, b):\n    return a - b\n",
+        "app/tests/test_calc.py": "from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n\ndef test_zero():\n    assert add(0, 0) == 0\n",
+        "app/tests/test_broken.py": "import not_installed_anywhere\n",
+        "app/conftest.py": "",
+      });
+      const run = await chat.call("run_code", { language: "shell", code: "python -m pytest --continue-on-collection-errors --junitxml=report.xml; pwd", cwd: "app" });
+      expect(run.text).toMatch(/^folder: app$/m);
+      expect(run.text).toContain("/sandbox/app");
+      expect(run.text).toContain("Tests (JUnit report): 1 failed, 1 error, 1 passed.");
+      expect(run.text).toMatch(/- failed: tests\.test_calc::test_add, at app\/tests\/test_calc\.py:4/);
+      expect(run.text).toMatch(/- error \(not a failed assertion: setup, collection or import\): .*not_installed_anywhere/);
+      const plain = await chat.call("run_code", { language: "shell", code: "python -m pytest tests/test_calc.py", cwd: "app" });
+      expect(plain.text).toContain("Tests (pytest): 1 failed, 1 passed.");
+      expect(plain.text).toMatch(/- failed: tests\/test_calc\.py::test_add, at app\/tests\/test_calc\.py:4: assert -1 == 5/);
+      const missing = await chat.call("run_code", { language: "shell", code: "ls", cwd: "nowhere" });
+      expect(missing.text).toMatch(/^Error: cwd must be a folder of the sandbox/);
     }, 120_000);
 
     it("fails pip and npm inside a run, for lack of network", async () => {

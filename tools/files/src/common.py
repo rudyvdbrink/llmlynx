@@ -15,11 +15,13 @@ from mcp_types import BlobResourceContents, EmbeddedResource, TextContent
 # The app allows 20 MB per file; what the tools make may not be larger either
 MAX_FILE_BYTES = 20 * 1024 * 1024
 
+# The same list as TEXT_EXTENSIONS in the app's src/lib/files.ts (a test there checks it)
 TEXT_EXTENSIONS = {
     "txt", "md", "markdown", "csv", "tsv", "json", "jsonl", "xml", "yaml", "yml", "toml", "ini", "cfg", "conf", "log",
     "html", "htm", "css", "scss", "js", "mjs", "cjs", "jsx", "ts", "tsx", "py", "ipynb", "go", "rs", "java", "kt",
     "c", "h", "cpp", "hpp", "cc", "cs", "rb", "php", "swift", "sh", "bash", "zsh", "ps1", "bat", "sql", "r", "lua",
     "pl", "scala", "dart", "vue", "svelte", "tex", "bib", "srt", "vtt", "dockerfile", "makefile", "gitignore", "env",
+    "svg",
 }
 
 MIME_TYPES = {
@@ -44,6 +46,7 @@ MIME_TYPES = {
     "css": "text/css",
     "js": "text/javascript",
     "mjs": "text/javascript",
+    "svg": "image/svg+xml",
 }
 
 

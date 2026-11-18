@@ -253,7 +253,8 @@ export async function POST(req: NextRequest) {
     );
     // An agent with file tools refers to the files by name
     const repos = tools.some((t) => t.name === "git") ? (await chatRepos(conversationId)).map((r) => r.path) : [];
-    const note = hasFileTools(tools) ? filesNote(await conversationFiles(conversationId), repos) : null;
+    const search = tools.some((t) => t.name === "search_workspace");
+    const note = hasFileTools(tools) ? filesNote(await conversationFiles(conversationId), repos, search) : null;
     if (note) history = addToLastMessage(history, note);
     const messages = [...system, ...history];
 

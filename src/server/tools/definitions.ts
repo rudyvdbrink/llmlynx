@@ -7,9 +7,11 @@
 import { AGENT_TOOL_INFO, type ToolIcon, type ToolName } from "@/lib/agentTools";
 import type { FileCard } from "@/lib/files";
 import type { StepSecurity } from "@/lib/types";
+import type { ExpectedVersion } from "@/server/files/store";
 import type { SecuritySession } from "@/server/security/engine";
 import type { ToolServerId } from "./config";
 import { checkStart, checkUrl, shortUrl, shorten, toInteger, urlParameter } from "./args";
+import { CODE_TOOLS } from "./codeTools";
 import { FILE_TOOLS } from "./fileTools";
 import type { ToolFile, ToolImage } from "./mcp";
 import { SANDBOX_TOOLS } from "./sandboxTools";
@@ -22,12 +24,14 @@ export type Args = Record<string, unknown>;
 
 /** A run of code or an install of packages, for the sandbox panel's list of runs (the SandboxRun model). */
 export type RunRecord = {
+  id?: string; // the id the model reads the run's output by (read_run_log)
   kind: "run" | "install";
   language: string;
   code: string;
   output: string;
   status: "ok" | "error" | "timeout" | "stopped" | "withheld" | "blocked" | "skipped";
   durationMs: number;
+  printedBytes?: number; // what it printed, also past the output limit, where printing was no longer captured
   files?: { changed: string[]; deleted: string[] };
 };
 
@@ -53,6 +57,9 @@ export type ToolResult = {
   scanned?: boolean;
   run?: RunRecord;
   repository?: { path: string; git: string }; // git: a gzipped tar, base64
+  // The versions the changed files must still have when the result is stored; else nothing is stored (see staleVersions)
+  expect?: ExpectedVersion[];
+  changeset?: string; // the id of the files an edit_files call changed together, for undo_file
 };
 
 /**
@@ -299,7 +306,7 @@ const WEB_TOOLS: ToolDefinition[] = [
   },
 ];
 
-export const TOOL_DEFINITIONS: ToolDefinition[] = [...WEB_TOOLS, ...FILE_TOOLS, ...SANDBOX_TOOLS];
+export const TOOL_DEFINITIONS: ToolDefinition[] = [...WEB_TOOLS, ...FILE_TOOLS, ...CODE_TOOLS, ...SANDBOX_TOOLS];
 
 /** The tools in the format of the `tools` request field, which Ollama, Chat Completions and OpenRouter share. */
 export function toFunctionTools(tools: ToolDefinition[]) {

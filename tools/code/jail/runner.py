@@ -267,7 +267,15 @@ def run(config, in_fd, out_fd):
         "shell": ["/bin/bash", main],
     }[config["language"]]
 
-    exit_code, reason, printed = supervise(command, SANDBOX, config["env"], limits, config["core"], started)
+    # The folder of the sandbox the code runs in, which must be one of its folders (the app checks it too)
+    cwd = os.path.realpath(os.path.join(SANDBOX, config.get("cwd") or ""))
+    if (cwd == SANDBOX or cwd.startswith(SANDBOX + "/")) and os.path.isdir(cwd):
+        exit_code, reason, printed = supervise(command, cwd, config["env"], limits, config["core"], started)
+    else:
+        message = f"There is no folder {config.get('cwd')} in the sandbox.\n".encode()
+        sys.stdout.buffer.write(message)
+        sys.stdout.buffer.flush()
+        exit_code, reason, printed = 2, None, len(message)
     stop_all()
     changed, deleted, skipped = collect(before, out_fd, limits)
     manifest = {

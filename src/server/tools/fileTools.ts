@@ -9,10 +9,21 @@ import { AGENT_TOOL_INFO } from "@/lib/agentTools";
 import { baseName, cleanFilePath, extensionOf, fileKind, MAX_FILE_BYTES, mimeTypeOf } from "@/lib/files";
 import { fileText, MAX_RENDERED_PAGES, prepareImage, renderPdfPages, serverError } from "@/server/files/convert";
 import { sniffType } from "@/server/files/sniff";
-import { conversationFiles, fileData, findFile, isUntrusted, type ConversationFile } from "@/server/files/store";
+import { decodeSource, isSourceFile, isUtf8Text, lineStarts, numbered, sourceLines } from "@/server/files/source";
+import {
+  contentVersion,
+  conversationFiles,
+  fileData,
+  findExactFile,
+  findFile,
+  isUntrusted,
+  staleText,
+  type ConversationFile,
+} from "@/server/files/store";
 import { sandboxRoomError } from "@/server/sandbox/room";
 import { checkFileRead } from "@/server/security/engine";
-import { checkStart, shorten, toInteger } from "./args";
+import { checkStart, listError, shorten, toInteger, toList } from "./args";
+import { EDITS_EXAMPLE, editProblem, missingPath } from "./codeTools";
 import { getToolServer } from "./config";
 import type { Args, ToolCallContext, ToolDefinition, ToolResult, ToolState } from "./definitions";
 import { callMcpTool } from "./mcp";
@@ -89,10 +100,12 @@ async function callFilesServer(
       files.map((f) => ({ name: f.name, size: Buffer.byteLength(f.data, "base64") }))
     );
     if (full) return failure(full);
+    // Its version, for a next edit of it
+    const version = files.length === 1 ? ` Its version is ${contentVersion(Buffer.from(files[0].data, "base64"))}.` : "";
     const note = files.length
       ? " The user gets it as a file card below your reply: do not write a link to it, nor repeat all of its content."
       : "";
-    return { text: out.text.trim() + note, images: [], files, error: false };
+    return { text: out.text.trim() + version + note, images: [], files, error: false };
   } catch (err) {
     if (ctx.signal.aborted) throw err;
     console.error(`Files tool ${tool} failed: ${(err as Error)?.message || err}`);
@@ -147,18 +160,91 @@ async function viewImage(file: ConversationFile, ctx: ToolCallContext): Promise<
   return { text: `${file.name}:`, images: [image], files: [], error: false };
 }
 
+/**
+ * A source file's text as it is: UTF-8 decoded, or for a file in another
+ * encoding, the text the files server makes of it.
+ */
+async function sourceText(file: ConversationFile, data: Buffer, signal: AbortSignal): Promise<string> {
+  if (isUtf8Text(data)) return decodeSource(data);
+  return (await fileText(file, signal)).text ?? decodeSource(data);
+}
+
+/**
+ * read_file by lines: the lines from start_line to end_line that fit in the
+ * text budget, numbered, with the file's version. A line too long to fit is
+ * shown in part, with where it goes on by characters, so that reading always
+ * moves on.
+ */
+async function readLines(file: ConversationFile, data: Buffer, args: Args, ctx: ToolCallContext): Promise<ToolResult> {
+  const startLine = toInteger(args.start_line);
+  const endLine = toInteger(args.end_line);
+  if (startLine === null || (startLine !== undefined && startLine < 1)) return failure("start_line must be a whole number from 1.");
+  const first = startLine ?? 1;
+  if (endLine === null || (endLine !== undefined && endLine < first)) {
+    return failure(`end_line must be a whole number from start_line (${first}).`);
+  }
+  const version = contentVersion(data);
+  const text = await sourceText(file, data, ctx.signal);
+  const lines = sourceLines(text);
+  if (!lines.length) return success(`${file.name} (version ${version}) is empty.`);
+  if (first > lines.length) return failure(`${file.name} has only ${lines.length} lines.`);
+  const last = Math.min(endLine ?? lines.length, lines.length);
+  const width = String(last).length;
+  const shown: string[] = [];
+  let used = 0;
+  let next = first;
+  let longLine: string | null = null;
+  for (; next <= last; next++) {
+    const row = numbered(next, lines[next - 1], width);
+    if (used + row.length + 1 > ctx.textBudget) {
+      if (shown.length) break;
+      // A line too long for the budget: its start, and where it goes on, by characters
+      const keep = Math.max(1, ctx.textBudget - width - 2);
+      shown.push(row.slice(0, width + 2 + keep));
+      const at = lineStarts(text)[next - 1] + keep;
+      longLine =
+        `[Line ${next} has ${lines[next - 1].length} characters; this shows the first ${keep}. Read on in it with ` +
+        `start=${at} (characters)${next < lines.length ? `, or go on with start_line=${next + 1}` : ""}.]`;
+      next++;
+      break;
+    }
+    shown.push(row);
+    used += row.length + 1;
+  }
+  const lastShown = next - 1;
+  let part = shown.join("\n");
+  // A file from code or the internet is checked before the model reads it, as by characters
+  if (isUntrusted(file)) {
+    if (!ctx.security) return failure(`${file.name} could not be checked, so it cannot be read.`);
+    const checked = await checkFileRead({ file, text: part, tool: "read_file", session: ctx.security, signal: ctx.signal });
+    if ("blocked" in checked) return checked.blocked;
+    part = checked.text;
+  }
+  const range = first === lastShown ? `line ${first}` : `lines ${first} to ${lastShown}`;
+  const notes = [`${file.name}, version ${version}, ${range} of ${lines.length}:`, part];
+  if (longLine) notes.push(longLine);
+  else if (lastShown < last) notes.push(`[Call read_file with start_line=${lastShown + 1} for the next part.]`);
+  return success(notes.join("\n"));
+}
+
 export const FILE_TOOLS: ToolDefinition[] = [
   {
     name: "read_file",
     icon: AGENT_TOOL_INFO.read_file.icon,
     description:
-      "Read a file of this conversation as text: one the user attached or one you created. " +
-      "Long files come in parts; the result says which start to use for the next part.",
+      "Read a file of this conversation as text: one the user attached or one you created. Long files come in parts; " +
+      "the result says where the next part starts. Read text and code files by lines with start_line and end_line, " +
+      "such as the lines search_workspace found. For a text or code file, the result gives its version, for edits.",
     parameters: {
       type: "object",
       properties: {
         file: fileParameter,
         start: { type: "integer", description: "For long files: the character to start reading at, as the previous result says. Default 0" },
+        start_line: {
+          type: "integer",
+          description: 'Text and code files: the first line to read, from 1. Lines come numbered as "12| text": the number and "| " are not part of the file',
+        },
+        end_line: { type: "integer", description: "Text and code files: the last line to read. Default: as many as fit" },
       },
       required: ["file"],
     },
@@ -171,9 +257,20 @@ export const FILE_TOOLS: ToolDefinition[] = [
       const file = await lookUp(args, ctx);
       if (isResult(file)) return file;
       if (fileKind(file.name) === "image") return viewImage(file, ctx);
+      const byLines = [args.start_line, args.end_line].some((v) => v !== undefined && v !== null && v !== "");
+      if (byLines && toInteger(args.start) !== undefined) {
+        return failure("Give either start (characters) or start_line and end_line (lines), not both.");
+      }
+      const data = await fileData(file.id);
+      const source = isSourceFile(file.name, data);
+      if (byLines) {
+        if (!source) return failure(`${file.name} is not a text or code file, so it has no lines to read: read it with start (characters).`);
+        return readLines(file, data, args, ctx);
+      }
       const start = checkStart(args.start);
       if ("error" in start) return failure(start.error);
-      const { text, info } = await fileText(file, ctx.signal);
+      // Source text as it is, the same text that start_line reads; documents as markdown
+      const { text, info } = source ? { text: await sourceText(file, data, ctx.signal), info: null } : await fileText(file, ctx.signal);
       if (text === null) return failure(`${file.name} could not be read: ${info?.error ?? "unknown error"}`);
       if (start.start >= text.length && text.length > 0) return failure(`${file.name} has only ${text.length} characters.`);
       const end = Math.min(text.length, start.start + ctx.textBudget);
@@ -192,6 +289,7 @@ export const FILE_TOOLS: ToolDefinition[] = [
       } else if (start.start > 0) {
         notes.push(`[Characters ${start.start} to ${end}: the end of ${file.name}.]`);
       }
+      if (source) notes.push(`[${file.name} is version ${contentVersion(data)}.]`);
       if (info?.textlessPages?.length) {
         notes.push(
           `[Pages ${info.textlessPages.join(", ")} have no text, probably scanned.` +
@@ -267,7 +365,7 @@ export const FILE_TOOLS: ToolDefinition[] = [
     name: "create_file",
     icon: AGENT_TOOL_INFO.create_file.icon,
     description:
-      "Create a text file for the user to download: plain text, markdown, CSV, JSON, HTML or code " +
+      "Create a text file for the user to download: plain text, markdown, CSV, JSON, HTML, SVG or code " +
       "(Python, JavaScript, Go and so on). The extension of the name sets the type. The user gets the file " +
       "as a card below your reply.",
     parameters: {
@@ -290,7 +388,8 @@ export const FILE_TOOLS: ToolDefinition[] = [
       const name = newName(
         args.name,
         (ext) => fileKind(`x.${ext}`) === "text",
-        "Use create_document for .docx, .pdf or .pptx and create_spreadsheet for .xlsx."
+        "create_file makes text and code files, such as .txt, .md, .csv, .json, .html, .svg and .py. Use create_document " +
+          "for .docx, .pdf or .pptx, create_spreadsheet for .xlsx, and run_code for other formats, such as PNG images."
       );
       if ("error" in name) return failure(name.error);
       if (typeof args.content !== "string") return failure("content is required.");
@@ -343,6 +442,11 @@ export const FILE_TOOLS: ToolDefinition[] = [
           },
         },
         name: { type: "string", description: "A new name for the new version. Default: the same name" },
+        expected_version: {
+          type: "string",
+          description:
+            "The file's version as read_file or search_workspace gave it, with its exact path as file: nothing changes if the file changed since",
+        },
       },
       required: ["file"],
     },
@@ -352,21 +456,29 @@ export const FILE_TOOLS: ToolDefinition[] = [
     effects: LOCAL,
     label: (args, state) => labels(args, state, "Editing", "Edited", "Could not edit"),
     async run(args, ctx) {
-      const file = await lookUp(args, ctx);
-      if (isResult(file)) return file;
+      // With a version, the file is the one at that exact path: never one guessed by its name
+      const expected = typeof args.expected_version === "string" ? args.expected_version.trim().toLowerCase() : "";
+      const files = await conversationFiles(ctx.conversationId);
+      const file = expected ? findExactFile(files, args.file) : findFile(files, args.file);
+      if (!file) return failure(expected ? missingPath(args.file, files) : missingFile(args.file, files));
       const ext = extensionOf(file.name);
       if (fileKind(file.name) !== "text" && !EDITABLE_OFFICE.includes(ext)) {
         const hint = ext === "pdf" || ext === "xls" ? " Create a new file with create_document or create_spreadsheet instead." : "";
         return failure(`${file.name} cannot be edited.${hint}`);
       }
-      const edits = Array.isArray(args.edits) ? args.edits : [];
-      const cells = Array.isArray(args.cells) ? args.cells : [];
-      if (!edits.length && !cells.length) return failure("Give edits (or cells, for Excel).");
+      // Models also send these lists as JSON text
+      const editList = toList(args.edits);
+      if (editList === null) return failure(listError("edits", args.edits, EDITS_EXAMPLE));
+      const cellList = toList(args.cells);
+      if (cellList === null) return failure(listError("cells", args.cells, '[{"cell": "B3", "value": "42"}]'));
+      const edits = (editList ?? []) as { find: string; replace: string; all?: unknown }[];
+      const cells = (cellList ?? []) as { cell?: unknown; value?: unknown }[];
+      if (!edits.length && !cells.length) return failure(`Give edits, a list such as ${EDITS_EXAMPLE} (or cells, for Excel).`);
       if (edits.length > MAX_EDITS) return failure(`At most ${MAX_EDITS} edits per call.`);
       if (cells.length > MAX_CELLS) return failure(`At most ${MAX_CELLS} cells per call.`);
       if (cells.length && ext !== "xlsx") return failure("cells only work on Excel (.xlsx) files.");
-      const bad = edits.findIndex((e) => typeof e?.find !== "string" || !e.find || typeof e?.replace !== "string");
-      if (bad >= 0) return failure(`Edit ${bad + 1} needs find (not empty) and replace.`);
+      const problem = edits.map(editProblem).find(Boolean);
+      if (problem) return failure(problem);
       let rename: string | undefined;
       if (typeof args.name === "string" && args.name.trim()) {
         const named = newName(args.name, (e) => e === ext, `The new name must end in .${ext}.`);
@@ -374,8 +486,10 @@ export const FILE_TOOLS: ToolDefinition[] = [
         rename = named.name;
       }
       const data = await fileData(file.id);
+      const version = contentVersion(data);
+      if (expected && expected !== version) return { ...failure(""), text: staleText([{ name: file.name, version: expected, current: version }]) };
       // The new version of a file from code or the internet stays untrusted
-      return callFilesServer(
+      const result = await callFilesServer(
         "files_edit",
         {
           name: baseName(file.name),
@@ -389,6 +503,8 @@ export const FILE_TOOLS: ToolDefinition[] = [
         rename ?? file.name,
         file.origin
       );
+      // Stored only if the file is still as it was read here (see staleVersions)
+      return result.error ? result : { ...result, expect: [{ name: file.name, version }] };
     },
   },
   {
@@ -469,7 +585,12 @@ export const FILE_TOOLS: ToolDefinition[] = [
     async run(args, ctx) {
       const name = newName(args.name, (ext) => ext === "xlsx", "Use a name ending in .xlsx; create_file makes .csv files.");
       if ("error" in name) return failure(name.error);
-      const sheets = Array.isArray(args.sheets) ? args.sheets : [];
+      const sheetList = toList(args.sheets);
+      if (sheetList === null) return failure(listError("sheets", args.sheets, '[{"name": "Data", "rows": [["Name", "Total"], ["A", "1"]]}]'));
+      const sheets = (sheetList ?? []).map((s) => {
+        const sheet = s as { name?: unknown; rows?: unknown };
+        return { name: sheet?.name, rows: toList(sheet?.rows) ?? sheet?.rows };
+      }) as { name?: unknown; rows: unknown[][] }[];
       if (!sheets.length) return failure("sheets is required: at least one sheet with rows.");
       const bad = sheets.findIndex((s) => !Array.isArray(s?.rows) || s.rows.some((r: unknown) => !Array.isArray(r)));
       if (bad >= 0) return failure(`Sheet ${bad + 1} needs rows: a list of rows, each a list of cells.`);

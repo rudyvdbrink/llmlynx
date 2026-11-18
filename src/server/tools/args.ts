@@ -20,6 +20,37 @@ export function checkStart(raw: unknown): { start: number } | { error: string } 
   return { start: start ?? 0 };
 }
 
+/**
+ * A list the model sent: a list; or as models also send one, JSON text of a
+ * list (also without its closing "]"), or one object for a list of one.
+ * undefined when it is absent, null when it is none of these.
+ */
+export function toList(raw: unknown): unknown[] | null | undefined {
+  if (raw === undefined || raw === null || (typeof raw === "string" && !raw.trim())) return undefined;
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "string") {
+    const text = raw.trim();
+    for (const candidate of [text, `${text}]`, `${text}}]`]) {
+      try {
+        const value: unknown = JSON.parse(candidate);
+        if (Array.isArray(value)) return value;
+        if (value && typeof value === "object") return [value];
+      } catch {
+        // the next candidate
+      }
+    }
+    return null;
+  }
+  return typeof raw === "object" ? [raw] : null;
+}
+
+/** Why `raw` is not the list `name` must be, for the model: what it should send, and what it sent. */
+export function listError(name: string, raw: unknown, example: string): string {
+  const sent =
+    typeof raw === "string" ? "text that is not a JSON list" : Array.isArray(raw) ? "an empty list" : raw === null ? "null" : `a ${typeof raw}`;
+  return `${name} must be a list, such as ${example}; you sent ${sent}.`;
+}
+
 /** "https://www.example.com/a/b?c" -> "example.com/a/b", for labels. */
 export function shortUrl(raw: unknown): string {
   if (typeof raw !== "string") return "a page";

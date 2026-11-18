@@ -6,6 +6,7 @@
 // are its history. A run that deletes a file stores a deletion, so that the
 // history stays as well.
 
+import { createHash } from "node:crypto";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/prisma";
 import { baseName, extensionOf } from "@/lib/files";
@@ -87,6 +88,15 @@ const toFile = ({ deleted: _deleted, restoredFrom: _restoredFrom, ...file }: Fil
 // Names are compared without case, as the model refers to files by name
 const nameKey = (name: string) => name.toLowerCase();
 
+/**
+ * A file version as the model sees it: the start of the SHA-256 of its
+ * contents. read_file and search_workspace give it; an edit that names it is
+ * refused when the file changed since (see staleVersions).
+ */
+export function contentVersion(data: Uint8Array): string {
+  return createHash("sha256").update(data).digest("hex").slice(0, 8);
+}
+
 /** Every version of every file, in the order they came, deletions included. */
 async function allVersions(conversationId: string): Promise<FileVersion[]> {
   const rows = await prisma.messageAttachment.findMany({
@@ -107,6 +117,11 @@ function byName(versions: FileVersion[]): FileVersion[][] {
     names.set(key, [...list, version]);
   }
   return [...names.values()];
+}
+
+/** Every file's versions, oldest first, deletions included, by name (without case). */
+export async function fileHistories(conversationId: string): Promise<Map<string, FileVersion[]>> {
+  return new Map(byName(await allVersions(conversationId)).map((versions) => [nameKey(versions[0].name), versions]));
 }
 
 /**
@@ -154,6 +169,17 @@ export function findFile(files: ConversationFile[], name: unknown): Conversation
 }
 
 /**
+ * The file whose path is `name`, compared without case; a leading "/", "./"
+ * or "sandbox/" aside. Unlike findFile, it does not guess by file name: for
+ * changes to source files, where the wrong file must not be changed.
+ */
+export function findExactFile(files: ConversationFile[], name: unknown): ConversationFile | null {
+  if (typeof name !== "string" || !name.trim()) return null;
+  const wanted = name.trim().toLowerCase().replace(/\\/g, "/").replace(/^\/?(sandbox\/)?(\.\/)?/, "");
+  return files.find((f) => nameKey(f.name) === wanted) ?? null;
+}
+
+/**
  * The versions of the file the model means by `name` (see findFile), oldest
  * first, deletions included; also of a file that was deleted. null when there
  * is no such file.
@@ -181,6 +207,60 @@ export function undoTarget(versions: FileVersion[]): FileVersion | null {
   let i = place(versions.length - 1) - 1;
   while (i >= 0 && versions[i].deleted) i--;
   return i >= 0 ? versions[i] : null;
+}
+
+/** A version a file must still have when a change to it is stored. */
+export type ExpectedVersion = { name: string; version: string };
+
+/** A file that no longer has the version a change expected: `current` is the one it has now, null when it is gone. */
+export type StaleVersion = ExpectedVersion & { current: string | null };
+
+/** What the model gets when a change was refused because files changed since it read them: it wrote nothing. */
+export function staleText(stale: StaleVersion[]): string {
+  const what = stale.map((s) =>
+    s.current ? `${s.name} changed since you read it (you had version ${s.version}; it is now ${s.current})` : `${s.name} no longer exists`
+  );
+  return (
+    `Error: stale_version: ${what.join("; ")}. Nothing was changed. Read ${stale.length === 1 ? "it" : "them"} again ` +
+    "with read_file, then make the change on what is there now."
+  );
+}
+
+/**
+ * The files of `expected` whose current version is no longer the expected
+ * one. Run in the transaction that stores the change (`client`), so that
+ * nothing can come between the check and the write.
+ */
+export async function staleVersions(
+  client: Prisma.TransactionClient,
+  conversationId: string,
+  expected: ExpectedVersion[]
+): Promise<StaleVersion[]> {
+  const wanted = new Set(expected.map((e) => nameKey(e.name)));
+  const rows = await client.messageAttachment.findMany({
+    where: { message: { conversationId }, name: { not: null }, parentId: null },
+    orderBy: [{ message: { position: "asc" } }, { createdAt: "asc" }],
+    select: { id: true, name: true, deleted: true },
+  });
+  const newest = new Map<string, { id: string; deleted: boolean }>();
+  for (const row of rows) if (wanted.has(nameKey(row.name!))) newest.set(nameKey(row.name!), row);
+  const stale: StaleVersion[] = [];
+  for (const e of expected) {
+    const row = newest.get(nameKey(e.name));
+    let current: string | null = null;
+    if (row && !row.deleted) {
+      const { data } = await client.messageAttachment.findUniqueOrThrow({ where: { id: row.id }, select: { data: true } });
+      current = contentVersion(data);
+    }
+    if (current !== e.version) stale.push({ ...e, current });
+  }
+  return stale;
+}
+
+/** The contents of the files `ids`, read together. */
+export async function filesData(ids: string[]): Promise<Map<string, Buffer>> {
+  const rows = await prisma.messageAttachment.findMany({ where: { id: { in: ids } }, select: { id: true, data: true } });
+  return new Map(rows.map((r) => [r.id, Buffer.from(r.data)]));
 }
 
 /** The file's contents. */

@@ -1,15 +1,27 @@
 // The agent tools of the chat's sandbox: downloading files into it
-// (web_fetch), running code in it (run_code), installing packages for that
-// code (install_packages), git on its repositories (git), giving the user
-// one of its files (share_file), and undoing a change to one (undo_file).
+// (web_fetch), running code in it (run_code) and reading back what a run
+// printed (read_run_log), installing packages for that code
+// (install_packages), git on its repositories (git), giving the user one of
+// its files (share_file), and undoing a change to files (undo_file).
 // The work is in server/sandbox. See definitions.ts for what a tool definition is.
 
 import { AGENT_TOOL_INFO } from "@/lib/agentTools";
 import { formatSize } from "@/lib/files";
-import { conversationFiles, fileData, fileVersions, findFile, undoTarget } from "@/server/files/store";
+import { prisma } from "@/server/db/prisma";
+import {
+  contentVersion,
+  conversationFiles,
+  fileData,
+  fileHistories,
+  fileVersions,
+  findFile,
+  undoTarget,
+  type FileVersion,
+} from "@/server/files/store";
 import { installPackages, registryOf, REGISTRY_LABELS } from "@/server/sandbox/install";
 import { sandboxRoomError } from "@/server/sandbox/room";
 import { LANGUAGE_LABELS, LANGUAGES, languageOf, runCode } from "@/server/sandbox/runCode";
+import { readRunLog } from "@/server/sandbox/runLog";
 import { FETCH_TIMEOUT_MS, webFetch } from "@/server/sandbox/webFetch";
 import { GIT_TIMEOUT_MS, INSTALL_TIMEOUT_MS, RUN_TIMEOUT_MS } from "@/server/sandbox/code";
 import { runGit, splitCommand } from "@/server/sandbox/git";
@@ -90,17 +102,21 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
     description:
       "Run code in this chat's sandbox: Python, JavaScript, TypeScript, or a shell command line (bash), such as " +
       "pytest or npm test. It runs in the sandbox folder, which holds the chat's files; files it writes there are " +
-      "kept, in folders too, and every tool can use them by name afterwards. Only files survive a run, not " +
-      "variables: save what you need to a file. There is no network: download data with web_fetch first. Built in: " +
+      "kept, in folders too, and every tool can use them by name afterwards. Each run is a new process: only files " +
+      "survive it, not imports, variables or functions, so save what you need to a file. To run a file of the " +
+      "sandbox, use shell: python script.py. There is no network: download data with web_fetch first. Built in: " +
       "numpy, pandas, scipy, matplotlib, openpyxl, pillow and pytest for Python; install others with " +
       "install_packages. Limits: 120 seconds, 512 MB of memory, 1 MB of output. Images, SVG and HTML files it " +
       "saves show in the chat; HTML pages cannot load anything from the internet, so put their scripts and data " +
-      "in the page. You get whether it succeeded, what it printed, and which files it made, changed or deleted.",
+      "in the page. You get the run's id, exit code and duration, what it printed (long output in part: read the rest " +
+      "with read_run_log), the failing tests when pytest ran or a JUnit XML or Jest/Vitest JSON report was written, " +
+      "and which files it made, changed or deleted.",
     parameters: {
       type: "object",
       properties: {
         language: { type: "string", enum: [...LANGUAGES], description: "python, javascript, typescript or shell" },
         code: { type: "string", description: "The code, or for shell the command lines" },
+        cwd: { type: "string", description: "The folder of the sandbox to run in, such as a project's folder. Default: the sandbox folder" },
       },
       required: ["language", "code"],
     },
@@ -116,6 +132,40 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
     run: runCode,
   },
   {
+    name: "read_run_log",
+    icon: "code",
+    description:
+      "Read what a run_code call printed, as it was kept, without running the code again: for the lines its result " +
+      "left out. Give the run's id from that result, and the lines to read, or find to list the lines that hold some text.",
+    parameters: {
+      type: "object",
+      properties: {
+        run: { type: "string", description: "The run's id, as run_code's result gives it, such as run-1a2b3c4d5e6f" },
+        start_line: { type: "integer", description: "The first line to read, from 1. Lines come numbered as \"12| text\"" },
+        end_line: { type: "integer", description: "The last line to read. Default: as many as fit" },
+        find: { type: "string", description: "Instead of lines: exact text, to list the lines that hold it" },
+      },
+      required: ["run"],
+    },
+    server: "code",
+    needs: ["tools"],
+    timeoutMs: 30_000,
+    // What code printed: scanned like the run's own output (by readRunLog itself)
+    effects: { untrustedOutput: true, exec: false },
+    label(args, state) {
+      if (typeof args.find === "string" && args.find.trim()) {
+        const what = `a run's output for “${shorten(args.find, 40)}”`;
+        if (state === "running") return `Searching ${what}`;
+        return state === "done" ? `Searched ${what}` : `Could not search ${what}`;
+      }
+      if (state === "running") return "Reading a run's output";
+      return state === "done" ? "Read a run's output" : "Could not read a run's output";
+    },
+    run(args, ctx) {
+      return readRunLog(this, args, ctx);
+    },
+  },
+  {
     name: "install_packages",
     icon: AGENT_TOOL_INFO.install_packages.icon,
     description:
@@ -123,7 +173,8 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
       "TypeScript. Name them, with a version if you want one (pandas==2.2.3, lodash@^4.17), or name a " +
       "requirements.txt or package.json in the sandbox. Only use it when the built-in libraries do not have what " +
       "you need. Python packages install only as ready-built wheels, and npm packages without their install " +
-      "scripts: packages that need a build step or an install script do not work. They stay installed for this chat.",
+      "scripts: packages that need a build step or an install script do not work. One install may download at most " +
+      "300 MB, so very large packages such as torch do not fit. They stay installed for this chat.",
     parameters: {
       type: "object",
       properties: {
@@ -211,24 +262,104 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
     icon: "file",
     description:
       "Undo the last change to a file of this chat's sandbox, made by a run of code, an edit, git or a download: the " +
-      "file goes back to the version before it, also when it was deleted. Call it again to go further back.",
+      "file goes back to the version before it, also when it was deleted. Call it again to go further back. Or give " +
+      "changeset, the id edit_files gave, to undo all the files it changed at once.",
     parameters: {
       type: "object",
-      properties: { file: { type: "string", description: "The file's name in the sandbox, also of a deleted file" } },
-      required: ["file"],
+      properties: {
+        file: { type: "string", description: "The file's name in the sandbox, also of a deleted file" },
+        changeset: { type: "string", description: "Instead of file: the changeset id of an edit_files call, such as cs-1a2b3c4d" },
+      },
+      required: [],
     },
     server: "files",
     needs: ["tools"],
     timeoutMs: 10_000,
     effects: { untrustedOutput: false, exec: false },
     label(args: Args, state: ToolState) {
+      if (typeof args.changeset === "string" && args.changeset.trim() && !(typeof args.file === "string" && args.file.trim())) {
+        const id = shorten(args.changeset, 24);
+        if (state === "running") return `Undoing changeset ${id}`;
+        return state === "done" ? `Undid changeset ${id}` : `Could not undo changeset ${id}`;
+      }
       const name = fileName(args, "file");
       if (state === "running") return `Undoing the last change to ${name}`;
       return state === "done" ? `Undid the last change to ${name}` : `Could not undo the change to ${name}`;
     },
-    run: undoFile,
+    run(args, ctx) {
+      const changeset = typeof args.changeset === "string" ? args.changeset.trim() : "";
+      if (changeset && typeof args.file === "string" && args.file.trim()) return Promise.resolve(failure("Give either file or changeset, not both."));
+      if (changeset) return undoChangeset(changeset, ctx);
+      if (!(typeof args.file === "string" && args.file.trim())) return Promise.resolve(failure("file is required (or changeset)."));
+      return undoFile(args, ctx);
+    },
   },
 ];
+
+/**
+ * Puts every file an edit_files call changed (changeset `id`) back to its
+ * version before it, together, as new versions. Refuses when any of them
+ * changed since, so that a newer change is never overwritten.
+ */
+async function undoChangeset(id: string, ctx: ToolCallContext): Promise<ToolResult> {
+  const steps = await prisma.message.findMany({
+    where: { conversationId: ctx.conversationId, role: "tool", toolName: "edit_files" },
+    select: { metadata: true, attachments: { where: { parentId: null, name: { not: null } }, select: { id: true, name: true } } },
+  });
+  const step = steps.find((s) => (s.metadata as { changeset?: unknown } | null)?.changeset === id.toLowerCase());
+  if (!step || !step.attachments.length) return failure(`There is no changeset ${id} in this chat. edit_files gives its id when it changes files.`);
+  const histories = await fileHistories(ctx.conversationId);
+  const newer: string[] = [];
+  const undone: string[] = [];
+  const restores: { name: string; current: string; target: FileVersion }[] = [];
+  for (const version of step.attachments) {
+    const history = histories.get(version.name!.toLowerCase()) ?? [];
+    const at = history.findIndex((v) => v.id === version.id);
+    const previous = at > 0 ? history[at - 1] : null;
+    const current = history[history.length - 1];
+    if (!previous || previous.deleted) {
+      newer.push(version.name!);
+    } else if (current.id === version.id) {
+      restores.push({ name: version.name!, current: current.id, target: previous });
+    } else if (current.restoredFrom === previous.id && history.indexOf(current) === at + 1) {
+      undone.push(version.name!);
+    } else {
+      newer.push(version.name!);
+    }
+  }
+  if (undone.length === step.attachments.length) return failure(`Changeset ${id} was undone already.`);
+  if (newer.length || undone.length) {
+    return failure(
+      `Not undone: ${[...newer, ...undone].join(", ")} changed after changeset ${id}, and undoing it would overwrite ` +
+        "that. Nothing was changed. Undo files one by one with undo_file file=..., or change them with an edit."
+    );
+  }
+  const datas = await Promise.all(restores.map(async (r) => ({ old: await fileData(r.target.id), now: await fileData(r.current) })));
+  const full = await sandboxRoomError(
+    ctx.conversationId,
+    restores.map((r, i) => ({ name: r.name, size: datas[i].old.length }))
+  );
+  if (full) return failure(full);
+  const files: ToolFile[] = restores.map((r, i) => ({
+    name: r.name,
+    mimeType: r.target.mimeType,
+    data: datas[i].old.toString("base64"),
+    text: r.target.text,
+    info: r.target.info,
+    restoredFrom: r.target.id,
+    ...(r.target.origin === "code" || r.target.origin === "internet" ? { origin: r.target.origin } : {}),
+  }));
+  return {
+    text:
+      `Undone changeset ${id}: ${restores.map((r, i) => `${r.name} (version ${contentVersion(datas[i].old)})`).join(", ")} ` +
+      `${restores.length === 1 ? "is" : "are"} back as before it.`,
+    images: [],
+    files,
+    error: false,
+    // Stored only if none of them changed meanwhile
+    expect: restores.map((r, i) => ({ name: r.name, version: contentVersion(datas[i].now) })),
+  };
+}
 
 /** Puts a file of the sandbox back to its version before the current one, as a new version. */
 async function undoFile(args: Args, ctx: ToolCallContext): Promise<ToolResult> {
