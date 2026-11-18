@@ -317,7 +317,11 @@ class Gate:
 
 app = server.streamable_http_app(
     stateless_http=True,
-    json_response=True,
+    # Each answer as a stream (SSE) that starts at once and carries a ping every 15 seconds
+    # (sse-starlette) until the result: an install may take an hour, and the app's fetch gives
+    # up on an answer that has not started within 5 minutes, code-egress on a connection that
+    # stays silent for 15
+    json_response=False,
     max_request_body_size=MAX_BODY_BYTES,
     # The bearer token already keeps out what DNS rebinding could send; the
     # Host header the app sends depends on the published port
