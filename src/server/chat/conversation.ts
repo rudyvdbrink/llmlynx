@@ -283,6 +283,15 @@ export function createAssistantReply({
   // The stored tool steps of this reply by their call's id, with what they keep for the chat view
   const toolSteps = new Map<string, { id: string; metadata: Prisma.InputJsonObject }>();
 
+  // The steps being stored: persist() waits for them, so nothing of the reply is stored after it, as
+  // a reply that is stopped must be stored whole before the conversation's next message gets its place
+  const storing = new Set<Promise<unknown>>();
+  function whileStoring<T>(save: Promise<T>): Promise<T> {
+    storing.add(save);
+    save.finally(() => storing.delete(save)).catch(() => {});
+    return save;
+  }
+
   /**
    * Stores one step of the reply as the conversation's next message, and does
    * `also` in the same transaction. Returns its id and its attachments, in order.
@@ -293,7 +302,7 @@ export function createAssistantReply({
     before?: (tx: Prisma.TransactionClient) => Promise<void>
   ) {
     // A clone can store thousands of files at once
-    return prisma.$transaction(async (tx) => {
+    return whileStoring(prisma.$transaction(async (tx) => {
       // A check that throws stores nothing
       await before?.(tx);
       const position = await nextPosition(tx, conversationId);
@@ -313,7 +322,7 @@ export function createAssistantReply({
       });
       await also?.(tx);
       return message;
-    }, { timeout: SAVE_TIMEOUT_MS, maxWait: SAVE_TIMEOUT_MS });
+    }, { timeout: SAVE_TIMEOUT_MS, maxWait: SAVE_TIMEOUT_MS }));
   }
 
   async function assistantStep(toolCalls?: StoredToolCall[]) {
@@ -340,7 +349,7 @@ export function createAssistantReply({
     async saveToolCalls(calls) {
       if (saved) return;
       try {
-        await assistantStep(calls);
+        await whileStoring(assistantStep(calls));
       } catch {
         // As with persist(): the reply goes on even if a step cannot be stored.
       }
@@ -492,6 +501,8 @@ export function createAssistantReply({
     async persist() {
       if (saved) return;
       saved = true;
+      // A step that failed to store can still store its error in its place
+      while (storing.size) await Promise.allSettled([...storing]);
       try {
         // A reply stopped while the model was still thinking keeps its reasoning
         if (text.trim().length > 0 || reasoning.trim().length > 0) {

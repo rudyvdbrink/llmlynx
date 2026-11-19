@@ -46,6 +46,15 @@ type OllamaRunning = { name?: string; model?: string; context_length?: number };
 // Ollama's answer when it does not have a model, such as {"error":"model 'x' not found"}
 const MODEL_NOT_FOUND = /model ['"].*['"] not found/i;
 
+// Ollama's answer when the model wrote a tool call it cannot read, such as Qwen's
+// "XML syntax error on line 4: element <parameter> closed by </function>"
+const UNREADABLE_TOOL_CALL = /XML syntax error|tool call/i;
+
+// Added to the last message when the model gets a second try after such a call
+const RETRY_NOTE =
+  "[Your last reply had a tool call that could not be read. Write it again in the tool call format, " +
+  "with every tag closed, such as each parameter before the function.]";
+
 /**
  * True when Ollama has `model` in memory, ready for a chat with `options`. A
  * model that is still loading is not listed yet, and one loaded with another
@@ -72,7 +81,17 @@ async function postChat(baseUrl: string, body: object, signal: AbortSignal): Pro
     body: JSON.stringify(body),
     signal,
   });
-  if (!res.ok || !res.body) throw new Error((await res.text().catch(() => "")) || String(res.status));
+  if (!res.ok || !res.body) {
+    const text = await res.text().catch(() => "");
+    let message = text;
+    try {
+      const error = JSON.parse(text)?.error;
+      if (typeof error === "string" && error) message = error;
+    } catch {
+      // not JSON: the text as it is
+    }
+    throw new Error(message || String(res.status));
+  }
   return res;
 }
 
@@ -89,8 +108,9 @@ async function postChat(baseUrl: string, body: object, signal: AbortSignal): Pro
  * outcome; then the model continues with the results. Every step is saved.
  * A { pause } line says the reply waits for the user's choice (see runToolLoop).
  *
- * If Ollama cannot be reached or rejects the request, the stream ends with an
- * { error } line.
+ * If Ollama cannot be reached, rejects the request or reports an error in its
+ * stream, the stream ends with an { error } line. A request that failed on a tool
+ * call the model wrote wrong is made once more first, with a note for the model.
  */
 export function streamOllamaChat(
   { baseUrl, model, messages, options, tools = [], maxToolCalls = DEFAULT_MAX_TOOL_CALLS, toolContext, forAgent }: OllamaChatRequest,
@@ -108,17 +128,28 @@ export function streamOllamaChat(
       };
       const sendStatus = (status: ReplyStatus) => send(JSON.stringify({ status }));
 
-      /** Runs one request to Ollama, streaming it to the client. Returns what the model wrote and called. */
-      async function chatTurn(conversation: OllamaMessage[], offered: ToolDefinition[]) {
+      /**
+       * Runs one request to Ollama, streaming it to the client. Returns what the model
+       * wrote and called. `onThinking` is called when reasoning streams.
+       */
+      async function chatTurn(conversation: OllamaMessage[], offered: ToolDefinition[], onThinking?: () => void) {
         const turn = { content: "", thinking: "", toolCalls: [] as OllamaToolCall[], calls: [] as ModelTurn["calls"] };
+        // Ollama reports a failure after the stream started, such as a tool call it could not parse, as an
+        // { error } line. The turn then fails, without running its tool calls.
+        let failure = "";
         const forward = (line: string) => {
           try {
             const obj = JSON.parse(line);
+            if (typeof obj?.error === "string") {
+              failure ||= obj.error || "the model stopped with an error";
+              return;
+            }
             const thinking = obj?.message?.thinking;
             const content = obj?.message?.content;
             if (typeof thinking === "string") {
               reply.appendReasoning(thinking);
               turn.thinking += thinking;
+              if (thinking) onThinking?.();
             }
             if (typeof content === "string") {
               reply.append(content);
@@ -151,12 +182,35 @@ export function streamOllamaChat(
           for (const line of lines.push(decoder.decode(value, { stream: true }))) forward(line);
         }
         for (const line of [...lines.push(decoder.decode()), ...lines.flush()]) forward(line);
+        if (failure) throw new Error(failure);
         turn.calls = turn.toolCalls.map((c) => ({
           id: c.id,
           name: c.function?.name ?? "",
           arguments: c.function?.arguments && typeof c.function.arguments === "object" ? c.function.arguments : {},
         }));
         return turn;
+      }
+
+      /**
+       * One request with the tools offered. When the model wrote a tool call Ollama
+       * cannot read, such as one with a parameter left open, it gets one more try:
+       * such a slip is seldom made twice.
+       */
+      async function toolTurn(conversation: OllamaMessage[]) {
+        let streamedThinking = false;
+        try {
+          return await chatTurn(conversation, tools, () => (streamedThinking = true));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (cancelled || !tools.length || !UNREADABLE_TOOL_CALL.test(message)) throw err;
+          console.warn(`${model} wrote a tool call Ollama could not read; asking again: ${message}`);
+          // The reasoning of the second try starts a paragraph of its own
+          if (streamedThinking) {
+            reply.appendReasoning("\n\n");
+            send(JSON.stringify({ message: { role: "assistant", content: "", thinking: "\n\n" } }));
+          }
+          return chatTurn(addToLastMessage(conversation, RETRY_NOTE), tools);
+        }
       }
 
       try {
@@ -182,7 +236,7 @@ export function streamOllamaChat(
           sendError: (error) => send(JSON.stringify({ error })),
           // The tools stay offered in every round: models such as gpt-oss call
           // them anyway once the conversation has tool calls in it
-          nextTurn: () => chatTurn(conversation, tools),
+          nextTurn: () => toolTurn(conversation),
           plainTurn: (note) => chatTurn(addToLastMessage(messages, note).map(toOllama), []),
           addCalls(turn, calls) {
             conversation.push({

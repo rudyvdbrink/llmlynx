@@ -1,9 +1,9 @@
-// A send can reach the server more than once: browsers re-send a request by
-// themselves when its connection fails before the response starts, and users
-// send a failed message again. Every attempt has the same request id. The
-// connection of the attempt before is gone, but the server may not know yet, as
-// a phone that changes networks does not say so. Such an attempt is stopped
-// here, so it does not go on to write a second reply.
+// A conversation has one reply running at a time. A send can reach the server
+// more than once: browsers re-send a request by themselves when its connection
+// fails before the response starts, and users send a failed message again, or
+// a new one. The connection of the reply before is gone, but the server may not
+// know yet, as a phone that changes networks does not say so. Such a reply is
+// stopped here, so it does not go on writing next to the new one.
 
 const encoder = new TextEncoder();
 
@@ -11,7 +11,7 @@ type Attempt = { abort: AbortController; finished: Promise<void> };
 
 const running = new Map<string, Attempt>();
 
-/** Stops the attempt running for `key`, if any, and waits until what it wrote is stored. */
+/** Stops the reply running for `key` (a conversation), if any, and waits until what it wrote is stored. */
 export async function stopAttempt(key: string): Promise<void> {
   const attempt = running.get(key);
   if (!attempt) return;
@@ -22,7 +22,7 @@ export async function stopAttempt(key: string): Promise<void> {
 /**
  * Returns `reply`, a chat's NDJSON stream, with a last { end: true } line, by
  * which the client tells a finished reply from one that was cut off. Runs as
- * the attempt `key` until the reply ends, `stopAttempt` stops it or
+ * the reply of `key` until it ends, `stopAttempt` stops it or
  * `clientGone` aborts. Stopping cancels `reply`, which stores what it has.
  * `onEnd` runs when the attempt is over, however it ended.
  */

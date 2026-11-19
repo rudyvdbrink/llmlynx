@@ -18,9 +18,6 @@ export const optionFamily = (provider: ProviderId): OptionFamily => (provider ==
 
 export const DEFAULT_SETTINGS: Record<OptionFamily, AgentSettings> = {
   ollama: {
-    mirostat: 0,
-    mirostat_eta: 0.1,
-    mirostat_tau: 5.0,
     num_ctx: 2048,
     repeat_last_n: 64,
     repeat_penalty: 1.1,
@@ -72,10 +69,7 @@ export const REASONING_CHOICES = ["none", "minimal", "low", "medium", "high", "x
 
 const RULES: Record<OptionFamily, Record<string, Rule>> = {
   ollama: {
-    mirostat: integer(inRange(0, 2), "mirostat must be 0, 1, or 2"),
-    mirostat_eta: number(inRange(0, 1), "mirostat_eta must be between 0 and 1"),
-    mirostat_tau: number(inRange(0, 10), "mirostat_tau must be between 0 and 10"),
-    num_ctx: integer((v) => v > 0, "num_ctx must be > 0"),
+    num_ctx:integer((v) => v > 0, "num_ctx must be > 0"),
     repeat_last_n: integer((v) => v >= -1, "repeat_last_n must be >= -1"),
     repeat_penalty: number(inRange(0, 3), "repeat_penalty must be in [0,3]"),
     temperature: number(inRange(0, 2), "temperature must be in [0,2]"),
@@ -110,6 +104,15 @@ export const OPTION_KEYS: Record<OptionFamily, string[]> = {
   ollama: Object.keys(RULES.ollama),
   api: Object.keys(RULES.api),
 };
+
+/**
+ * An Ollama agent's stored settings as Ollama gets them: only the options above,
+ * so ones stored before they were dropped (such as mirostat) are left out.
+ */
+export function ollamaOptions(settings: unknown): AgentSettings {
+  const source = settings && typeof settings === "object" ? (settings as Record<string, OptionValue>) : {};
+  return Object.fromEntries(OPTION_KEYS.ollama.filter((key) => key in source).map((key) => [key, source[key]]));
+}
 
 /** The stop option holds one sequence per line. */
 export function stopSequences(value: string): string[] {
