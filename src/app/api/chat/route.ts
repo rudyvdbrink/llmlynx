@@ -22,6 +22,7 @@ import { textBudget, toFunctionTools } from "@/server/tools/definitions";
 import { attachAccept, hasFileTools, toolGuidance, toolsFor } from "@/server/tools/policy";
 import { normalizeSelection, parseBaseModel, parseSelection, toSelection } from "@/lib/selection";
 import { PROVIDER_LABELS, type ProviderId } from "@/lib/providers";
+import { ollamaOptions } from "@/lib/agentSettings";
 import { DEFAULT_MAX_TOOL_CALLS } from "@/lib/agentTools";
 import { fileProblem, MAX_FILES_PER_MESSAGE } from "@/lib/files";
 
@@ -178,8 +179,10 @@ export async function POST(req: NextRequest) {
   if (!conversationId) return new Response("Conversation not found", { status: 404 });
 
   const requestId = typeof body.requestId === "string" && REQUEST_ID.test(body.requestId) ? body.requestId : null;
-  const attemptKey = requestId && `${user.id}:${requestId}`;
-  if (attemptKey) await stopAttempt(attemptKey);
+  // One reply at a time per conversation: one still running, such as the attempt before a re-send, is stopped
+  // and what it wrote stored before the new message gets its place, so the two never interleave
+  const attemptKey = conversationId;
+  await stopAttempt(attemptKey);
 
   // The drafts move into the message, unless one may not be sent: decided here, not by the client
   let messageId: string;
@@ -212,10 +215,11 @@ export async function POST(req: NextRequest) {
     agent && target.kind !== "ollama"
       ? apiRequestParams(target.kind, agent.settings, modelInfo)
       : undefined;
+  const ollamaParams = agent && target.kind === "ollama" ? ollamaOptions(agent.settings) : undefined;
   // Everything the model gets besides the conversation, which is stored with the reply
   const setup: RequestSetupInput = {
     ...(systemPrompt !== null ? { systemPrompt } : {}),
-    ...(agent ? { options: apiParams ?? agent.settings } : {}),
+    ...(agent ? { options: apiParams ?? ollamaParams } : {}),
     ...(tools.length ? { tools: toFunctionTools(tools) } : {}),
   };
   const reply = createAssistantReply({
@@ -271,7 +275,7 @@ export async function POST(req: NextRequest) {
           apiConfig!,
           reply
         )
-      : streamOllamaChat({ ...toolRun, baseUrl, model, messages, options: agent?.settings }, reply);
+      : streamOllamaChat({ ...toolRun, baseUrl, model, messages, options: ollamaParams }, reply);
   };
 
   const stream = afterPreparing(userFiles.length ? [{ userFiles }, { status: "reading" }] : [], startReply);

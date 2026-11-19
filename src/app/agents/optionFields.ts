@@ -35,33 +35,6 @@ const OLLAMA_GROUPS: OptionGroup[] = [
   {
     fields: [
       {
-        key: "mirostat",
-        label: "Mirostat",
-        help:
-          "Another way to control randomness: it keeps the text at a steady level of surprise, in place of Top-k, " +
-          "Top-p and Min-p. Most agents can leave it off. Turn it on as its first or newer second version. Default off.",
-        integer: true,
-        choices: [
-          { value: 0, label: "Off" },
-          { value: 1, label: "Mirostat" },
-          { value: 2, label: "Mirostat 2.0" },
-        ],
-      },
-      {
-        key: "mirostat_eta",
-        label: "Mirostat η",
-        help: "How quickly Mirostat reacts to the text so far. Higher reacts faster. Default 0.1.",
-        slider: { min: 0, max: 1, step: 0.01 },
-        number: { min: 0, max: 1, step: 0.01 },
-      },
-      {
-        key: "mirostat_tau",
-        label: "Mirostat τ",
-        help: "The level of surprise Mirostat aims for. Lower is more focused, higher more varied. Default 5.",
-        slider: { min: 0, max: 10, step: 0.1 },
-        number: { min: 0, max: 10, step: 0.1 },
-      },
-      {
         key: "num_ctx",
         label: "Context window (tokens)",
         help:
