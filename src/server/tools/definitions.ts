@@ -14,6 +14,7 @@ import { checkStart, checkUrl, shortUrl, shorten, toInteger, urlParameter } from
 import { CODE_TOOLS } from "./codeTools";
 import { FILE_TOOLS } from "./fileTools";
 import type { ToolFile, ToolImage } from "./mcp";
+import { MEMORY_TOOLS } from "./memoryTools";
 import { SANDBOX_TOOLS } from "./sandboxTools";
 
 export type ToolCapability = "tools" | "vision";
@@ -34,6 +35,14 @@ export type RunRecord = {
   printedBytes?: number; // what it printed, also past the output limit, where printing was no longer captured
   files?: { changed: string[]; deleted: string[] };
 };
+
+/**
+ * What a read_file call showed the model of a file: `from` to `to` of its
+ * `total` lines or characters, of the version `fileId`. Kept with the step,
+ * for the list of files the model gets and for the pointer that takes the
+ * place of the result once it is cleared (see server/chat/reduce.ts).
+ */
+export type ReadFact = { fileId: string; name: string; unit: "lines" | "characters"; from: number; to: number; total: number };
 
 /**
  * What a tool call gives the model, and what it did to the chat's sandbox:
@@ -60,6 +69,7 @@ export type ToolResult = {
   // The versions the changed files must still have when the result is stored; else nothing is stored (see staleVersions)
   expect?: ExpectedVersion[];
   changeset?: string; // the id of the files an edit_files call changed together, for undo_file
+  read?: ReadFact; // read_file: what it showed of which file
 };
 
 /**
@@ -306,7 +316,7 @@ const WEB_TOOLS: ToolDefinition[] = [
   },
 ];
 
-export const TOOL_DEFINITIONS: ToolDefinition[] = [...WEB_TOOLS, ...FILE_TOOLS, ...CODE_TOOLS, ...SANDBOX_TOOLS];
+export const TOOL_DEFINITIONS: ToolDefinition[] = [...WEB_TOOLS, ...FILE_TOOLS, ...CODE_TOOLS, ...SANDBOX_TOOLS, ...MEMORY_TOOLS];
 
 /** The tools in the format of the `tools` request field, which Ollama, Chat Completions and OpenRouter share. */
 export function toFunctionTools(tools: ToolDefinition[]) {

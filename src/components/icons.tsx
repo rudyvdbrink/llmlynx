@@ -170,6 +170,22 @@ export function PaperclipIcon(props: IconProps) {
   );
 }
 
+// Lucide's "fold-vertical": what is above and below is folded onto the line
+export function FoldIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 22v-6" />
+      <path d="M12 8V2" />
+      <path d="M4 12H2" />
+      <path d="M10 12H8" />
+      <path d="M16 12h-2" />
+      <path d="M22 12h-2" />
+      <path d="m15 19-3-3-3 3" />
+      <path d="m15 5-3 3-3-3" />
+    </Icon>
+  );
+}
+
 // Lucide's "file-text"
 export function FileIcon(props: IconProps) {
   return (

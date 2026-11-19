@@ -1,7 +1,7 @@
 // Which tools a chat gets. This is the one place that decides it: when plain
 // models get tools later, it changes here.
 
-import { FILE_TOOL_NAMES, validateAgentTools, type ToolAvailability, type ToolName } from "@/lib/agentTools";
+import { FILE_TOOL_NAMES, SANDBOX_WORK_TOOLS, validateAgentTools, type ToolAvailability, type ToolName } from "@/lib/agentTools";
 import type { AttachAccept } from "@/lib/files";
 import { TOOL_DEFINITIONS, type ToolDefinition } from "./definitions";
 
@@ -20,7 +20,9 @@ function unavailableReason(def: ToolDefinition, capabilities: string[] | null): 
  * share_file and view_image come with any tool that works on files,
  * search_workspace with read_file or edit_file, undo_file with run_code or
  * edit_file, read_run_log with run_code, and edit_files with edit_file when
- * the agent also runs code or git: it is for changing code.
+ * the agent also runs code or git: it is for changing code. Every agent with
+ * tools gets read_result, the way back to a result that was cleared from its
+ * view, and one that works in the sandbox gets update_notes.
  */
 export function toolsFor(agent: { tools: unknown } | null, capabilities: string[] | null): ToolDefinition[] {
   if (!agent) return [];
@@ -33,6 +35,8 @@ export function toolsFor(agent: { tools: unknown } | null, capabilities: string[
   if (has("edit_file") && (has("run_code") || has("git"))) names.push("edit_files");
   if (has("run_code") || has("edit_file")) names.push("undo_file");
   if (has("run_code")) names.push("read_run_log");
+  names.push("read_result");
+  if (SANDBOX_WORK_TOOLS.some(has)) names.push("update_notes");
   return TOOL_DEFINITIONS.filter((def) => names.includes(def.name) && !unavailableReason(def, capabilities));
 }
 
@@ -65,10 +69,13 @@ export function hasFileTools(tools: ToolDefinition[]): boolean {
  * What the system prompt says about the tools, written for the tools offered.
  * Added on the server, like the system prompt itself.
  */
-export function toolGuidance(tools: ToolDefinition[], maxToolCalls: number, today = new Date()): string {
+export function toolGuidance(tools: ToolDefinition[], maxToolCalls: number): string {
   const has = (name: ToolDefinition["name"]) => tools.some((t) => t.name === name);
+  // Nothing here changes from one request to the next: what does, such as today's date, is in the working memory
   const lines = [
-    `You can call these tools: ${tools.map((t) => t.name).join(", ")}. Today's date is ${today.toISOString().slice(0, 10)}.`,
+    `You can call these tools: ${tools.map((t) => t.name).join(", ")}.`,
+    "- Your working memory, at the end of a message of the user, is kept up to date for you: it has today's date" +
+      (hasFileTools(tools) ? " and the files of the conversation, with what you have read of each." : "."),
   ];
   if (has("web_search")) {
     lines.push("- Search the web for current events, recent facts and anything you are not sure about. To find pictures, search with images set to true.");
@@ -81,7 +88,7 @@ export function toolGuidance(tools: ToolDefinition[], maxToolCalls: number, toda
   }
   if (has("web_screenshot")) lines.push("- Take a screenshot when a page's layout, images or charts matter.");
   if (hasFileTools(tools)) {
-    lines.push("- Files the user attached are in their message. The list of the conversation's files gives the names to use with the file tools.");
+    lines.push("- Files the user attached are in their message. The list of files in your working memory gives the names to use with the file tools.");
   }
   if (has("read_file")) lines.push("- When a file in a message is cut off, read the rest with read_file.");
   if (has("search_workspace")) {
@@ -142,6 +149,20 @@ export function toolGuidance(tools: ToolDefinition[], maxToolCalls: number, toda
   }
   if (has("web_fetch") && has("share_file")) {
     lines.push("- To show the user pictures from the web, download each image file with web_fetch, then share it with share_file.");
+  }
+  if (has("read_result")) {
+    lines.push(
+      "- You see what you did in earlier replies. When room runs out, older results are cleared: a note in their " +
+        "place says what they were. Do not do the work again: read the file again" +
+        (has("read_run_log") ? ", the run's output with read_run_log," : "") +
+        " or the result itself with read_result."
+    );
+  }
+  if (has("update_notes")) {
+    lines.push(
+      "- For work of more than a few steps, keep task notes with update_notes: the goal, the plan and how far it is, " +
+        "decisions, and what did not work. They stay with you when older steps are cleared."
+    );
   }
   lines.push(
     maxToolCalls > 0

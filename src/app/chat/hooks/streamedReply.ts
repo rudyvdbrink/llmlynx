@@ -4,7 +4,7 @@
 
 import { withFileCards, type FileCard } from "@/lib/files";
 import { addReasoning, addToAnswer, looksLikeAnswer, upsertToolStep } from "@/lib/trace";
-import type { ToolStep, TraceItem } from "@/lib/types";
+import type { Checkpoint, ToolStep, TraceItem } from "@/lib/types";
 
 export type StreamedReply = {
   // The text of earlier steps that shows as the answer (see looksLikeAnswer)
@@ -41,6 +41,10 @@ export const isToolLine = (value: unknown): value is Partial<ToolStep> & { id: s
 const isPauseLine = (value: unknown): value is { id: string; tool: string } =>
   !!value && typeof (value as { id?: unknown }).id === "string" && typeof (value as { tool?: unknown }).tool === "string";
 
+// A { checkpoint } line: older steps were summarised for the model, as its context window was full
+const isCheckpointLine = (value: unknown): value is Checkpoint =>
+  !!value && typeof (value as Checkpoint).id === "string" && typeof (value as Checkpoint).summary === "string";
+
 /** The trace without the pauses that are still open: their reply is over, so there is nothing left to choose. */
 const withoutPauses = (trace: TraceItem[]): TraceItem[] =>
   trace.map((item) => (item.kind === "tool" && item.step.pauseId ? { kind: "tool", step: { ...item.step, pauseId: undefined } } : item));
@@ -54,6 +58,7 @@ export function readReplyLine(reply: StreamedReply, value: unknown, mayCallTools
     message?: { content?: unknown; thinking?: unknown };
     tool?: unknown;
     pause?: unknown;
+    checkpoint?: unknown;
     files?: unknown;
     error?: unknown;
     end?: unknown;
@@ -76,6 +81,11 @@ export function readReplyLine(reply: StreamedReply, value: unknown, mayCallTools
   // The reply waits: the tool line of that call offers the choice
   if (isPauseLine(line?.pause)) {
     next = { ...next, trace: upsertToolStep(next.trace, { id: line.pause.tool, pauseId: line.pause.id }) };
+  }
+  // It shows in the trace, where it happened
+  if (isCheckpointLine(line?.checkpoint)) {
+    const { id, summary } = line.checkpoint;
+    next = { ...next, trace: [...next.trace, { kind: "checkpoint", checkpoint: { id, summary, by: "auto" } }] };
   }
   const thought = line?.message?.thinking;
   if (typeof thought === "string" && thought) next = { ...next, trace: addReasoning(next.trace, thought) };

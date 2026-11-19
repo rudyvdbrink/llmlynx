@@ -1062,3 +1062,48 @@
   .viewer[open],
   .viewer::backdrop { animation: none; }
 }
+
+/* ===== The context indicator in the composer (ContextIndicator.tsx): how full
+   the model's context window is. A circle the size of the attach and send
+   buttons next to it, with their fill and their border, whose outline fills
+   in the accent colour. An indicator, not a button: it takes no clicks. ===== */
+.contextIndicator {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  pointer-events: none;
+  user-select: none;
+}
+.contextIndicator svg { display: block; }
+/* The same circle as .iconButton: its background, and its border of 1px */
+.contextCircle {
+  fill: var(--surface);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.contextArc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.3s ease;
+}
+
+/* ===== Checkpoints (CheckpointMarker.tsx): where older steps were summarised
+   for the model. A line like a tool call's, with the summary behind a chevron
+   below it, and for the user's own compaction the way to take it back. ===== */
+.checkpointMore {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  margin: 2px 0 4px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.checkpointMore > .flagged { align-self: stretch; }
+/* Why a compaction failed: the text wraps, next to the warning's 16px box */
+.checkpointFailed { align-items: start; }
+.checkpointFailed > .warnIcon { margin-top: 2px; }

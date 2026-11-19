@@ -1,15 +1,15 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/server/db/prisma";
-import { addFiles, HISTORY_ATTACHMENT_SELECT, type FileHistoryOptions } from "@/server/files/history";
 import { takeUploads, type UploadsToSend } from "@/server/files/uploads";
 import type { ToolFile, ToolImage } from "@/server/tools/mcp";
 import { uniqueName, type FileCard } from "@/lib/files";
 import { parseSelection, toSelection } from "@/lib/selection";
-import type { ApprovalDecision, ChatMessage, PauseDecision, StepSecurity } from "@/lib/types";
-import type { RunRecord } from "@/server/tools/definitions";
+import type { ApprovalDecision, PauseDecision, StepSecurity } from "@/lib/types";
+import type { ReadFact, RunRecord } from "@/server/tools/definitions";
 import { staleText, staleVersions, WHOLE_TEXT, type ExpectedVersion, type StaleVersion } from "@/server/files/store";
 import { addConversationCost, conversationCost } from "./cost";
 import { saveRequestSetup, type RequestSetupInput } from "./setup";
+import type { CheckpointMeta, StepRun } from "./view";
 
 // Helper to make a short title from the first user message
 export function makeTitleFrom(content: string, maxWords = 8, maxChars = 80) {
@@ -168,34 +168,39 @@ export async function saveUserMessage(
 }
 
 /**
- * The conversation as the model gets it, read from the database: the user's
- * messages and the replies in order. Replies without text (stopped before the
- * model wrote any) are left out. Of a reply that used tools, only its answer
- * (the last step) is sent: the tool calls and their results would fill the
- * context, and the answer names its sources, so the model can read them again.
- * With `files`, user messages carry their files (see server/files/history.ts);
- * without, only their text.
+ * Stores the working memory that went to the model with the user message
+ * `messageId` (see memory.ts), or with null that it got none. The message
+ * keeps it: every later request sends the message as this one did.
  */
-export async function loadHistory(conversationId: string, files?: FileHistoryOptions): Promise<ChatMessage[]> {
-  const rows = await prisma.message.findMany({
-    where: {
-      conversationId,
-      role: { in: ["user", "assistant"] },
-      OR: [{ content: { not: "" } }, { role: "user", attachments: { some: {} } }],
-    },
-    orderBy: { position: "asc" },
-    select: { role: true, content: true, toolCalls: true, attachments: HISTORY_ATTACHMENT_SELECT },
+export async function saveMemory(messageId: string, memory: string | null): Promise<void> {
+  const row = await prisma.message.findUnique({ where: { id: messageId }, select: { metadata: true } });
+  if (!row) return;
+  const { memory: _memory, memoryCleared: _cleared, ...rest } = (row.metadata as Record<string, unknown> | null) ?? {};
+  const metadata = { ...rest, ...(memory ? { memory } : {}) };
+  await prisma.message.update({
+    where: { id: messageId },
+    data: { metadata: Object.keys(metadata).length ? (metadata as Prisma.InputJsonObject) : Prisma.DbNull },
   });
-  const kept = rows.filter((m) => m.toolCalls == null);
-  if (files) {
-    const messages = kept.map((m) => ({ role: m.role as ChatMessage["role"], content: m.content }));
-    return addFiles(messages, kept.map((m) => m.attachments), files);
-  }
-  // A message of only files still keeps its place between the replies
-  return kept.map((m) => ({
-    role: m.role as ChatMessage["role"],
-    content: m.content || `[Files you cannot see: ${m.attachments.map((a) => a.name).join(", ")}]`,
-  }));
+}
+
+/**
+ * Stores a checkpoint as the conversation's next step: a system step whose
+ * text is the summary the model gets in place of the steps up to `meta.upTo`
+ * (see checkpoint.ts). It is not a message: the conversation keeps its date.
+ */
+export async function saveCheckpointStep(
+  conversationId: string,
+  summary: string,
+  meta: CheckpointMeta
+): Promise<{ id: string; position: number }> {
+  return prisma.$transaction(async (tx) => {
+    const position = await nextPosition(tx, conversationId);
+    const row = await tx.message.create({
+      data: { conversationId, position, role: "system", content: summary, metadata: { checkpoint: meta } as Prisma.InputJsonObject },
+      select: { id: true },
+    });
+    return { id: row.id, position };
+  });
 }
 
 /** Thrown in the transaction that stores a tool step whose files changed since the tool read them. */
@@ -223,6 +228,13 @@ export type ToolResultStep = {
   expect?: ExpectedVersion[]; // the versions its files must still have: else the step is stored as an error, without them
   changeset?: string; // the id of the files an edit_files call changed together
   failedLabel?: (note: string) => string; // the label of the step when its changes could not be stored
+  // What the model gets of the text that is stored (`content`, or the error in its place): with the
+  // notes of the tool loop. The step stores that, so a later request can send it again as it was
+  sent?: (text: string, error: boolean) => string;
+  hash?: string; // of the result's own text, to tell a second copy of it (see reduce.ts)
+  sameAs?: string; // the step whose identical result this one refers to
+  read?: ReadFact; // read_file: what it showed of which file
+  run?: RunRecord; // the run of code or the install behind it: the step keeps its id and how it ended
 };
 
 /**
@@ -231,13 +243,27 @@ export type ToolResultStep = {
  * tool's own text when the step's changes could not be stored, such as files
  * that changed after the tool read them; `note` says why, after the label.
  */
-export type SavedToolResult = { imageIds: string[]; files: FileCard[]; failure?: { text: string; note: string } };
+export type SavedToolResult = {
+  id?: string; // the stored step; none when it was not stored
+  position?: number; // its place in the conversation
+  content: string; // what the model gets as the result, as it was stored
+  imageIds: string[];
+  files: FileCard[];
+  failure?: { text: string; note: string };
+};
+
+/** What a request to the model took, and the context window it ran in, as stored with the step it gave. */
+export type StepUsage = { input: number; output: number; window: number };
 
 export type AssistantReply = {
   append(text: string): void;
   appendReasoning(text: string): void;
-  /** Stores what streamed so far as a step that calls `calls`; the next text starts a new step. */
-  saveToolCalls(calls: StoredToolCall[]): Promise<void>;
+  /** What the request took that gave the step being collected: stored with it. */
+  noteUsage(usage: StepUsage): void;
+  /** Stores what streamed so far as a step that calls `calls`; the next text starts a new step. Returns the stored step. */
+  saveToolCalls(calls: StoredToolCall[]): Promise<{ id: string; position: number } | null>;
+  /** Stores a checkpoint made while the reply runs (see saveCheckpointStep). Null once the reply is stored. */
+  saveCheckpoint(summary: string, meta: CheckpointMeta): Promise<{ id: string; position: number } | null>;
   /** Stores a tool's result as a tool step, with its images and files. */
   saveToolResult(step: ToolResultStep): Promise<SavedToolResult>;
   /** Adds what the user chose about a flagged result to the stored step of the call `callId`. */
@@ -279,6 +305,8 @@ export function createAssistantReply({
   let saved = false;
   // Every step of the reply shares one setup
   let setupId: string | null = null;
+  // What the request took that gave the step being collected
+  let usage: StepUsage | null = null;
 
   // The stored tool steps of this reply by their call's id, with what they keep for the chat view
   const toolSteps = new Map<string, { id: string; metadata: Prisma.InputJsonObject }>();
@@ -310,6 +338,7 @@ export function createAssistantReply({
         data: { ...data, conversationId, position },
         select: {
           id: true,
+          position: true,
           attachments: {
             select: { id: true, name: true, mimeType: true, size: true, deleted: true },
             orderBy: { createdAt: "asc" },
@@ -325,18 +354,21 @@ export function createAssistantReply({
     }, { timeout: SAVE_TIMEOUT_MS, maxWait: SAVE_TIMEOUT_MS }));
   }
 
-  async function assistantStep(toolCalls?: StoredToolCall[]) {
+  async function assistantStep(toolCalls?: StoredToolCall[]): Promise<{ id: string; position: number }> {
     setupId ??= await prisma.$transaction((tx) => saveRequestSetup(tx, userId, setup));
-    await saveStep({
+    const step = await saveStep({
       role: "assistant",
       content: text,
       reasoning: reasoning || null,
       model,
       setupId,
+      ...(usage ? { metadata: { usage } } : {}),
       ...(toolCalls ? { toolCalls: toolCalls as Prisma.InputJsonValue } : {}),
     });
     text = "";
     reasoning = "";
+    usage = null;
+    return { id: step.id, position: step.position };
   }
 
   return {
@@ -346,12 +378,25 @@ export function createAssistantReply({
     appendReasoning(delta) {
       reasoning += delta;
     },
+    noteUsage(taken) {
+      usage = taken;
+    },
     async saveToolCalls(calls) {
-      if (saved) return;
+      if (saved) return null;
       try {
-        await whileStoring(assistantStep(calls));
+        return await whileStoring(assistantStep(calls));
       } catch {
         // As with persist(): the reply goes on even if a step cannot be stored.
+        return null;
+      }
+    },
+    async saveCheckpoint(summary, meta) {
+      if (saved) return null;
+      try {
+        return await whileStoring(saveCheckpointStep(conversationId, summary, meta));
+      } catch (err) {
+        console.error(`Storing a checkpoint failed: ${(err as Error)?.message || err}`);
+        return null;
       }
     },
     async saveToolResult({
@@ -369,8 +414,16 @@ export function createAssistantReply({
       expect,
       changeset,
       failedLabel,
+      sent,
+      hash,
+      sameAs,
+      read,
+      run,
     }) {
-      const none: SavedToolResult = { imageIds: [], files: [] };
+      // What the model gets is what is stored
+      const text = sent ? sent(content, error) : content;
+      const ran: StepRun | null = run?.id ? { id: run.id, kind: run.kind, status: run.status } : null;
+      const none: SavedToolResult = { imageIds: [], files: [], content: text };
       if (saved) return none;
       const attachments: Prisma.MessageAttachmentCreateWithoutMessageInput[] = [
         ...images.map((i) => ({ mimeType: i.mimeType, data: Buffer.from(i.data, "base64") })),
@@ -401,6 +454,10 @@ export function createAssistantReply({
         ...(shared?.length ? { shared: shared.map((f) => f.id) } : {}),
         ...(approval ? { approval } : {}),
         ...(changeset ? { changeset } : {}),
+        ...(hash ? { hash } : {}),
+        ...(sameAs ? { sameAs } : {}),
+        ...(read ? { read } : {}),
+        ...(ran ? { run: ran } : {}),
       };
       // The files must still be as the tool read them: checked in the transaction that stores the new versions
       const checkVersions = expect?.length
@@ -421,10 +478,10 @@ export function createAssistantReply({
               });
             }
           : undefined;
-        const { id, attachments: stored } = await saveStep(
+        const { id, position, attachments: stored } = await saveStep(
           {
             role: "tool",
-            content,
+            content: text,
             toolCallId: call.id,
             toolName: call.name,
             metadata,
@@ -435,6 +492,9 @@ export function createAssistantReply({
         );
         toolSteps.set(call.id, { id, metadata });
         return {
+          id,
+          position,
+          content: text,
           imageIds: stored.filter((a) => a.name === null).map((a) => a.id),
           files: stored
             .filter((a) => a.name !== null && !a.deleted)
@@ -450,14 +510,18 @@ export function createAssistantReply({
             ? { text: staleText(err.stale), note: "files changed meanwhile" }
             : { text: "Error: the result could not be stored, so the sandbox did not change. Try again.", note: "not stored" };
         // The step is stored as the error it became, without its files
+        failure.text = sent ? sent(failure.text, true) : failure.text;
+        let stored: { id?: string; position?: number } = {};
         try {
-          const errorMeta: Prisma.InputJsonObject = { ...metadata, label: failedLabel?.(failure.note) ?? label, error: true };
-          const { id } = await saveStep({ role: "tool", content: failure.text, toolCallId: call.id, toolName: call.name, metadata: errorMeta });
+          const { hash: _hash, sameAs: _sameAs, read: _read, ...kept } = metadata;
+          const errorMeta: Prisma.InputJsonObject = { ...kept, label: failedLabel?.(failure.note) ?? label, error: true };
+          const { id, position } = await saveStep({ role: "tool", content: failure.text, toolCallId: call.id, toolName: call.name, metadata: errorMeta });
           toolSteps.set(call.id, { id, metadata: errorMeta });
+          stored = { id, position };
         } catch {
           // As with persist(): the reply goes on even if a step cannot be stored.
         }
-        return { ...none, failure };
+        return { ...none, ...stored, content: failure.text, failure };
       }
     },
     async saveSandboxRun(callId, run) {

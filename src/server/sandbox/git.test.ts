@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/server/db/prisma";
 import { createAssistantReply } from "@/server/chat/conversation";
-import { filesNote } from "@/server/files/history";
+import { filesList } from "@/server/chat/memory";
 import { conversationFiles } from "@/server/files/store";
 import { createAuditLog } from "@/server/security/audit";
 import { createSecurityContext } from "@/server/security/context";
@@ -225,15 +225,13 @@ describe("what the model is told", () => {
   it("counts a repository's files instead of listing them", () => {
     const file = (name: string, size = 10) =>
       ({ id: name, name, mimeType: "text/plain", size, origin: "internet", text: null, info: null, createdAt: new Date() }) as const;
-    const note = filesNote([file("notes.txt"), file("hello/README"), file("hello/src/app.py", 20)], ["hello"]);
-    expect(note).toBe(
-      "[The files of this conversation, in its sandbox: notes.txt (10 B, downloaded), hello/ (a git repository: 2 files, 30 B; git ls-files lists them).]"
-    );
+    const list = filesList([file("notes.txt"), file("hello/README"), file("hello/src/app.py", 20)], ["hello"]);
+    expect(list).toEqual(["notes.txt (10 B, downloaded)", "hello/ (a git repository: 2 files, 30 B; git ls-files lists them)"]);
   });
 
   it("knows git and its limits", () => {
     const tools = toolsFor({ tools: ["git"] }, ["tools"]);
-    expect(tools.map((t) => t.name)).toEqual(["git", "share_file"]);
+    expect(tools.map((t) => t.name)).toEqual(["git", "share_file", "read_result", "update_notes"]);
     const guidance = toolGuidance(tools, 7);
     expect(guidance).toMatch(/with the git tool/);
     expect(guidance).toMatch(/Nothing can be pushed/);

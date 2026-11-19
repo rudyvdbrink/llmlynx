@@ -5,9 +5,15 @@ import styles from "../Chat.module.css";
 import { isNarrowViewport, scrollRoom } from "@/lib/viewport";
 import { PaperclipIcon, XIcon } from "@/components/icons";
 import { acceptAttribute, fileKind, fileProblem, formatSize, MAX_FILES_PER_MESSAGE, type AttachAccept } from "@/lib/files";
+import type { ContextFill } from "@/lib/types";
 import type { SentFile } from "../hooks/useChat";
 import { composerDrop } from "../hooks/useAutoScroll";
+import ContextIndicator from "./ContextIndicator";
 import { TypeIcon } from "./FileCards";
+
+// /compact, alone or with what to keep after it: not a message, but the request to summarise the
+// conversation for the model (see server/chat/checkpoint.ts)
+const COMPACT = /^\/compact(?:\s+([\s\S]*))?$/i;
 
 // How long a note about a file that cannot be attached stays
 const NOTE_MS = 5000;
@@ -38,18 +44,23 @@ function deleteDraft(id: string) {
 
 // The draft lives here rather than in the page, so typing does not re-render
 // the message list or the sidebar. `accept` says which files the chat takes
-// (an agent's, `agentId`); null hides the attach button.
+// (an agent's, `agentId`); null hides the attach button. `context` is how full
+// the model's context window is; null, when that is not known, hides its indicator.
 export default function Composer({
   isStreaming,
   agentId,
   accept,
+  context,
   onSend,
+  onCompact,
   onCancel,
 }: {
   isStreaming: boolean;
   agentId: string | null;
   accept: AttachAccept | null;
+  context: ContextFill | null;
   onSend: (text: string, files: SentFile[]) => void;
+  onCompact: (keep: string) => void; // /compact was sent, with what to keep after it
   onCancel: () => void;
 }) {
   const [input, setInput] = useState("");
@@ -213,6 +224,14 @@ export default function Composer({
   function submit() {
     const files = filesRef.current;
     if (isStreaming || waiting) return;
+    // A command, not a message: files that are attached stay for the next message
+    const command = COMPACT.exec(input.trim());
+    if (command) {
+      setInput("");
+      textAreaRef.current?.blur();
+      onCompact((command[1] ?? "").trim());
+      return;
+    }
     if (!input.trim() && !files.some((a) => a.status === "ready" || a.status === "checking")) return;
     if (files.some((a) => a.status === "checking")) {
       waitingRef.current = true;
@@ -307,6 +326,8 @@ export default function Composer({
         aria-label="Message"
         rows={1}
       />
+      {/* To the left of the attach button, or in its place when the chat takes no files */}
+      {context && <ContextIndicator used={context.used} full={context.full} />}
       {canAttach && (
         <>
           <input

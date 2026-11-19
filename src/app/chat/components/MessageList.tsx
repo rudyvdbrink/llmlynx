@@ -6,6 +6,7 @@ import MarkdownMessage from "./MarkdownMessage";
 import CopyButton from "./CopyButton";
 import Thinking from "./Thinking";
 import FileCards from "./FileCards";
+import CheckpointMarker, { CompactionFailed } from "./CheckpointMarker";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import type { DisplayMessage, ReplyStatus } from "@/lib/types";
 
@@ -16,17 +17,33 @@ function MessageList({
   isStreaming,
   replyStatus,
   answering,
+  onUndoCompact,
 }: {
   messages: DisplayMessage[];
   isStreaming: boolean;
   replyStatus: ReplyStatus | null;
   answering: boolean; // the streaming reply's text is coming in (not thinking or using a tool)
+  onUndoCompact: () => void; // takes the user's last compaction back
 }) {
   const endRef = useAutoScroll(messages, isStreaming);
 
   return (
     <section className={styles.messages} aria-live="polite" aria-label="Chat messages">
       {messages.map((msg, idx) => {
+        // Not a message: where the user had the conversation summarised for the model, or why that failed
+        if (msg.role === "system") {
+          return (
+            <div key={idx} className={`${styles.messageRow} ${styles.bot}`}>
+              <div className={styles.thinking}>
+                {msg.checkpoint ? (
+                  <CheckpointMarker checkpoint={msg.checkpoint} onUndo={isStreaming ? undefined : onUndoCompact} />
+                ) : (
+                  <CompactionFailed message={msg.error ?? ""} />
+                )}
+              </div>
+            </div>
+          );
+        }
         const isUser = msg.role === "user";
         // The reply that is still streaming
         const isReply = !isUser && isStreaming && idx === messages.length - 1;

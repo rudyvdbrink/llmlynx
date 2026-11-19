@@ -3,7 +3,8 @@
 // The scanners and the files server are stand-ins.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadHistory, saveUserMessage } from "@/server/chat/conversation";
+import { saveUserMessage } from "@/server/chat/conversation";
+import { loadView } from "@/server/chat/view";
 import { prisma } from "@/server/db/prisma";
 import { createAuditLog } from "@/server/security/audit";
 import { openSecurity } from "@/server/security/engine";
@@ -186,7 +187,7 @@ describe("sending a message with files", () => {
     resetScanners(); // not thanks to the cache either
     await prepareMessageFiles(messageId, false, signal());
     await openSecurity({ userId, conversationId, tools: [getToolDefinition("read_file")!], audit: createAuditLog(userId, conversationId) });
-    const history = await loadHistory(conversationId, { vision: false, textBudget: 10_000, readFile: true, viewPages: false });
+    const history = await loadView(conversationId, { files: { vision: false, textBudget: 10_000, readFile: true, viewPages: false }, tools: ["read_file"] });
     expect(history[0].content).toContain("The first file.");
     expect(history[0].content).toContain("The second file.");
     expect(counts()).toEqual(before);

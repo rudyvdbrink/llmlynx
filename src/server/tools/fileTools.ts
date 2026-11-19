@@ -224,7 +224,9 @@ async function readLines(file: ConversationFile, data: Buffer, args: Args, ctx: 
   const notes = [`${file.name}, version ${version}, ${range} of ${lines.length}:`, part];
   if (longLine) notes.push(longLine);
   else if (lastShown < last) notes.push(`[Call read_file with start_line=${lastShown + 1} for the next part.]`);
-  return success(notes.join("\n"));
+  // A line shown in part does not count as read
+  const read = { fileId: file.id, name: file.name, unit: "lines" as const, from: first, to: longLine ? lastShown - 1 : lastShown, total: lines.length };
+  return { ...success(notes.join("\n")), ...(read.to >= read.from ? { read } : {}) };
 }
 
 export const FILE_TOOLS: ToolDefinition[] = [
@@ -296,7 +298,8 @@ export const FILE_TOOLS: ToolDefinition[] = [
             (ctx.vision ? " Look at them with view_pdf_pages.]" : "]")
         );
       }
-      return success([part || "(The file has no text.)", ...notes].join("\n\n"));
+      const read = { fileId: file.id, name: file.name, unit: "characters" as const, from: start.start, to: end, total: text.length };
+      return { ...success([part || "(The file has no text.)", ...notes].join("\n\n")), read };
     },
   },
   {

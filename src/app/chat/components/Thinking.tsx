@@ -3,11 +3,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import styles from "../Chat.module.css";
 import { ChevronRightIcon, WarningIcon } from "@/components/icons";
+import CheckpointMarker from "./CheckpointMarker";
 import ReasoningText from "./ReasoningText";
 import ToolLine, { ToolStepIcon } from "./ToolLine";
 import type { ReplyStatus, ToolStep, TraceItem } from "@/lib/types";
 
-const LABELS: Record<ReplyStatus, string> = { reading: "Reading files…", loading: "Loading model…", thinking: "Thinking…" };
+const LABELS: Record<ReplyStatus, string> = {
+  reading: "Reading files…",
+  loading: "Loading model…",
+  thinking: "Thinking…",
+  compacting: "Summarising earlier steps to save room…",
+};
 
 // How long the scrollbar stays visible after the user stops scrolling
 const SCROLLBAR_MS = 1000;
@@ -37,8 +43,8 @@ const SHOW_TOOL_EVENT = "llmlynx:show-tool";
  * choice, which the tool line below offers.
  *
  * Below it, the trace streams in, in a short area that keeps its end in view:
- * the reasoning, and each tool call once it has finished, in the order they
- * happened. Once the reply starts (`status` "done"), the trace folds away
+ * the reasoning, each tool call once it has finished, and a marker where
+ * older steps were summarised for the model, in the order they happened. Once the reply starts (`status` "done"), the trace folds away
  * behind a "Show thinking" toggle.
  *
  * Reasoning is rendered as markdown, prepared so that what models do not mean
@@ -144,6 +150,8 @@ export default function Thinking({ trace = [], status }: { trace?: TraceItem[]; 
               {items.map((item, i) =>
                 item.kind === "tool" ? (
                   <ToolLine key={item.step.id} step={item.step} />
+                ) : item.kind === "checkpoint" ? (
+                  <CheckpointMarker key={item.checkpoint.id} checkpoint={item.checkpoint} inTrace />
                 ) : (
                   <ReasoningText key={`r${i}`} text={item.text} />
                 )

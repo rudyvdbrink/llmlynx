@@ -42,18 +42,34 @@ export type ToolStep = {
   pauseId?: string; // set while the reply waits for the user's choice about this step
 };
 
+// A checkpoint: from here on the model gets `summary` in place of the steps
+// before it (see server/chat/checkpoint.ts). "user": asked for with /compact;
+// "auto": made because the model's context window was full. `canUndo`: it can
+// still be taken back, as nothing was said since.
+export type Checkpoint = { id: string; summary: string; by: "user" | "auto"; canUndo?: boolean };
+
 // What a model did before its answer, in order: its reasoning (and any text it
-// wrote before calling a tool), and the tools it called. See lib/trace.ts.
-export type TraceItem = { kind: "reasoning"; text: string } | { kind: "tool"; step: ToolStep };
+// wrote before calling a tool), the tools it called, and the checkpoints that
+// were made while it worked. See lib/trace.ts.
+export type TraceItem =
+  | { kind: "reasoning"; text: string }
+  | { kind: "tool"; step: ToolStep }
+  | { kind: "checkpoint"; checkpoint: Checkpoint };
 
 // A message as shown in the chat view. `trace` is what the model did before
 // its reply, `files` the files the user attached or the agent created, and
-// `error` says why its reply failed.
-export type DisplayMessage = ChatMessage & { trace?: TraceItem[]; files?: FileCard[]; error?: string };
+// `error` says why its reply failed. A message with `checkpoint` is not one of
+// the conversation: it marks where the user had the conversation summarised.
+export type DisplayMessage = ChatMessage & { trace?: TraceItem[]; files?: FileCard[]; error?: string; checkpoint?: Checkpoint };
 
 // What a model is busy with before its reply starts, sent as { status } lines by /api/chat.
-// "reading": the files the user attached are read first.
-export type ReplyStatus = "reading" | "loading" | "thinking";
+// "reading": the files the user attached are read first. "compacting": it
+// writes the summary of a checkpoint, as its context window is full.
+export type ReplyStatus = "reading" | "loading" | "thinking" | "compacting";
+
+// How full the model's context window is, for the chat view's indicator: `used`
+// tokens of the `full` ones at which older steps are cleared or summarised.
+export type ContextFill = { used: number; full: number };
 
 export type SessionUser = { id: string; email: string };
 
@@ -70,7 +86,17 @@ export type ConversationSummary = {
 export type ConversationWithMessages = ConversationSummary & {
   // The user's messages and the replies; a reply that used tools is one message
   // whose trace holds its reasoning and tool calls in order
-  messages: { id: string; role: Role; content: string; trace?: TraceItem[]; files?: FileCard[]; createdAt: string }[];
+  messages: {
+    id: string;
+    role: Role;
+    content: string;
+    trace?: TraceItem[];
+    files?: FileCard[];
+    checkpoint?: Checkpoint;
+    createdAt: string;
+  }[];
+  // How full the model's context window was after its last reply; null when that is not known
+  context: ContextFill | null;
 };
 
 export type AgentSummary = {

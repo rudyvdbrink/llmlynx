@@ -4,11 +4,21 @@ import { useCallback, useRef, useState } from "react";
 import { readNdjson } from "@/lib/ndjson";
 import { parseSelection } from "@/lib/selection";
 import type { FileCard } from "@/lib/files";
-import type { DisplayMessage, ReplyStatus } from "@/lib/types";
+import type { Checkpoint, ContextFill, DisplayMessage, ReplyStatus } from "@/lib/types";
 import { endReply, isFileList, isToolLine, NEW_REPLY, readReplyLine, shownText, type StreamedReply } from "./streamedReply";
 
 const isReplyStatus = (value: unknown): value is ReplyStatus =>
-  value === "reading" || value === "loading" || value === "thinking";
+  value === "reading" || value === "loading" || value === "thinking" || value === "compacting";
+
+// A { context } line: how full the model's context window is after a request
+const isContextFill = (value: unknown): value is ContextFill =>
+  !!value && typeof (value as ContextFill).used === "number" && typeof (value as ContextFill).full === "number";
+
+// The marker of a compaction that is still being made
+const PENDING_CHECKPOINT = "pending";
+
+/** True for the marker of a compaction the server has not answered yet. */
+export const isPendingCheckpoint = (checkpoint: Checkpoint) => checkpoint.id === PENDING_CHECKPOINT;
 
 /**
  * A file of a message that is being sent: the browser's copy, and the id of
@@ -54,6 +64,8 @@ export function useChat({
   const [answering, setAnswering] = useState(false);
   // Goes up each time a tool call of a reply ends, so the sandbox panel loads again
   const [toolsDone, setToolsDone] = useState(0);
+  // How full the model's context window is, as the last request said; null while that is not known
+  const [context, setContext] = useState<ContextFill | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   // The send that failed, if the last one did. Sending the same text (and
   // files) again retries it under its request id, so the server does not store it twice.
@@ -86,7 +98,10 @@ export function useChat({
 
       const cards = localCards(files);
       setMessages((prev) => [
-        ...prev,
+        // The note of a compaction that failed goes; one that was made can no longer be taken back
+        ...prev
+          .filter((m) => !(m.role === "system" && !m.checkpoint))
+          .map((m) => (m.checkpoint?.canUndo ? { ...m, checkpoint: { ...m.checkpoint, canUndo: false } } : m)),
         { role: "user", content, ...(cards.length ? { files: cards } : {}) },
         { role: "assistant", content: "" },
       ]);
@@ -140,9 +155,10 @@ export function useChat({
 
         const mayCallTools = res.headers.get("X-Tools") === "1";
         await readNdjson(res.body, (obj) => {
-          const line = obj as { status?: unknown; userFiles?: unknown; tool?: unknown; cost?: unknown };
+          const line = obj as { status?: unknown; userFiles?: unknown; tool?: unknown; cost?: unknown; context?: unknown };
           if (isReplyStatus(line?.status)) setReplyStatus(line.status);
           if (typeof line?.cost === "number") setLiveCost({ id: conversationId, cost: line.cost });
+          if (isContextFill(line?.context)) setContext(line.context);
           // The stored copies of the files the user sent replace the browser's
           if (isFileList(line?.userFiles)) {
             for (const card of cards) if (card.url) URL.revokeObjectURL(card.url);
@@ -180,18 +196,74 @@ export function useChat({
     [isStreaming, selection, ensureConversation, refreshConversations, setLiveCost, updateReply, updateUserMessage]
   );
 
+  /**
+   * What /compact does: the model writes a summary of the conversation so far,
+   * and gets it from then on in place of the steps before it. `keep` is what
+   * the user asked to keep. A marker shows in the chat, in place of a message.
+   */
+  const compact = useCallback(
+    async (keep: string) => {
+      if (isStreaming) return;
+      // A marker of an attempt that failed goes
+      const withoutNotes = (list: DisplayMessage[]) => list.filter((m) => !(m.role === "system" && !m.checkpoint));
+      setMessages((prev) => [
+        ...withoutNotes(prev),
+        { role: "system", content: "", checkpoint: { id: PENDING_CHECKPOINT, summary: "", by: "user" } },
+      ]);
+      setIsStreaming(true);
+      const controller = new AbortController();
+      abortRef.current = controller;
+      const settle = (marker: DisplayMessage | null) =>
+        setMessages((prev) => [...prev.filter((m) => !(m.checkpoint && isPendingCheckpoint(m.checkpoint))), ...(marker ? [marker] : [])]);
+      try {
+        const conversationId = await ensureConversation();
+        const { kind, value } = parseSelection(selection);
+        const res = await fetch(`/api/conversations/${conversationId}/compact`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keep, ...(kind === "agent" ? { agentId: value } : { model: selection }) }),
+          signal: controller.signal,
+        });
+        const data = (await res.json().catch(() => null)) as { checkpoint?: Checkpoint; context?: unknown; message?: string } | null;
+        if (!res.ok || !data?.checkpoint) throw new Error(data?.message || `Request failed (status ${res.status})`);
+        // An earlier compaction can no longer be taken back: this one is the last step now
+        setMessages((prev) => prev.map((m) => (m.checkpoint?.canUndo ? { ...m, checkpoint: { ...m.checkpoint, canUndo: false } } : m)));
+        settle({ role: "system", content: "", checkpoint: data.checkpoint });
+        if (isContextFill(data.context)) setContext(data.context);
+      } catch (err) {
+        const stopped = (err as Error)?.name === "AbortError";
+        const connection = err instanceof TypeError ? SERVER_UNREACHABLE : (err as Error)?.message || "The conversation was not compacted.";
+        settle(stopped ? null : { role: "system", content: "", error: connection });
+      } finally {
+        setIsStreaming(false);
+        abortRef.current = null;
+        // On OpenAI and OpenRouter the summary cost something
+        refreshConversations();
+      }
+    },
+    [isStreaming, selection, ensureConversation, refreshConversations]
+  );
+
+  /** Takes the user's last compaction back, while nothing was said since. Returns whether it is gone. */
+  const undoCompact = useCallback(async (conversationId: string): Promise<boolean> => {
+    const res = await fetch(`/api/conversations/${conversationId}/compact`, { method: "DELETE" }).catch(() => null);
+    return !!res?.ok;
+  }, []);
+
   const cancel = useCallback(() => {
     abortRef.current?.abort();
   }, []);
 
-  const loadHistory = useCallback((msgs: DisplayMessage[]) => {
+  const loadHistory = useCallback((msgs: DisplayMessage[], fill: ContextFill | null = null) => {
     setMessages(msgs);
+    setContext(fill);
   }, []);
 
   const reset = useCallback(() => {
     abortRef.current?.abort();
     setMessages([]);
+    setContext(null);
   }, []);
 
-  return { messages, isStreaming, replyStatus, answering, toolsDone, send, cancel, loadHistory, reset };
+  return { messages, isStreaming, replyStatus, answering, toolsDone, context, send, compact, undoCompact, cancel, loadHistory, reset };
 }

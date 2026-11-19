@@ -47,6 +47,7 @@ function reopened(steps: Step[]) {
   type Row = Parameters<typeof toDisplayMessages>[0][number];
   const row = (fields: Partial<Row>): Row => ({
     id: String(Math.random()),
+    position: 0,
     role: "assistant",
     content: "",
     reasoning: null,
@@ -122,6 +123,26 @@ describe("a reply that streams in", () => {
     expectSteadyAnswer(answer, states);
     const beforeEnd = states[lines.length - 2];
     expect(shownText(beforeEnd)).toBe(answer[0].content);
+  });
+
+  it("puts a checkpoint that was made while the reply ran in its trace, where it happened", () => {
+    const lines = [
+      { status: "thinking" },
+      { tool: { id: "c1", name: "web_read", label: "Reading a.example", icon: toolIcon("web_read"), state: "running" } },
+      { tool: { id: "c1", label: "Read a.example", state: "done" } },
+      { status: "compacting" },
+      { checkpoint: { id: "k1", summary: "[Summary of the steps so far.]", by: "auto" } },
+      { status: "thinking" },
+      { context: { used: 900, full: 5600 } },
+      { message: { role: "assistant", content: "The answer." }, done: false },
+      { end: true },
+    ];
+    const last = replay(lines).at(-1)!;
+    expect(shownText(last)).toBe("The answer.");
+    expect(last.trace).toEqual([
+      expect.objectContaining({ kind: "tool" }),
+      { kind: "checkpoint", checkpoint: { id: "k1", summary: "[Summary of the steps so far.]", by: "auto" } },
+    ]);
   });
 
   it("shows text at once when the model cannot call tools", () => {

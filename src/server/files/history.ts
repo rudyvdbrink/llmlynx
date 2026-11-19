@@ -7,10 +7,10 @@
 // named, with a notice.
 
 import { prisma } from "@/server/db/prisma";
-import { extensionOf, fileKind, formatSize, typeLabel } from "@/lib/files";
+import { extensionOf, fileKind, typeLabel } from "@/lib/files";
 import type { ChatMessage } from "@/lib/types";
 import type { ToolImage } from "@/server/tools/mcp";
-import type { ConversationFile, FileInfo } from "./store";
+import type { FileInfo } from "./store";
 
 export type FileHistoryOptions = {
   vision: boolean; // the model can see images
@@ -36,7 +36,7 @@ export function fileTextBudget(numCtx: unknown): number {
 // A file whose text gets less than this is only named
 const MIN_SHOWN = 400;
 
-/** An attachment of a user message, as loadHistory selects it. */
+/** An attachment of a user message, as loadView selects it (server/chat/view.ts). */
 export type HistoryAttachment = {
   id: string;
   name: string | null;
@@ -162,46 +162,4 @@ export async function addFiles(
     const content = [message.content, ...blocks[m]].filter(Boolean).join("\n\n");
     return { ...message, content, ...(images.length ? { images } : {}) };
   });
-}
-
-const ORIGINS: Record<ConversationFile["origin"], string> = {
-  user: "attached by the user",
-  model: "created by you",
-  code: "made by code",
-  internet: "downloaded",
-};
-
-/**
- * Names the conversation's files, its sandbox, for an agent with tools that
- * work on files, which refers to them by name (their path in the sandbox):
- * those the user attached, those it created, and those code made or a
- * download fetched in earlier replies, whose tool calls it does not see
- * again. The newest version of each. The files of a git repository in a
- * folder of `repos` are counted, not listed: git lists them, and
- * search_workspace when the agent has it (`search`).
- */
-export function filesNote(files: ConversationFile[], repos: string[] = [], search = false): string | null {
-  if (!files.length && !repos.length) return null;
-  const folders = repos.filter(Boolean);
-  const repoOf = (name: string) => folders.find((r) => name.toLowerCase().startsWith(`${r.toLowerCase()}/`));
-  const entries: (string | { repo: string; count: number; size: number })[] = [];
-  const summed = new Map<string, { repo: string; count: number; size: number }>();
-  for (const repo of folders) summed.set(repo, { repo, count: 0, size: 0 });
-  for (const f of files) {
-    const repo = repoOf(f.name);
-    if (!repo) {
-      entries.push(`${f.name} (${formatSize(f.size)}, ${ORIGINS[f.origin]})`);
-      continue;
-    }
-    const sum = summed.get(repo)!;
-    if (!sum.count) entries.push(sum);
-    sum.count++;
-    sum.size += f.size;
-  }
-  for (const sum of summed.values()) if (!sum.count) entries.push(sum);
-  const list = entries.map((e) =>
-    typeof e === "string" ? e : `${e.repo}/ (a git repository: ${e.count} files, ${formatSize(e.size)}; ${search ? "search_workspace or " : ""}git ls-files lists them)`
-  );
-  const root = repos.includes("") ? " The sandbox itself is a git repository." : "";
-  return `[The files of this conversation, in its sandbox: ${list.join(", ") || "none"}.${root}]`;
 }

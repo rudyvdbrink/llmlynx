@@ -11,6 +11,9 @@ type Attempt = { abort: AbortController; finished: Promise<void> };
 
 const running = new Map<string, Attempt>();
 
+/** True while a reply runs for `key` (a conversation). */
+export const isRunning = (key: string) => running.has(key);
+
 /** Stops the reply running for `key` (a conversation), if any, and waits until what it wrote is stored. */
 export async function stopAttempt(key: string): Promise<void> {
   const attempt = running.get(key);

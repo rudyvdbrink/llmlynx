@@ -29,7 +29,9 @@ export type ToolName =
   | "undo_file"
   | "search_workspace"
   | "edit_files"
-  | "read_run_log";
+  | "read_run_log"
+  | "read_result"
+  | "update_notes";
 
 export type ToolIcon = "globe" | "spanner" | "file" | "code" | "package" | "git";
 
@@ -128,6 +130,30 @@ export const FILE_TOOL_NAMES: ToolName[] = [
   "edit_files",
 ];
 
+/** The tools an agent works in the sandbox with: with one of them it keeps task notes (update_notes), and needs a larger context window. */
+export const SANDBOX_WORK_TOOLS: ToolName[] = ["run_code", "edit_file", "git"];
+
+// Below this context window, web pages crowd out the conversation
+const MIN_TOOLS_NUM_CTX = 8192;
+// Below this one, an agent that works in the sandbox has its earlier steps cleared and summarised often
+const MIN_SANDBOX_NUM_CTX = 16384;
+
+/**
+ * What the agents page says about the context window of an agent on Ollama
+ * when it is small for the agent's tools, or null when it is not. One hint at
+ * a time: the one for work in the sandbox asks for more room, so it goes first.
+ * It warns only: the agent can be saved and used as it is.
+ */
+export function contextWindowHint(tools: AgentToolName[], numCtx: number): string | null {
+  if (tools.some((tool) => SANDBOX_WORK_TOOLS.includes(tool)) && numCtx < MIN_SANDBOX_NUM_CTX) {
+    return "Work in the sandbox needs room: set the context window to 32768 tokens or more, or earlier steps are cleared and summarised often.";
+  }
+  if (tools.length > 0 && numCtx < MIN_TOOLS_NUM_CTX) {
+    return "Web pages need room: set the context window to 16384 tokens or more, or pages get cut short.";
+  }
+  return null;
+}
+
 /** The tools whose first call starts the chat's sandbox, which shows the sandbox panel's chevron. */
 export const SANDBOX_TOOL_NAMES: ToolName[] = ["run_code", "install_packages", "web_fetch", "git"];
 
@@ -137,7 +163,7 @@ export function isAgentTool(value: unknown): value is AgentToolName {
 
 /** The icon for a tool step in the chat view; tools that no longer exist get the spanner. */
 export function toolIcon(name: string): ToolIcon {
-  if (["share_file", "view_image", "undo_file", "search_workspace", "edit_files"].includes(name)) return "file";
+  if (["share_file", "view_image", "undo_file", "search_workspace", "edit_files", "update_notes"].includes(name)) return "file";
   if (name === "read_run_log") return "code";
   return isAgentTool(name) ? AGENT_TOOL_INFO[name].icon : "spanner";
 }
@@ -157,6 +183,9 @@ export function validateAgentTools(
   const value = AGENT_TOOLS.filter((name) => input.includes(name));
   return { ok: true, value: value.filter((name) => !TOOL_REQUIRES[name] || value.includes(TOOL_REQUIRES[name])) };
 }
+
+// Most characters of the task notes an agent keeps (update_notes)
+export const MAX_NOTES = 2_000;
 
 // Most tool calls an agent may make for one reply (the slider on the agents page); 0 means no limit
 export const DEFAULT_MAX_TOOL_CALLS = 7;

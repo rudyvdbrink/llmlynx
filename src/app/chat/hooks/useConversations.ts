@@ -3,7 +3,10 @@
 import { useCallback, useState } from "react";
 import { useConversationList } from "@/hooks/useConversationList";
 import { normalizeSelection } from "@/lib/selection";
-import type { ConversationWithMessages, DisplayMessage } from "@/lib/types";
+import type { ContextFill, ConversationWithMessages, DisplayMessage } from "@/lib/types";
+
+/** A conversation as the chat view opens it: its messages, and how full the model's context window was after its last reply. */
+export type OpenedConversation = { messages: DisplayMessage[]; context: ContextFill | null };
 
 /** Conversation list plus the active conversation and its CRUD actions. */
 export function useConversations(selection: string, setSelection: (val: string) => void) {
@@ -27,16 +30,25 @@ export function useConversations(selection: string, setSelection: (val: string) 
     return id;
   }, [activeConversationId, selection, refreshConversations]);
 
-  /** Makes `id` the active conversation and returns its messages. */
+  /** Makes `id` the active conversation and returns what the chat view shows of it. */
   const openConversation = useCallback(
-    async (id: string): Promise<DisplayMessage[]> => {
+    async (id: string): Promise<OpenedConversation> => {
       const res = await fetch(`/api/conversations/${id}`);
       if (!res.ok) throw new Error("Failed to open conversation");
       const { conversation } = (await res.json()) as { conversation: ConversationWithMessages };
 
       setActiveConversationId(conversation.id);
       setSelection(normalizeSelection(conversation.model));
-      return conversation.messages.map((m) => ({ role: m.role, content: m.content, trace: m.trace, files: m.files }));
+      return {
+        messages: conversation.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+          trace: m.trace,
+          files: m.files,
+          ...(m.checkpoint ? { checkpoint: m.checkpoint } : {}),
+        })),
+        context: conversation.context ?? null,
+      };
     },
     [setSelection]
   );
