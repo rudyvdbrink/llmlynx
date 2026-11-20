@@ -2,17 +2,18 @@
 // streamOpenAIChat in openai.ts (and Chat Completions) and openaiResponses.ts.
 
 import type OpenAI from "openai";
-import type { ChatMessage } from "@/lib/types";
+import type { KeyProviderId } from "@/lib/providers";
 import type { ToolDefinition } from "@/server/tools/definitions";
-import type { ModelTurn, ToolCallResult } from "./toolLoop";
-import type { StoredToolCall } from "./conversation";
+import type { Usage } from "./budget";
+import type { ModelTurn } from "./toolLoop";
 import type { CostMeter } from "./cost";
+import type { ViewMessage } from "./view";
 
 /** What a chat backend needs from the stream it writes to, and what it sends the model. */
 export type ApiChatContext = {
   client: OpenAI;
+  provider: KeyProviderId;
   model: string;
-  messages: ChatMessage[];
   params: Record<string, unknown>;
   tools: ToolDefinition[];
   signal: AbortSignal;
@@ -24,13 +25,33 @@ export type ApiChatContext = {
   cost: CostMeter;
 };
 
-/** One OpenAI API: how to run a request, and how to add what happened to the next one. */
+/** One OpenAI API: how to run a request with the conversation as the model gets it (the view, see view.ts). */
 export type ApiChat<Turn extends ModelTurn> = {
-  nextTurn: (mayCallTools: boolean) => Promise<Turn>;
-  plainTurn: (note: string) => Promise<Turn>;
-  addCalls: (turn: Turn, calls: StoredToolCall[]) => void;
-  addResults: (results: ToolCallResult[]) => void;
+  /** One request with the tools offered, streamed to the client. */
+  turn: (view: ViewMessage[], mayCallTools: boolean) => Promise<Turn>;
+  /** One request without tools, for a view without tool calls, streamed to the client. */
+  plainTurn: (view: ViewMessage[]) => Promise<Turn>;
+  /** One request without tools whose answer the client does not get: the text the model wrote. */
+  ask: (view: ViewMessage[]) => Promise<string>;
 };
+
+/** What a request took, from the `usage` of its response: Chat Completions names the counts one way, the Responses API another. */
+export function usageOf(usage: unknown): Usage | undefined {
+  const u = usage as { prompt_tokens?: unknown; completion_tokens?: unknown; input_tokens?: unknown; output_tokens?: unknown } | null;
+  const input = u?.prompt_tokens ?? u?.input_tokens;
+  const output = u?.completion_tokens ?? u?.output_tokens;
+  return typeof input === "number" && input > 0 ? { input, output: typeof output === "number" ? output : 0 } : undefined;
+}
+
+/**
+ * True when the API refused the request itself (status 400), rather than a
+ * parameter of it or streaming: with tool calls of earlier replies in it,
+ * that can be about them (see streamOpenAIChat).
+ */
+export function isRefusedRequest(err: unknown): boolean {
+  const e = err as ApiErrorFields | null;
+  return e?.status === 400 && !isStreamingUnsupported(err) && !refusedParam(err);
+}
 
 type ApiErrorFields = {
   code?: string;

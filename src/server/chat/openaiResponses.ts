@@ -2,11 +2,14 @@
 // GPT-5.4 on, Chat Completions refuses function tools unless reasoning is off,
 // and some newer models cannot call tools there at all. Nothing is stored at
 // OpenAI (store: false), so the model's output of each turn is sent back with the
-// tool results, reasoning included.
+// tool results, reasoning included. The tool calls of earlier replies go back
+// without their reasoning, which is not kept.
 
 import { toResponsesTools } from "@/server/tools/definitions";
-import { isStreamingUnsupported, parseArguments, withoutRefusedParams, type ApiChat, type ApiChatContext } from "./openaiShared";
-import { addToLastMessage, type ModelTurn } from "./toolLoop";
+import type { ToolImage } from "@/server/tools/mcp";
+import { isStreamingUnsupported, parseArguments, usageOf, withoutRefusedParams, type ApiChat, type ApiChatContext } from "./openaiShared";
+import type { ModelTurn } from "./toolLoop";
+import type { ViewMessage } from "./view";
 
 type OutputItem = {
   type?: string;
@@ -42,33 +45,50 @@ type ResponsesTurn = ModelTurn & { output: OutputItem[] };
 // Between the parts of a reasoning summary
 const SUMMARY_BREAK = "\n\n";
 
-export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
-  const { client, model, messages, tools, signal, writeContent, writeThinking, sendDone, cost } = ctx;
-  const instructions = messages
+const imagePart = (image: ToolImage) => ({ type: "input_image", image_url: `data:${image.mimeType};base64,${image.data}` });
+
+/** The system prompt of the view, which the Responses API takes as its instructions. */
+const instructionsOf = (view: ViewMessage[]) =>
+  view
     .filter((m) => m.role === "system")
     .map((m) => m.content)
     .join("\n\n");
-  // A message's images go in content parts after its text
-  const toInput = (list: typeof messages): unknown[] =>
-    list
-      .filter((m) => m.role !== "system")
-      .map((m) =>
-        m.role === "user" && m.images?.length
-          ? {
-              role: "user",
-              content: [
-                { type: "input_text", text: m.content },
-                ...m.images.map((image) => ({ type: "input_image", image_url: `data:${image.mimeType};base64,${image.data}` })),
-              ],
-            }
-          : { role: m.role, content: m.content }
-      );
-  const input = toInput(messages);
+
+/** The view as the input of a Responses request. */
+function toInput(view: ViewMessage[]): unknown[] {
+  const out: unknown[] = [];
+  for (const m of view) {
+    if (m.role === "system") continue;
+    if (m.role === "tool") {
+      const images = (m.images ?? []).map(imagePart);
+      out.push({
+        type: "function_call_output",
+        call_id: m.callId,
+        output: images.length ? [...(m.content ? [{ type: "input_text", text: m.content }] : []), ...images] : m.content,
+      });
+    } else if (m.role === "user" && m.images?.length) {
+      // A message's images go in content parts after its text
+      out.push({ role: "user", content: [{ type: "input_text", text: m.content }, ...m.images.map(imagePart)] });
+    } else if (m.role === "assistant" && Array.isArray(m.extra)) {
+      // A step of the reply that is running: the model's own output, reasoning included
+      out.push(...m.extra);
+    } else if (m.role === "assistant" && m.calls?.length) {
+      if (m.content) out.push({ role: "assistant", content: m.content });
+      for (const call of m.calls) {
+        out.push({ type: "function_call", call_id: call.id, name: call.name, arguments: JSON.stringify(call.arguments) });
+      }
+    } else out.push({ role: m.role, content: m.content });
+  }
+  return out;
+}
+
+export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
+  const { client, model, tools, signal, writeContent, writeThinking, sendDone, cost } = ctx;
   const accepted: Record<string, unknown> = { include: ["reasoning.encrypted_content"], ...ctx.params };
 
-  type TurnRequest = { items: unknown[]; offered: typeof tools; toolChoice?: "none" };
+  type TurnRequest = { instructions: string; items: unknown[]; offered: typeof tools; toolChoice?: "none" };
 
-  function request(stream: boolean, { items, offered, toolChoice }: TurnRequest) {
+  function request(stream: boolean, { instructions, items, offered, toolChoice }: TurnRequest) {
     cost.startRequest({ instructions, items, tools: toResponsesTools(offered) });
     return withoutRefusedParams(accepted, () =>
       client.responses.create(
@@ -89,6 +109,8 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
   /** Fills in `turn` from the model's finished output. */
   function finish(turn: ResponsesTurn, response: ResponseBody | null, output: OutputItem[]) {
     turn.output = output;
+    turn.extra = output;
+    turn.usage = usageOf(response?.usage);
     // A call the model did not finish writing cannot be run
     turn.calls = output
       .filter((item) => item.type === "function_call" && item.status !== "incomplete")
@@ -171,24 +193,18 @@ export function responsesChat(ctx: ApiChatContext): ApiChat<ResponsesTurn> {
     return turn;
   }
 
+  const turnRequest = (view: ViewMessage[]) => ({ instructions: instructionsOf(view), items: toInput(view) });
+
   return {
-    nextTurn: (mayCallTools) => runTurn({ items: input, offered: tools, ...(mayCallTools ? {} : { toolChoice: "none" }) }),
-    plainTurn: (note) => runTurn({ items: toInput(addToLastMessage(messages, note)), offered: [] }),
-    addCalls(turn) {
-      input.push(...turn.output);
-    },
-    addResults(results) {
-      for (const { call, result } of results) {
-        const images = result.images.map((image) => ({
-          type: "input_image",
-          image_url: `data:${image.mimeType};base64,${image.data}`,
-        }));
-        input.push({
-          type: "function_call_output",
-          call_id: call.id,
-          output: images.length ? [...(result.text ? [{ type: "input_text", text: result.text }] : []), ...images] : result.text,
-        });
-      }
+    turn: (view, mayCallTools) => runTurn({ ...turnRequest(view), offered: tools, ...(mayCallTools ? {} : { toolChoice: "none" }) }),
+    plainTurn: (view) => runTurn({ ...turnRequest(view), offered: [] }),
+    async ask(view) {
+      const response = (await request(false, { ...turnRequest(view), offered: [] })) as unknown as ResponseBody;
+      await cost.endRequest(response.usage);
+      return (response.output ?? [])
+        .filter((item) => item.type === "message")
+        .flatMap((item) => (item.content ?? []).map((part) => part.text ?? ""))
+        .join("");
     },
   };
 }

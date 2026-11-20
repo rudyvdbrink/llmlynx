@@ -15,7 +15,12 @@ import { getToolDefinition, type ToolDefinition } from "@/server/tools/definitio
 import { addMessage, eventsOf, newConversation, newUser } from "@/test/db";
 import { fakes, INJECTION, VIRUS } from "@/test/fakes";
 import { createAssistantReply } from "./conversation";
-import { runToolLoop, type ModelTurn, type ToolCallResult } from "./toolLoop";
+import { runToolLoop, type ModelTurn } from "./toolLoop";
+import type { ToolMessage, ViewMessage } from "./view";
+
+/** What the model got of its tool calls: the results in the view, in order. */
+const resultsIn = (view: ViewMessage[]) =>
+  view.filter((m): m is ToolMessage => m.role === "tool").map((m) => ({ result: { text: m.content, error: !!m.step?.error } }));
 
 vi.mock("@/server/tools/mcp", () => import("@/test/fakes"));
 vi.mock("@/server/security/clamd", () => import("@/test/fakes"));
@@ -37,7 +42,7 @@ async function chat(turns: ModelTurn["calls"][], message = `Read ${PAGE} and ${O
 
   const lines: (Partial<ToolStep> & { id: string })[] = [];
   const pauses: { id: string; tool: string; source: string }[] = [];
-  const results: ToolCallResult[] = [];
+  const view: ViewMessage[] = [{ role: "user", content: message }];
   let turn = 0;
   const done = runToolLoop<ModelTurn>({
     tools,
@@ -57,8 +62,7 @@ async function chat(turns: ModelTurn["calls"][], message = `Read ${PAGE} and ${O
       return { content, calls };
     },
     plainTurn: async () => ({ content: "", calls: [] }),
-    addCalls: () => {},
-    addResults: (batch) => void results.push(...batch),
+    view,
   })
     .then(() => reply.persist())
     .then(() => audit.flush());
@@ -66,7 +70,22 @@ async function chat(turns: ModelTurn["calls"][], message = `Read ${PAGE} and ${O
   const stored = () =>
     prisma.message.findMany({ where: { conversationId }, orderBy: { position: "asc" }, select: { role: true, content: true, metadata: true } });
   const paused = () => vi.waitFor(() => expect(pauses.length).toBe(1)).then(() => pauses[0]);
-  return { userId, conversationId, security: security!, done, stopper, lines, pauses, results, stored, paused, turnsMade: () => turn };
+  return {
+    userId,
+    conversationId,
+    security: security!,
+    done,
+    stopper,
+    lines,
+    pauses,
+    view,
+    get results() {
+      return resultsIn(view);
+    },
+    stored,
+    paused,
+    turnsMade: () => turn,
+  };
 }
 
 beforeEach(() => {
@@ -120,7 +139,8 @@ describe("a prompt injection in content from the internet", () => {
 
     // Stored before the user chose: also a reply that is never answered keeps the conversation tainted
     const steps = await run.stored();
-    expect(steps.at(-1)).toMatchObject({ role: "tool", content: WITHHELD_NOTICE });
+    // The step is stored as the model gets it, with the note of the loop: a later request sends it again as it was
+    expect(steps.at(-1)).toMatchObject({ role: "tool", content: `${WITHHELD_NOTICE}\n\n[Tool calls: 1 of 7 used, 6 left for this reply.]` });
     expect(steps.at(-1)?.metadata).toMatchObject({ error: true, security: { flag: "injection", score: 0.98 } });
     expect(run.turnsMade()).toBe(1); // the model waits
 
@@ -261,7 +281,7 @@ describe("a result whose changes cannot be stored", () => {
       }),
     } as unknown as ToolDefinition;
     const lines: (Partial<ToolStep> & { id: string })[] = [];
-    const results: ToolCallResult[] = [];
+    const view: ViewMessage[] = [{ role: "user", content: "Edit a.txt" }];
     let turn = 0;
     await runToolLoop<ModelTurn>({
       tools: [edit],
@@ -276,9 +296,9 @@ describe("a result whose changes cannot be stored", () => {
       sendError: () => {},
       nextTurn: async () => ({ content: "", calls: turn++ ? [] : [{ name: "edit_file", arguments: { file: "a.txt" } }] }),
       plainTurn: async () => ({ content: "", calls: [] }),
-      addCalls: () => {},
-      addResults: (batch) => void results.push(...batch),
+      view,
     });
+    const results = resultsIn(view);
     expect(results[0].result.text).toMatch(/^Error: stale_version: a\.txt changed since you read it \(you had version 00000000;/);
     expect(results[0].result.error).toBe(true);
     expect(lines.at(-1)).toMatchObject({ state: "error", label: "Could not edit a.txt (files changed meanwhile)" });
@@ -298,7 +318,7 @@ describe("a call that keeps failing", () => {
     // web_read of an ftp address fails every time; the model sends the very same call again and again
     const same = { name: "web_read", arguments: { url: " ftp://site.example/missing " } };
     const reordered = { name: "web_read", arguments: { url: "ftp://site.example/missing" } };
-    const results: ToolCallResult[] = [];
+    const view: ViewMessage[] = [{ role: "user", content: "Read the page" }];
     let turns = 0;
     let withoutTools = 0;
     await runToolLoop<ModelTurn>({
@@ -312,7 +332,7 @@ describe("a call that keeps failing", () => {
       sendFiles: () => {},
       sendPause: () => {},
       sendError: () => {},
-      nextTurn: async (mayCallTools) => {
+      nextTurn: async (_view, mayCallTools) => {
         if (!mayCallTools) {
           withoutTools++;
           return { content: "It did not work.", calls: [] };
@@ -321,10 +341,9 @@ describe("a call that keeps failing", () => {
         return { content: "", calls: [turns % 2 ? same : reordered] };
       },
       plainTurn: async () => ({ content: "", calls: [] }),
-      addCalls: () => {},
-      addResults: (batch) => void results.push(...batch),
+      view,
     });
-    const texts = results.map((r) => r.result.text);
+    const texts = resultsIn(view).map((r) => r.result.text);
     expect(texts).toHaveLength(4);
     expect(texts[0]).not.toContain("This exact call");
     expect(texts[1]).toContain("[This exact call has now failed 2 times. Do not repeat it: change the arguments or the approach.]");

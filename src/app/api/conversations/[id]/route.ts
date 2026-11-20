@@ -4,7 +4,7 @@ import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { jsonError, optionalString, readJsonObject } from "@/server/http";
 import { deleteUnusedSetups } from "@/server/chat/setup";
-import { DISPLAY_MESSAGE_SELECT, sharedIds, toDisplayMessages } from "@/server/chat/display";
+import { contextFill, DISPLAY_MESSAGE_SELECT, sharedIds, toDisplayMessages } from "@/server/chat/display";
 import { forgetPackages } from "@/server/sandbox/code";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -25,9 +25,9 @@ export async function GET(_req: Request, ctx: Ctx) {
       cost: true,
       createdAt: true,
       updatedAt: true,
-      // The user's messages and every step of the replies, tool steps included
+      // The user's messages, every step of the replies, tool steps included, and the checkpoints
       messages: {
-        where: { role: { in: ["user", "assistant", "tool"] } },
+        where: { role: { in: ["user", "assistant", "tool", "system"] } },
         orderBy: { position: "asc" },
         select: DISPLAY_MESSAGE_SELECT,
       },
@@ -47,7 +47,11 @@ export async function GET(_req: Request, ctx: Ctx) {
 
   // A reply that used tools is shown as one message with its tool steps
   return NextResponse.json({
-    conversation: { ...conversation, messages: toDisplayMessages(conversation.messages, cards) },
+    conversation: {
+      ...conversation,
+      messages: toDisplayMessages(conversation.messages, cards),
+      context: contextFill(conversation.messages),
+    },
   });
 }
 

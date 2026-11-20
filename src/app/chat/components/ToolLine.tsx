@@ -29,11 +29,12 @@ function securityNote({ flag, source = "this source", decision }: StepSecurity):
 }
 
 /**
- * Text behind a chevron, collapsed at first: what the classifier flagged, or
- * the code a dialog asks about. It shows as plain text in a box that scrolls,
- * never as markdown, so no link in it can be clicked and no image in it loads.
+ * Text behind a chevron, collapsed at first: what the classifier flagged, the
+ * code a dialog asks about, or the summary of a checkpoint. It shows as plain
+ * text in a box that scrolls, never as markdown, so no link in it can be
+ * clicked and no image in it loads.
  */
-function Expandable({ label, text }: { label: string; text: string }) {
+export function Expandable({ label, text }: { label: string; text: string }) {
   const [open, setOpen] = useState(false);
   const box = useRef<HTMLSpanElement | null>(null);
   // Opened, the text comes into view, also within the trace's own scrolling area

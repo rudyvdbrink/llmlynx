@@ -2,7 +2,7 @@
 // and that a rebuild gives the same.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { loadHistory } from "@/server/chat/conversation";
+import { loadView } from "@/server/chat/view";
 import { prisma } from "@/server/db/prisma";
 import { getToolDefinition } from "@/server/tools/definitions";
 import { addFile, addMessage, newConversation, newUser } from "@/test/db";
@@ -16,7 +16,8 @@ vi.mock("@/server/tools/mcp", () => import("@/test/fakes"));
 vi.mock("@/server/security/clamd", () => import("@/test/fakes"));
 
 const tools = [getToolDefinition("web_search")!, getToolDefinition("web_read")!, getToolDefinition("read_file")!];
-const history = (conversationId: string) => loadHistory(conversationId, { vision: false, textBudget: 10_000, readFile: true, viewPages: false });
+const history = (conversationId: string) =>
+  loadView(conversationId, { files: { vision: false, textBudget: 10_000, readFile: true, viewPages: false }, tools: ["web_search", "web_read", "read_file"] });
 
 const step = (metadata: unknown = null): StoredStep => ({ metadata });
 

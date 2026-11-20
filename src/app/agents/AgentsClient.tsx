@@ -27,6 +27,7 @@ import {
   AGENT_TOOL_INFO,
   AGENT_TOOLS,
   DEFAULT_MAX_TOOL_CALLS,
+  contextWindowHint,
   MAX_TOOL_CALLS_LIMIT,
   TOOL_REQUIRES,
   validateAgentTools,
@@ -47,8 +48,6 @@ import { ToolStepIcon } from "../chat/components/ToolLine";
 const NEW_AGENT = toSelection("agent", "new");
 const AGENT_PREFIX = toSelection("agent", "");
 
-// Below this context window, web pages crowd out the conversation
-const MIN_TOOLS_NUM_CTX = 8192;
 
 // How long the check mark stays after saving
 const SAVED_MS = 1500;
@@ -86,6 +85,8 @@ export default function AgentsClient({
   const [opts, setOpts] = useState(newOptions);
   // Tools are off until the user checks them
   const [tools, setTools] = useState<AgentToolName[]>([]);
+  // Says so when the context window is small for the agent's tools
+  const windowHint = provider === "ollama" ? contextWindowHint(tools, Number(opts.ollama.num_ctx ?? 0)) : null;
   const [maxToolCalls, setMaxToolCalls] = useState(DEFAULT_MAX_TOOL_CALLS);
   // Whether the Ollama context window is the base model's default (half of what it supports), which
   // follows the model when it changes, or a value the user set
@@ -546,11 +547,7 @@ export default function AgentsClient({
               </span>
             </div>
           </div>
-          {provider === "ollama" && tools.length > 0 && Number(opts.ollama.num_ctx ?? 0) < MIN_TOOLS_NUM_CTX && (
-            <p className={styles.toolHint}>
-              Web pages need room: set the context window to 16384 tokens or more, or pages get cut short.
-            </p>
-          )}
+          {windowHint && <p className={styles.toolHint}>{windowHint}</p>}
         </section>
 
         <OptionsPanel

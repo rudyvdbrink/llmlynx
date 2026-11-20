@@ -1,29 +1,21 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
-import { getDefaultSystemPrompt } from "@/server/config";
-import { getApiConfig, getOllamaUrl } from "@/server/providers";
 import { stopAttempt, trackAttempt } from "@/server/chat/attempts";
-import { createAssistantReply, loadHistory, messageFiles, resolveConversation, saveUserMessage } from "@/server/chat/conversation";
-import { getModelInfo, usesResponsesApi } from "@/server/chat/models";
+import type { ContextConfig } from "@/server/chat/context";
+import { createAssistantReply, messageFiles, resolveConversation, saveMemory, saveUserMessage } from "@/server/chat/conversation";
+import { memoryInView, workingMemory } from "@/server/chat/memory";
 import { streamOllamaChat } from "@/server/chat/ollama";
-import { apiRequestParams, streamOpenAIChat } from "@/server/chat/openai";
-import type { RequestSetupInput } from "@/server/chat/setup";
-import { addToLastMessage } from "@/server/chat/toolLoop";
-import { fileTextBudget, filesNote } from "@/server/files/history";
+import { streamOpenAIChat } from "@/server/chat/openai";
+import { chatSetup, chatView, resolveTarget } from "@/server/chat/target";
 import { prepareMessageFiles } from "@/server/files/prepare";
 import { conversationFiles } from "@/server/files/store";
-import { chatRepos } from "@/server/sandbox/git";
 import { roomError } from "@/server/sandbox/room";
 import { UploadRefused } from "@/server/files/uploads";
 import { createAuditLog } from "@/server/security/audit";
 import { openSecurity } from "@/server/security/engine";
-import { textBudget, toFunctionTools } from "@/server/tools/definitions";
-import { attachAccept, hasFileTools, toolGuidance, toolsFor } from "@/server/tools/policy";
-import { normalizeSelection, parseBaseModel, parseSelection, toSelection } from "@/lib/selection";
-import { PROVIDER_LABELS, type ProviderId } from "@/lib/providers";
-import { ollamaOptions } from "@/lib/agentSettings";
-import { DEFAULT_MAX_TOOL_CALLS } from "@/lib/agentTools";
+import { textBudget } from "@/server/tools/definitions";
+import { attachAccept } from "@/server/tools/policy";
+import { toSelection } from "@/lib/selection";
 import { fileProblem, MAX_FILES_PER_MESSAGE } from "@/lib/files";
 
 export const runtime = "nodejs";
@@ -31,7 +23,9 @@ export const runtime = "nodejs";
 // POST /api/chat
 // body: { message: string, model?: string, agentId?: string, conversationId?: string, requestId?: string, uploads?: string[] }
 // `message` is the user's new message; the rest of the conversation is read from
-// the database, so the model always gets the conversation as stored.
+// the database, so the model always gets the conversation as stored: every
+// step of it, the tool calls and their results included, as far as its context
+// window holds them (see server/chat/view.ts and context.ts).
 // `model` is a selection ("ollama:<name>" | "openai:<name>" | "openrouter:<name>")
 // or a plain Ollama model name. Each user's own Ollama server and API keys are used.
 // `requestId` (32 hex characters) identifies the send: a re-send with the same id
@@ -43,54 +37,19 @@ export const runtime = "nodejs";
 // line, the cards of the stored files, and { status: "reading" } while they
 // are made ready, before the model answers.
 // Responds with an NDJSON stream, which ends with an { end: true } line, and the
-// conversation id in X-Conversation-Id. X-Tools is "1" when the model can call tools.
+// conversation id in X-Conversation-Id.
 // A { pause: { id, tool, source } } line says the reply waits for the user's
 // choice about flagged content, sent with POST /api/chat/pauses/:id.
 // On OpenAI and OpenRouter, { cost } lines say what the conversation cost so far
 // in US dollars: an estimate while a request streams, exact once it ends.
+// { context: { used, full } } lines say how full the model's context window is
+// after each request, and a { checkpoint } line that older steps were
+// summarised for the model, while { status: "compacting" } shows.
 
 const REQUEST_ID = /^[0-9a-f]{32}$/;
 
-// For the text budget of an agent's tools, when its provider does not say how long its context is
-const UNKNOWN_CONTEXT = 32768;
-
 const encoder = new TextEncoder();
 const ndjsonLine = (obj: object) => encoder.encode(JSON.stringify(obj) + "\n");
-
-type Target = {
-  kind: ProviderId;
-  modelKey: string;
-  model: string;
-  systemPrompt: string | null; // null: the model gets none (plain OpenAI and OpenRouter models)
-  agent: { settings: unknown; tools: unknown; maxToolCalls: number } | null; // set when the user chats with an agent
-};
-
-/** Works out which backend and model to use. Returns null if the agent is not the user's. */
-async function resolveTarget(userId: string, model: unknown, agentId: unknown): Promise<Target | null> {
-  if (typeof agentId === "string" && agentId) {
-    const agent = await prisma.agent.findFirst({ where: { id: agentId, userId } });
-    const base = parseBaseModel(agent?.baseModel);
-    if (!agent || !base) return null;
-    return {
-      kind: base.provider,
-      modelKey: toSelection("agent", agent.id),
-      model: base.model,
-      systemPrompt: agent.systemPrompt?.trim() || getDefaultSystemPrompt(),
-      agent: { settings: agent.settings, tools: agent.tools, maxToolCalls: agent.maxToolCalls },
-    };
-  }
-
-  const selection = normalizeSelection(typeof model === "string" ? model : undefined);
-  const { kind, value } = parseSelection(selection);
-  if (kind === "agent") return null; // agents are chosen with agentId
-  return {
-    kind,
-    modelKey: selection,
-    model: value,
-    systemPrompt: kind === "ollama" ? getDefaultSystemPrompt() : null,
-    agent: null,
-  };
-}
 
 /** The request body. Null when it cannot be read. */
 async function readBody(req: NextRequest): Promise<Record<string, unknown> | null> {
@@ -161,15 +120,10 @@ export async function POST(req: NextRequest) {
   const { agent } = target;
   if (uploads.length && !agent) return new Response("Only agents take files.", { status: 400 });
 
-  const apiConfig = target.kind === "ollama" ? null : await getApiConfig(user.id, target.kind);
-  if (target.kind !== "ollama" && !apiConfig) {
-    return new Response(`No ${PROVIDER_LABELS[target.kind]} API key. Add one on the account page.`, { status: 403 });
-  }
-
-  // What the model can do decides its tools, the files it takes and, on OpenAI and OpenRouter, which options it gets
-  const modelInfo = agent ? await getModelInfo(user.id, target.kind, target.model) : null;
-  const capabilities = modelInfo?.capabilities ?? null;
-  const accept = attachAccept(capabilities);
+  const setup = await chatSetup(user.id, target);
+  if ("error" in setup) return new Response(setup.error, { status: setup.status });
+  const { tools, vision, maxToolCalls } = setup;
+  const accept = attachAccept(setup.capabilities);
 
   const conversationId = await resolveConversation(
     user.id,
@@ -198,43 +152,17 @@ export async function POST(req: NextRequest) {
     throw err;
   }
   const userFiles = await messageFiles(messageId);
-  // The tools the model can call: only agents get them, see server/tools/policy.ts
-  const tools = toolsFor(agent, capabilities);
-  const vision = !!capabilities?.includes("vision");
-  const contextTokens =
-    target.kind === "ollama"
-      ? (agent?.settings as { num_ctx?: unknown } | undefined)?.num_ctx
-      : (modelInfo?.contextLength ?? UNKNOWN_CONTEXT);
-  const maxToolCalls = agent?.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS;
-  const systemPrompt =
-    target.systemPrompt !== null && tools.length
-      ? `${target.systemPrompt}\n\n${toolGuidance(tools, maxToolCalls)}`
-      : target.systemPrompt;
-  const system = systemPrompt !== null ? [{ role: "system" as const, content: systemPrompt }] : [];
-  const apiParams =
-    agent && target.kind !== "ollama"
-      ? apiRequestParams(target.kind, agent.settings, modelInfo)
-      : undefined;
-  const ollamaParams = agent && target.kind === "ollama" ? ollamaOptions(agent.settings) : undefined;
-  // Everything the model gets besides the conversation, which is stored with the reply
-  const setup: RequestSetupInput = {
-    ...(systemPrompt !== null ? { systemPrompt } : {}),
-    ...(agent ? { options: apiParams ?? ollamaParams } : {}),
-    ...(tools.length ? { tools: toFunctionTools(tools) } : {}),
-  };
   const reply = createAssistantReply({
     conversationId,
     userId: user.id,
     modelKey: target.modelKey,
     model: toSelection(target.kind, target.model),
-    setup,
+    setup: setup.stored,
   });
 
   // What the security checks log is written in one go when the reply ends
   const audit = createAuditLog(user.id, conversationId);
   const { kind, model } = target;
-  const baseUrl = kind === "ollama" ? await getOllamaUrl(user.id) : "";
-  const has = (name: string) => tools.some((t) => t.name === name);
 
   const startReply = async (signal: AbortSignal): Promise<ReadableStream<Uint8Array>> => {
     if (userFiles.length) await prepareMessageFiles(messageId, vision, signal);
@@ -245,37 +173,23 @@ export async function POST(req: NextRequest) {
       tools,
       maxToolCalls,
       forAgent: !!agent,
-      toolContext: { userId: user.id, textBudget: textBudget(contextTokens), conversationId, vision, security },
+      toolContext: { userId: user.id, textBudget: textBudget(setup.contextTokens), conversationId, vision, security },
     };
-    // The conversation so far, ending with the new message. Like the system
-    // prompt, it comes from the server, never from the client.
-    let history = await loadHistory(
-      conversationId,
-      agent
-        ? { vision, textBudget: fileTextBudget(contextTokens), readFile: has("read_file"), viewPages: has("view_pdf_pages") }
-        : undefined
-    );
-    // An agent with file tools refers to the files by name
-    const repos = tools.some((t) => t.name === "git") ? (await chatRepos(conversationId)).map((r) => r.path) : [];
-    const search = tools.some((t) => t.name === "search_workspace");
-    const note = hasFileTools(tools) ? filesNote(await conversationFiles(conversationId), repos, search) : null;
-    if (note) history = addToLastMessage(history, note);
-    const messages = [...system, ...history];
+    // The working memory goes out with the user's message, and stays with it. A message only gets a
+    // copy when it changed: the model has the one before in view
+    const memory = await workingMemory(conversationId, tools);
+    await saveMemory(messageId, memory && memory !== (await memoryInView(conversationId, messageId)) ? memory : null);
+    // The conversation so far, ending with the new message
+    const view = await chatView(conversationId, setup);
+    const context: ContextConfig = { conversationId, tools, security, window: setup.window };
 
     return kind !== "ollama"
       ? streamOpenAIChat(
-          {
-            ...toolRun,
-            provider: kind,
-            model,
-            messages,
-            params: apiParams,
-            useResponses: !!agent && usesResponsesApi(kind, modelInfo),
-          },
-          apiConfig!,
+          { ...toolRun, provider: kind, model, view, context, params: setup.apiParams, useResponses: setup.useResponses },
+          setup.apiConfig!,
           reply
         )
-      : streamOllamaChat({ ...toolRun, baseUrl, model, messages, options: ollamaParams }, reply);
+      : streamOllamaChat({ ...toolRun, baseUrl: setup.baseUrl, model, view, context, options: setup.ollamaParams }, reply);
   };
 
   const stream = afterPreparing(userFiles.length ? [{ userFiles }, { status: "reading" }] : [], startReply);
@@ -285,7 +199,6 @@ export async function POST(req: NextRequest) {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       "X-Conversation-Id": conversationId,
-      ...(tools.length ? { "X-Tools": "1" } : {}),
     },
   });
 }

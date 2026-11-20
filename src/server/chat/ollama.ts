@@ -3,8 +3,11 @@ import { createLineSplitter } from "@/lib/ndjson";
 import { withOllamaTag } from "@/lib/providers";
 import type { ChatMessage, ReplyStatus } from "@/lib/types";
 import { toFunctionTools, type ToolDefinition } from "@/server/tools/definitions";
+import type { Usage } from "./budget";
+import { openContext, type ContextConfig, type ContextLine } from "./context";
 import type { AssistantReply } from "./conversation";
 import { addToLastMessage, runToolLoop, type ChatToolContext, type ModelTurn } from "./toolLoop";
+import type { ViewMessage } from "./view";
 
 // A message as Ollama's /api/chat takes it.
 export type OllamaMessage = {
@@ -22,7 +25,11 @@ type OllamaToolCall = { id?: string; function: { index?: number; name: string; a
 export type OllamaChatRequest = {
   baseUrl: string; // the user's Ollama server
   model: string;
-  messages: ChatMessage[];
+  // The conversation as the model gets it, its system prompt included (see view.ts); the reply's steps are added to it
+  view: ViewMessage[];
+  // What keeps the view within the model's context window. Its window is the agent's; without one
+  // (a plain chat), it is the window Ollama loaded the model with
+  context?: ContextConfig | null;
   options?: unknown; // agent generation settings, passed through as Ollama options
   // The tools the model can call; with none, the chat is a single request
   tools?: ToolDefinition[];
@@ -33,12 +40,31 @@ export type OllamaChatRequest = {
   forAgent?: boolean;
 };
 
-/** A message of the conversation as Ollama takes it: images go in their own field. */
-const toOllama = ({ role, content, images }: ChatMessage): OllamaMessage => ({
-  role,
-  content,
-  ...(images?.length ? { images: images.map((i) => i.data) } : {}),
-});
+/** The view as the messages of a request to Ollama: images go in their own field. */
+function toOllama(view: ViewMessage[]): OllamaMessage[] {
+  return view.map((m): OllamaMessage => {
+    if (m.role === "tool") {
+      return {
+        role: "tool",
+        tool_name: m.name,
+        tool_call_id: m.callId,
+        content: m.content,
+        ...(m.images?.length ? { images: m.images.map((i) => i.data) } : {}),
+      };
+    }
+    if (m.role === "assistant" && m.calls?.length) {
+      // The reasoning of a step of the reply that is running goes back with it
+      const thinking = (m.extra as { thinking?: string } | undefined)?.thinking;
+      return {
+        role: "assistant",
+        content: m.content,
+        ...(thinking ? { thinking } : {}),
+        tool_calls: m.calls.map((c) => ({ id: c.id, function: { name: c.name, arguments: c.arguments } })),
+      };
+    }
+    return { role: m.role, content: m.content, ...(m.role === "user" && m.images?.length ? { images: m.images.map((i) => i.data) } : {}) };
+  });
+}
 
 // Shape of one entry in Ollama's GET /api/ps response.
 type OllamaRunning = { name?: string; model?: string; context_length?: number };
@@ -56,21 +82,37 @@ const RETRY_NOTE =
   "with every tag closed, such as each parameter before the function.]";
 
 /**
- * True when Ollama has `model` in memory, ready for a chat with `options`. A
- * model that is still loading is not listed yet, and one loaded with another
- * num_ctx is loaded again for the chat.
+ * Whether Ollama has `model` in memory, ready for a chat with `options`, and
+ * the context window it loaded it with, when it says. A model that is still
+ * loading is not listed yet, and one loaded with another num_ctx is loaded
+ * again for the chat.
  */
-async function isLoaded(baseUrl: string, model: string, options: unknown, signal: AbortSignal): Promise<boolean> {
+async function loadedModel(baseUrl: string, model: string, options: unknown, signal: AbortSignal): Promise<{ loaded: boolean; window?: number }> {
   const res = await fetch(`${baseUrl}/api/ps`, { cache: "no-store", signal });
-  if (!res.ok) return true; // cannot tell; the chat loads it if needed
+  if (!res.ok) return { loaded: true }; // cannot tell; the chat loads it if needed
   const raw = (await res.json().catch(() => ({}))) as { models?: unknown };
   const running: OllamaRunning[] = Array.isArray(raw.models) ? raw.models : [];
   const numCtx = (options as { num_ctx?: unknown } | undefined)?.num_ctx;
-  return running.some(
+  const found = running.find(
     (m) =>
       withOllamaTag(m?.name || m?.model || "") === withOllamaTag(model) &&
       (typeof numCtx !== "number" || m.context_length === undefined || m.context_length === numCtx)
   );
+  const window = found?.context_length;
+  return { loaded: !!found, ...(typeof window === "number" && window > 0 ? { window } : {}) };
+}
+
+/**
+ * The context window Ollama has `model` loaded with, in tokens; null when it
+ * is not loaded, when Ollama does not say (an older server), or when Ollama
+ * cannot be reached. A plain chat runs in this window: it sets none itself.
+ */
+export async function loadedWindow(baseUrl: string, model: string): Promise<number | null> {
+  try {
+    return (await loadedModel(baseUrl, model, undefined, AbortSignal.timeout(5_000))).window ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** POSTs to Ollama's /api/chat. Throws with Ollama's explanation if it rejects the request. */
@@ -96,6 +138,22 @@ async function postChat(baseUrl: string, body: object, signal: AbortSignal): Pro
 }
 
 /**
+ * One request to a model on Ollama without tools, not streamed: the text it
+ * wrote. `options` are those of the chat, so that Ollama does not load the
+ * model again for it.
+ */
+export async function askOllama(
+  { baseUrl, model, options }: Pick<OllamaChatRequest, "baseUrl" | "model" | "options">,
+  view: ViewMessage[],
+  signal: AbortSignal
+): Promise<string> {
+  const res = await postChat(baseUrl, { model, messages: toOllama(view), stream: false, ...(options ? { options } : {}) }, signal);
+  const body = (await res.json().catch(() => ({}))) as { message?: { content?: unknown }; error?: unknown };
+  if (typeof body.error === "string" && body.error) throw new Error(body.error);
+  return typeof body.message?.content === "string" ? body.message.content : "";
+}
+
+/**
  * Starts a streaming chat on Ollama and returns its NDJSON stream. Ollama sends
  * nothing until the first token, so the stream starts with { status } lines:
  * "loading" while the model is loaded into memory, then "thinking". Ollama's
@@ -107,13 +165,16 @@ async function postChat(baseUrl: string, body: object, signal: AbortSignal): Pro
  * { tool: ToolStep } line (state "running"), run, and announced again with its
  * outcome; then the model continues with the results. Every step is saved.
  * A { pause } line says the reply waits for the user's choice (see runToolLoop).
+ * With a context, { context } lines say how full the model's window is after
+ * each request, and a { checkpoint } line says that older steps were
+ * summarised (see context.ts).
  *
  * If Ollama cannot be reached, rejects the request or reports an error in its
  * stream, the stream ends with an { error } line. A request that failed on a tool
  * call the model wrote wrong is made once more first, with a note for the model.
  */
 export function streamOllamaChat(
-  { baseUrl, model, messages, options, tools = [], maxToolCalls = DEFAULT_MAX_TOOL_CALLS, toolContext, forAgent }: OllamaChatRequest,
+  { baseUrl, model, view, context: contextConfig = null, options, tools = [], maxToolCalls = DEFAULT_MAX_TOOL_CALLS, toolContext, forAgent }: OllamaChatRequest,
   reply: AssistantReply
 ): ReadableStream<Uint8Array> {
   const abort = new AbortController();
@@ -133,7 +194,14 @@ export function streamOllamaChat(
        * wrote and called. `onThinking` is called when reasoning streams.
        */
       async function chatTurn(conversation: OllamaMessage[], offered: ToolDefinition[], onThinking?: () => void) {
-        const turn = { content: "", thinking: "", toolCalls: [] as OllamaToolCall[], calls: [] as ModelTurn["calls"] };
+        const turn = {
+          content: "",
+          thinking: "",
+          toolCalls: [] as OllamaToolCall[],
+          calls: [] as ModelTurn["calls"],
+          usage: undefined as Usage | undefined,
+          extra: undefined as { thinking: string } | undefined,
+        };
         // Ollama reports a failure after the stream started, such as a tool call it could not parse, as an
         // { error } line. The turn then fails, without running its tool calls.
         let failure = "";
@@ -156,6 +224,10 @@ export function streamOllamaChat(
               turn.content += content;
             }
             if (Array.isArray(obj?.message?.tool_calls)) turn.toolCalls.push(...obj.message.tool_calls);
+            // The last line says how many tokens the request took
+            if (obj?.done === true && typeof obj.prompt_eval_count === "number" && obj.prompt_eval_count > 0) {
+              turn.usage = { input: obj.prompt_eval_count, output: typeof obj.eval_count === "number" ? obj.eval_count : 0 };
+            }
           } catch {
             // not JSON; forward it untouched
           }
@@ -188,8 +260,12 @@ export function streamOllamaChat(
           name: c.function?.name ?? "",
           arguments: c.function?.arguments && typeof c.function.arguments === "object" ? c.function.arguments : {},
         }));
+        if (turn.thinking) turn.extra = { thinking: turn.thinking };
         return turn;
       }
+
+      /** One request without tools whose answer the client does not get: the text the model wrote. */
+      const ask = (messages: ViewMessage[]) => askOllama({ baseUrl, model, options }, messages, abort.signal);
 
       /**
        * One request with the tools offered. When the model wrote a tool call Ollama
@@ -214,15 +290,18 @@ export function streamOllamaChat(
       }
 
       try {
-        if (!(await isLoaded(baseUrl, model, options, abort.signal))) {
+        let running = await loadedModel(baseUrl, model, options, abort.signal);
+        if (!running.loaded) {
           sendStatus("loading");
           // A chat without messages only loads the model. It gets the chat's
           // options, or the chat would load the model again.
           await (await postChat(baseUrl, { model, messages: [], ...opts }, abort.signal)).text();
+          // A plain chat runs in the window Ollama chose for the model: it says which once the model is loaded
+          if (contextConfig && !contextConfig.window) running = await loadedModel(baseUrl, model, options, abort.signal);
         }
         sendStatus("thinking");
 
-        const conversation = messages.map(toOllama);
+        const window = contextConfig?.window ?? running.window;
         await runToolLoop({
           tools,
           maxToolCalls,
@@ -234,29 +313,22 @@ export function streamOllamaChat(
           sendFiles: (files) => send(JSON.stringify({ files })),
           sendPause: (pause) => send(JSON.stringify({ pause })),
           sendError: (error) => send(JSON.stringify({ error })),
+          view,
+          context:
+            contextConfig && window
+              ? openContext({
+                  config: contextConfig,
+                  window,
+                  reply,
+                  signal: abort.signal,
+                  ask,
+                  send: (line: ContextLine) => send(JSON.stringify(line)),
+                })
+              : null,
           // The tools stay offered in every round: models such as gpt-oss call
           // them anyway once the conversation has tool calls in it
-          nextTurn: () => toolTurn(conversation),
-          plainTurn: (note) => chatTurn(addToLastMessage(messages, note).map(toOllama), []),
-          addCalls(turn, calls) {
-            conversation.push({
-              role: "assistant",
-              content: turn.content,
-              ...(turn.thinking ? { thinking: turn.thinking } : {}),
-              tool_calls: turn.toolCalls.map((c, i) => ({ ...c, id: calls[i].id })),
-            });
-          },
-          addResults(results) {
-            for (const { call, result } of results) {
-              conversation.push({
-                role: "tool",
-                tool_name: call.name,
-                tool_call_id: call.id,
-                content: result.text,
-                ...(result.images.length ? { images: result.images.map((i) => i.data) } : {}),
-              });
-            }
-          },
+          nextTurn: (all) => toolTurn(toOllama(all)),
+          plainTurn: (all) => chatTurn(toOllama(all), []),
         });
         await reply.persist();
         if (!cancelled) controller.close();

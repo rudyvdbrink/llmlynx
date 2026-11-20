@@ -64,8 +64,7 @@ async function chat(turns: ModelTurn["calls"][], { tainted = false } = {}) {
       return { content, calls };
     },
     plainTurn: async () => ({ content: "", calls: [] }),
-    addCalls: () => {},
-    addResults: () => {},
+    view: [{ role: "user", content: "Work on it" }],
   })
     .then(() => reply.persist())
     .then(() => audit.flush());

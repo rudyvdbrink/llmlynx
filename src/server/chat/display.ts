@@ -1,24 +1,28 @@
 // Turns a conversation's stored steps into the messages the chat view shows.
 // The steps of one reply (assistant steps that call tools, the tool results,
 // and the answer) become one message: its trace holds the reasoning, the text
-// written before a tool call (unless it is meant for the user, see
-// looksLikeAnswer), and the tool calls, in order; its content is the answer,
+// of each step, and the tool calls, in order; its content is all that text,
 // and its files those the file tools made, the images, SVG and HTML a
 // run of code made, and those the model shared (see shownInChat), each once,
 // as its newest version (see withFileCards). A user
-// message's files are those the user attached.
+// message's files are those the user attached. A checkpoint (see
+// checkpoint.ts) is a marker: one the user asked for stands between the
+// messages, one made while a reply ran is in that reply's trace.
 
 import type { Prisma } from "@prisma/client";
 import { toolIcon } from "@/lib/agentTools";
 import { shownInChat, withFileCards, type FileCard } from "@/lib/files";
-import { addReasoning, addToAnswer, looksLikeAnswer, upsertToolStep } from "@/lib/trace";
-import type { ConversationWithMessages, Role, StepSecurity, ToolStep, TraceItem } from "@/lib/types";
+import { addReasoning, addText, traceText, upsertToolStep } from "@/lib/trace";
+import type { Checkpoint, ContextFill, ConversationWithMessages, Role, StepSecurity, ToolStep, TraceItem } from "@/lib/types";
 import { toolLabel } from "@/server/tools/definitions";
+import { MAX_COUNTED_WINDOW } from "./budget";
 import type { StoredToolCall } from "./conversation";
+import { checkpointOf } from "./view";
 
 /** What GET /api/conversations/:id selects of each message. */
 export const DISPLAY_MESSAGE_SELECT = {
   id: true,
+  position: true,
   role: true,
   content: true,
   reasoning: true,
@@ -80,7 +84,27 @@ export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = n
   let reply: (DisplayRow & { trace: TraceItem[] }) | null = null;
 
   for (const row of rows) {
-    if (row.role === "user" || row.role === "system") {
+    if (row.role === "system") {
+      const stored = checkpointOf(row);
+      // Other system steps are not part of what the chat view shows
+      if (!stored) continue;
+      const checkpoint: Checkpoint = { id: stored.id, summary: stored.summary, by: stored.by };
+      if (stored.by === "user") {
+        // It can be taken back while it is the last step: nothing was said since
+        reply = null;
+        const last = row === rows[rows.length - 1];
+        out.push({ id: row.id, role: "system", content: "", checkpoint: { ...checkpoint, ...(last ? { canUndo: true } : {}) }, createdAt: row.createdAt.toISOString() });
+        continue;
+      }
+      // Made while a reply ran: it shows in that reply's trace, where it happened
+      if (!reply) {
+        reply = { id: row.id, role: "assistant", content: "", trace: [], createdAt: row.createdAt.toISOString() };
+        out.push(reply);
+      }
+      reply.trace = [...reply.trace, { kind: "checkpoint", checkpoint }];
+      continue;
+    }
+    if (row.role === "user") {
       reply = null;
       const files = filesOf(row);
       out.push({
@@ -97,18 +121,11 @@ export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = n
         reply = { id: row.id, role: "assistant", content: "", trace: [], createdAt: row.createdAt.toISOString() };
         out.push(reply);
       }
-      // Each step's reasoning starts a new trace item or paragraph
+      // Each step's reasoning and text start a new trace item or paragraph
       reply.trace = addReasoning(reply.trace, row.reasoning ?? "", true);
-      const calls = storedCalls(row.toolCalls);
-      if (calls.length === 0) {
-        reply.content = addToAnswer(reply.content, row.content);
-        continue;
-      }
-      // Text written before calling tools is part of the trace, unless it is meant for the user
-      if (looksLikeAnswer(row.content)) reply.content = addToAnswer(reply.content, row.content);
-      else reply.trace = addReasoning(reply.trace, row.content, true);
+      reply.trace = addText(reply.trace, row.content, true);
       // A call without a stored result was stopped, or its result could not be stored
-      for (const call of calls) {
+      for (const call of storedCalls(row.toolCalls)) {
         reply.trace = upsertToolStep(reply.trace, {
           id: call.id,
           name: call.name,
@@ -143,7 +160,29 @@ export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = n
   }
 
   for (const message of out) {
+    if (message.role === "assistant") message.content = traceText(message.trace ?? []);
     if (message.trace?.length === 0) delete message.trace;
   }
   return out;
+}
+
+/**
+ * How full the model's context window was after the conversation's last
+ * step that says so: a request of a reply (the tokens it took, in the window
+ * it ran in), or a checkpoint after it. Null when no step says.
+ */
+export function contextFill(rows: Pick<Row, "id" | "position" | "role" | "content" | "metadata">[]): ContextFill | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i];
+    if (row.role === "system") {
+      const fill = checkpointOf(row)?.fill;
+      if (fill) return fill;
+    }
+    const usage = row.role === "assistant" ? (row.metadata as { usage?: { input?: unknown; output?: unknown; window?: unknown } } | null)?.usage : null;
+    if (usage && typeof usage.input === "number" && typeof usage.window === "number" && usage.window > 0) {
+      const output = typeof usage.output === "number" ? usage.output : 0;
+      return { used: usage.input + output, full: Math.floor(Math.min(usage.window, MAX_COUNTED_WINDOW) * 0.7) };
+    }
+  }
+  return null;
 }

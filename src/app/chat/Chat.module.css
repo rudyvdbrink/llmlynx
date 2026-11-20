@@ -44,7 +44,7 @@
 
 .messageRow { display: flex; }
 .messageRow.user { justify-content: flex-end; }
-/* A reply sits below the model's thinking */
+/* A reply's parts, then its files and copy button */
 .messageRow.bot { flex-direction: column; align-items: flex-start; }
 
 .bubble {
@@ -112,35 +112,104 @@
   .composerDock { margin-bottom: -12px; padding-bottom: 12px; }
 }
 
+/* The message box: any attached files, then the text, at least two lines of it,
+   with the buttons at the bottom right beside the last line. Composer.tsx sizes
+   the textarea, so the text never runs under the buttons. */
 .composer {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 32px;
+  border-radius: 20px;
   overflow: hidden;
-  padding: 8px 8px 8px 14px;
 }
 
+.composerInput { position: relative; }
+
+/* Composer.tsx sets the padding below the text. Its scrollbar is at the box's
+   right edge, and ends above the buttons. */
 .composer textarea {
-  flex: 1;
+  display: block;
+  width: 100%;
   background: transparent;
   border: none;
   outline: none;
   color: var(--text);
   font-size: 15px;
-  line-height: 1.4;
+  line-height: 24px;
   caret-color: var(--accent);
   resize: none;
   overflow-y: auto;
-  padding: 8px 6px 8px 0;
-  max-height: 40vh;
+  --padding-below: 13px;
+  padding: 11px 10px var(--padding-below) 14px;
+}
+.composer textarea::-webkit-scrollbar { width: 6px; }
+.composer textarea::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 999px; }
+.composer textarea::-webkit-scrollbar-track { background: transparent; margin: 14px 0 48px; }
+/* Browsers without those (Firefox): a thin one, the whole height */
+@supports not selector(::-webkit-scrollbar) {
+  .composer textarea { scrollbar-width: thin; scrollbar-color: var(--scrollbar) transparent; }
 }
 
 .composer textarea::placeholder { color: var(--muted); }
 
-/* Send and stop buttons */
+/* A hidden copy of the text, wrapped as the textarea wraps it (see fit in Composer.tsx) */
+.composerMirror {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* Beside the last line, 1px lower than its middle, so a line above stays clear
+   of them: with the padding below (13px) and half a line (12px), less half a
+   button (16px). In a box of one line, that is its middle.
+   Lines scrolled back pass behind them. */
+.composerActions {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.composerInput[data-scrolls] .composerActions {
+  border-radius: 999px;
+  background: var(--panel);
+  box-shadow: 0 0 6px 3px var(--panel);
+}
+
+.composerButton {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.02s ease;
+}
+/* Taps a little around it count too, up to its neighbours */
+.composerButton::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+}
+.composerButton:hover { background: var(--surface-hover); }
+.composerButton:active { transform: translateY(1px); }
+.composerButton .spinner { margin: 0; color: var(--muted); }
+
+/* Buttons of the sandbox panel's file preview (FilesTab.tsx) */
 .iconButton {
   width: 36px;
   height: 36px;
@@ -413,7 +482,81 @@
   display: block;
 }
 
-/* ===== Thinking: what the model does before its reply ===== */
+/* ===== A reply as a timeline (Reply.tsx) ===== */
+
+/* Its parts: each text the model wrote, and the thinking between them. A dot
+   marks each part, coloured by what the model did in it, and a line joins the
+   dots. --dot-x is where they are across, --dot-y how far down a part its dot
+   is: on the middle of its first line. */
+.timeline {
+  --dot-x: 4.5px;
+  --timeline-line: color-mix(in srgb, var(--muted) 28%, transparent);
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+}
+.part {
+  --dot-y: 22px;
+  position: relative;
+  padding-left: 8px;
+}
+.textPart { --dot-y: 21.5px; }
+
+/* Each part draws the line through its own height, from the first dot to the last */
+.part::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--dot-x) - 0.5px);
+  width: 1px;
+  background: var(--timeline-line);
+}
+.part:first-child::before { top: var(--dot-y); }
+.part:last-child::before { bottom: auto; height: var(--dot-y); }
+.part:only-child::before { display: none; }
+
+/* A ring of the page's colour keeps the line clear of the dot */
+.dot {
+  position: absolute;
+  top: calc(var(--dot-y) - 3.5px);
+  left: calc(var(--dot-x) - 3.5px);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px var(--bg);
+}
+/* White: the model wrote to the user. Grey: it only reasoned. Blue: it used
+   tools. Amber: a tool call failed or its result was withheld. */
+.dotText { color: color-mix(in srgb, var(--text) 85%, var(--muted)); }
+.dotThinking { color: color-mix(in srgb, var(--muted) 75%, var(--bg)); }
+.dotTools { color: color-mix(in srgb, var(--accent) 80%, var(--bg)); }
+.dotIssue { color: var(--amber); }
+/* The text that is coming in */
+.dotLive { animation: toolPulse 1.2s ease-in-out infinite; }
+
+/* What the model is doing now: the status line's icon takes the dot's place */
+.livePart .thinkingStatus > :first-child {
+  position: absolute;
+  top: var(--dot-y);
+  left: var(--dot-x);
+  translate: -50% -50%;
+  margin: 0;
+}
+.livePart:last-child::before { height: calc(var(--dot-y) - 10px); }
+
+/* The text of a part; the room for the copy button is below the last one (.replyEnd) */
+.messageRow.bot .part .bubble { padding-bottom: 0; }
+
+/* Below the parts, in line with their text: the files the agent made, and the copy button */
+.messageRow.bot .replyEnd {
+  margin-left: 8px;
+  padding-top: 0;
+}
+.messageRow.bot .replyEnd .fileCards:first-child { margin-top: 12px; }
+
+/* ===== Thinking: what the model does between the texts of its reply ===== */
 
 /* As wide as a reply can be, lined up with the reply text */
 .thinking {
@@ -692,15 +835,12 @@
 
 /* ===== Files: attached in the composer, and as cards in messages ===== */
 
-/* With files, the composer wraps: the files on a line of their own above the text */
-.composerWithFiles { flex-wrap: wrap; }
-
+/* In the composer, above the text */
 .attachedFiles {
-  flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 2px 0 2px;
+  padding: 8px 8px 0 10px;
   min-width: 0;
 }
 
@@ -783,9 +923,6 @@
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
-
-/* The send button while the message waits for a file's check */
-.iconButton .spinner { margin: 0; color: var(--muted); }
 
 /* ===== Security dialog: flagged content from the internet in a tool line
    (ToolLine.tsx), a warning with two choices. ===== */
@@ -1062,3 +1199,51 @@
   .viewer[open],
   .viewer::backdrop { animation: none; }
 }
+
+/* ===== The context indicator in the composer (ContextIndicator.tsx): how full
+   the model's context window is. A circle like the attach and send buttons
+   next to it, with their fill and their border, around a ring that fills in
+   the accent colour. An indicator, not a button: it takes no clicks. ===== */
+.contextIndicator {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface);
+  pointer-events: none;
+  user-select: none;
+}
+.contextIndicator svg { display: block; }
+.contextTrack {
+  fill: none;
+  stroke: color-mix(in srgb, var(--muted) 25%, transparent);
+}
+.contextArc {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.3s ease;
+}
+
+/* ===== Checkpoints (CheckpointMarker.tsx): where older steps were summarised
+   for the model. A line like a tool call's, with the summary behind a chevron
+   below it, and for the user's own compaction the way to take it back. ===== */
+.checkpointMore {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  margin: 2px 0 4px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.checkpointMore > .flagged { align-self: stretch; }
+/* Why a compaction failed: the text wraps, next to the warning's 16px box */
+.checkpointFailed { align-items: start; }
+.checkpointFailed > .warnIcon { margin-top: 2px; }

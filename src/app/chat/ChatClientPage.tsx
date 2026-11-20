@@ -55,7 +55,7 @@ export default function ChatClientPage({
   } = useConversations(selection, setSelection);
 
   // Chat state (messages + streaming)
-  const { messages, isStreaming, replyStatus, answering, toolsDone, send, cancel, loadHistory, reset } = useChat({
+  const { messages, isStreaming, replyStatus, toolsDone, context, send, compact, undoCompact, cancel, loadHistory, reset } = useChat({
     selection,
     ensureConversation,
     refreshConversations,
@@ -69,7 +69,7 @@ export default function ChatClientPage({
     let cancelled = false;
     window.history.replaceState(null, "", "/chat");
     openConversation(initialConversationId).then(
-      (msgs) => !cancelled && loadHistory(msgs),
+      (opened) => !cancelled && loadHistory(opened.messages, opened.context),
       () => {}
     );
     return () => {
@@ -108,10 +108,17 @@ export default function ChatClientPage({
   async function handleOpenConversation(id: string) {
     if (isStreaming) return;
     try {
-      loadHistory(await openConversation(id));
+      const opened = await openConversation(id);
+      loadHistory(opened.messages, opened.context);
     } catch {
       // ignore
     }
+  }
+
+  /** The user's last compaction is taken back: the chat shows the conversation as it is stored then. */
+  async function handleUndoCompact() {
+    if (isStreaming || !activeConversationId) return;
+    if (await undoCompact(activeConversationId)) await handleOpenConversation(activeConversationId);
   }
 
   function handleNewConversation() {
@@ -152,14 +159,21 @@ export default function ChatClientPage({
         tick={toolsDone}
       />
       <div className={styles.chatArea}>
-        <MessageList messages={messages} isStreaming={isStreaming} replyStatus={replyStatus} answering={answering} />
+        <MessageList
+          messages={messages}
+          isStreaming={isStreaming}
+          replyStatus={replyStatus}
+          onUndoCompact={handleUndoCompact}
+        />
         <div ref={dockRef} className={styles.composerDock}>
           <Composer
             key={composerKey}
             isStreaming={isStreaming}
             agentId={chosen.kind === "agent" ? chosen.value : null}
             accept={accept}
+            context={context}
             onSend={send}
+            onCompact={compact}
             onCancel={cancel}
           />
         </div>
