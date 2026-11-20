@@ -55,7 +55,7 @@ export default function ChatClientPage({
   } = useConversations(selection, setSelection);
 
   // Chat state (messages + streaming)
-  const { messages, isStreaming, replyStatus, answering, toolsDone, context, send, compact, undoCompact, cancel, loadHistory, reset } = useChat({
+  const { messages, isStreaming, replyStatus, toolsDone, context, send, compact, undoCompact, cancel, loadHistory, reset } = useChat({
     selection,
     ensureConversation,
     refreshConversations,
@@ -163,7 +163,6 @@ export default function ChatClientPage({
           messages={messages}
           isStreaming={isStreaming}
           replyStatus={replyStatus}
-          answering={answering}
           onUndoCompact={handleUndoCompact}
         />
         <div ref={dockRef} className={styles.composerDock}>

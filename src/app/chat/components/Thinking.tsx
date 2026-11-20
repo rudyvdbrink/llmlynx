@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import styles from "../Chat.module.css";
 import { ChevronRightIcon, WarningIcon } from "@/components/icons";
 import CheckpointMarker from "./CheckpointMarker";
@@ -35,22 +35,23 @@ export function showToolCall(id: string) {
 const SHOW_TOOL_EVENT = "llmlynx:show-tool";
 
 /**
- * Shows what the model does before its reply starts, with one status line
- * that says what it is doing now: a spinner with "Loading model…" or
- * "Thinking…" (only the spinner while `status` is null), or, while it uses a
- * tool, the tool's icon pulsing next to what the tool does. While the reply
- * is paused over flagged content, it says that it waits for the user's
- * choice, which the tool line below offers.
+ * Shows what the model does between the texts of its reply (see Reply.tsx),
+ * with one status line that says what it is doing now: a spinner with
+ * "Loading model…" or "Thinking…" (only the spinner while `status` is null),
+ * or, while it uses a tool, the tool's icon pulsing next to what the tool
+ * does. While the reply is paused over flagged content, it says that it waits
+ * for the user's choice, which the tool line below offers.
  *
  * Below it, the trace streams in, in a short area that keeps its end in view:
  * the reasoning, each tool call once it has finished, and a marker where
- * older steps were summarised for the model, in the order they happened. Once the reply starts (`status` "done"), the trace folds away
- * behind a "Show thinking" toggle.
+ * older steps were summarised for the model, in the order they happened. Once
+ * the model writes text again (`status` "done"), the trace folds away behind
+ * a "Show thinking" toggle.
  *
  * Reasoning is rendered as markdown, prepared so that what models do not mean
  * as formatting (such as "2*3") stays as written; see ReasoningText.tsx.
  */
-export default function Thinking({ trace = [], status }: { trace?: TraceItem[]; status: ReplyStatus | "done" | null }) {
+function Thinking({ trace = [], status }: { trace?: TraceItem[]; status: ReplyStatus | "done" | null }) {
   const done = status === "done";
   const [open, setOpen] = useState(false);
   const expanded = !done || open;
@@ -163,3 +164,8 @@ export default function Thinking({ trace = [], status }: { trace?: TraceItem[]; 
     </div>
   );
 }
+
+// A reply's parts are made anew with each line of its stream: one whose items did not change does not render again
+const sameItems = (a: TraceItem[] = [], b: TraceItem[] = []) => a.length === b.length && a.every((item, i) => item === b[i]);
+
+export default memo(Thinking, (a, b) => a.status === b.status && sameItems(a.trace, b.trace));

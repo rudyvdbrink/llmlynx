@@ -37,7 +37,7 @@ export const runtime = "nodejs";
 // line, the cards of the stored files, and { status: "reading" } while they
 // are made ready, before the model answers.
 // Responds with an NDJSON stream, which ends with an { end: true } line, and the
-// conversation id in X-Conversation-Id. X-Tools is "1" when the model can call tools.
+// conversation id in X-Conversation-Id.
 // A { pause: { id, tool, source } } line says the reply waits for the user's
 // choice about flagged content, sent with POST /api/chat/pauses/:id.
 // On OpenAI and OpenRouter, { cost } lines say what the conversation cost so far
@@ -199,7 +199,6 @@ export async function POST(req: NextRequest) {
       "Content-Type": "text/plain; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       "X-Conversation-Id": conversationId,
-      ...(tools.length ? { "X-Tools": "1" } : {}),
     },
   });
 }

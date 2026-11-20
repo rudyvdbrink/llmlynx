@@ -1,8 +1,7 @@
 // Turns a conversation's stored steps into the messages the chat view shows.
 // The steps of one reply (assistant steps that call tools, the tool results,
 // and the answer) become one message: its trace holds the reasoning, the text
-// written before a tool call (unless it is meant for the user, see
-// looksLikeAnswer), and the tool calls, in order; its content is the answer,
+// of each step, and the tool calls, in order; its content is all that text,
 // and its files those the file tools made, the images, SVG and HTML a
 // run of code made, and those the model shared (see shownInChat), each once,
 // as its newest version (see withFileCards). A user
@@ -13,7 +12,7 @@
 import type { Prisma } from "@prisma/client";
 import { toolIcon } from "@/lib/agentTools";
 import { shownInChat, withFileCards, type FileCard } from "@/lib/files";
-import { addReasoning, addToAnswer, looksLikeAnswer, upsertToolStep } from "@/lib/trace";
+import { addReasoning, addText, traceText, upsertToolStep } from "@/lib/trace";
 import type { Checkpoint, ContextFill, ConversationWithMessages, Role, StepSecurity, ToolStep, TraceItem } from "@/lib/types";
 import { toolLabel } from "@/server/tools/definitions";
 import { MAX_COUNTED_WINDOW } from "./budget";
@@ -122,18 +121,11 @@ export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = n
         reply = { id: row.id, role: "assistant", content: "", trace: [], createdAt: row.createdAt.toISOString() };
         out.push(reply);
       }
-      // Each step's reasoning starts a new trace item or paragraph
+      // Each step's reasoning and text start a new trace item or paragraph
       reply.trace = addReasoning(reply.trace, row.reasoning ?? "", true);
-      const calls = storedCalls(row.toolCalls);
-      if (calls.length === 0) {
-        reply.content = addToAnswer(reply.content, row.content);
-        continue;
-      }
-      // Text written before calling tools is part of the trace, unless it is meant for the user
-      if (looksLikeAnswer(row.content)) reply.content = addToAnswer(reply.content, row.content);
-      else reply.trace = addReasoning(reply.trace, row.content, true);
+      reply.trace = addText(reply.trace, row.content, true);
       // A call without a stored result was stopped, or its result could not be stored
-      for (const call of calls) {
+      for (const call of storedCalls(row.toolCalls)) {
         reply.trace = upsertToolStep(reply.trace, {
           id: call.id,
           name: call.name,
@@ -168,6 +160,7 @@ export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = n
   }
 
   for (const message of out) {
+    if (message.role === "assistant") message.content = traceText(message.trace ?? []);
     if (message.trace?.length === 0) delete message.trace;
   }
   return out;

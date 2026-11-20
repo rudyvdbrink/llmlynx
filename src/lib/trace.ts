@@ -1,35 +1,35 @@
-// Building a reply's trace (what the model did before its answer, in order).
-// Used by the chat view while a reply streams in, and by the server when a
-// conversation is opened again. Updates return a new array, for React state.
+// Building a reply's trace (everything the model did, in order, its text
+// included). Used by the chat view while a reply streams in, and by the server
+// when a conversation is opened again. Updates return a new array, for React state.
 
 import type { ToolStep, TraceItem } from "./types";
 
 /**
- * Adds reasoning to the end of the trace: to the reasoning it ends with, or
- * as a new item after a tool step. With `paragraph`, the text starts a new
- * paragraph instead of continuing the last one (for text of another step).
+ * Adds reasoning or text to the end of the trace: to the item of that kind it
+ * ends with, or as a new item. A new item does not start with white space, so
+ * white space alone starts none. With `paragraph`, the words start a new
+ * paragraph instead of continuing the last one (for those of another step).
  */
-export function addReasoning(trace: TraceItem[], text: string, paragraph = false): TraceItem[] {
-  if (!text) return trace;
+function addWords(trace: TraceItem[], kind: "reasoning" | "text", words: string, paragraph: boolean): TraceItem[] {
   const last = trace[trace.length - 1];
-  if (last?.kind !== "reasoning") return [...trace, { kind: "reasoning", text }];
-  const joined = paragraph && last.text.trim() ? `${last.text.trimEnd()}\n\n${text}` : last.text + text;
-  return [...trace.slice(0, -1), { kind: "reasoning", text: joined }];
+  if (last?.kind !== kind) {
+    const text = words.trimStart();
+    return text ? [...trace, { kind, text }] : trace;
+  }
+  if (!words) return trace;
+  const joined = paragraph && last.text.trim() ? `${last.text.trimEnd()}\n\n${words}` : last.text + words;
+  return [...trace.slice(0, -1), { kind, text: joined }];
 }
 
-/**
- * Whether text a model wrote before calling a tool is meant for the user, and
- * so is part of the answer, not the trace. Models such as qwen3.5 first say
- * what they are about to do, in one paragraph that can run to hundreds of
- * characters ("Let me read the rest to confirm…"). Text that goes on past a
- * line break is taken for the answer. Text that starts with such text is too,
- * so text that shows as the answer while it streams in stays there when a
- * tool call follows it.
- */
-export const looksLikeAnswer = (text: string) => /\S\s*\n\s*\S/.test(text);
+/** Adds reasoning to the end of the trace (see addWords). */
+export const addReasoning = (trace: TraceItem[], text: string, paragraph = false) => addWords(trace, "reasoning", text, paragraph);
 
-/** Adds the text of another step to an answer, as a new paragraph. */
-export const addToAnswer = (answer: string, text: string) => (answer && text ? `${answer}\n\n${text}` : answer || text);
+/** Adds text the model wrote to the user to the end of the trace (see addWords). */
+export const addText = (trace: TraceItem[], text: string, paragraph = false) => addWords(trace, "text", text, paragraph);
+
+/** The text of a reply in one piece, each part a paragraph. */
+export const traceText = (trace: TraceItem[]) =>
+  trace.flatMap((item) => (item.kind === "text" && item.text.trim() ? [item.text.trim()] : [])).join("\n\n");
 
 /** Adds a tool step to the trace, or updates the one with the same id. */
 export function upsertToolStep(trace: TraceItem[], step: Partial<ToolStep> & { id: string }): TraceItem[] {

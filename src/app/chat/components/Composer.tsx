@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import styles from "../Chat.module.css";
 import { isNarrowViewport, scrollRoom } from "@/lib/viewport";
 import { PaperclipIcon, XIcon } from "@/components/icons";
@@ -19,6 +19,13 @@ const COMPACT = /^\/compact(?:\s+([\s\S]*))?$/i;
 const NOTE_MS = 5000;
 
 const NOT_CHECKED = "The file could not be checked; try again in a moment";
+
+// The textarea's greatest height, with its padding
+const MAX_HEIGHT = 240;
+// The least room between the text on the last line and the first button
+const BUTTON_GAP = 8;
+// The icons in the buttons
+const ICON_SIZE = 20;
 
 /**
  * A file in the composer, with a preview of an image. It goes to the server
@@ -73,35 +80,95 @@ export default function Composer({
   const waitingRef = useRef(false);
   const [note, setNote] = useState<string | null>(null);
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null);
+  // The textarea's box, the hidden copy of its text, and the buttons at its bottom right (see fit)
+  const inputRef = useRef<HTMLDivElement | null>(null);
+  const mirrorRef = useRef<HTMLDivElement | null>(null);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
+  // The text when the textarea was last fitted to it
+  const typed = useRef("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const noteTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const canAttach = !!accept && !!agentId && (accept.documents || accept.images);
 
-  // Auto-resize. Above where it can drop to (see Chat.module.css), the composer
-  // would grow downward with the page; the page scrolls along, so it grows upward.
-  useEffect(() => {
+  /**
+   * Fits the textarea to its text: one line at least, up to MAX_HEIGHT (or 40%
+   * of the viewport), and then it scrolls. The buttons sit at the bottom right,
+   * beside the last line; when the text on that line would run under them, a
+   * line of room goes below it (as padding, which also scrolls), so the end of
+   * the text never goes under them. Scrolled back, lines pass behind them (see
+   * Chat.module.css). A copy of the text in a hidden element (the mirror) says
+   * where the last line ends.
+   */
+  const fit = useCallback(() => {
     const ta = textAreaRef.current;
-    if (!ta) return;
+    const box = inputRef.current;
+    const mirror = mirrorRef.current;
+    const actions = actionsRef.current;
+    if (!ta || !box || !mirror || !actions) return;
+    const style = getComputedStyle(ta);
+    const line = parseFloat(style.lineHeight);
+    for (const key of ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "tabSize", "paddingLeft", "paddingRight"] as const) {
+      mirror.style[key] = style[key];
+    }
+    // Without the scrollbar, where the text wraps
+    mirror.style.width = `${ta.clientWidth}px`;
+    mirror.textContent = ta.value;
+    const end = document.createElement("span");
+    end.textContent = "\u200b";
+    mirror.append(end);
+    const text = mirror.offsetHeight;
+    const runsUnder = end.offsetLeft > actions.offsetLeft - BUTTON_GAP;
+    // The padding below the text (see Chat.module.css), and a line more when it runs under the buttons
+    const below = parseFloat(style.getPropertyValue("--padding-below")) + (runsUnder ? line : 0);
+    const content = Math.max(line, text) + parseFloat(style.paddingTop) + below;
+    const max = Math.min(MAX_HEIGHT, window.innerHeight * 0.4);
+    const scrolls = content > max;
+
+    // Above where it can drop to (see Chat.module.css), the composer would grow
+    // downward with the page; the page scrolls along, so it grows upward.
     const fromEnd = scrollRoom() - window.scrollY;
-    ta.style.height = "0px";
-    ta.style.height = Math.min(200, ta.scrollHeight) + "px";
+    ta.style.paddingBottom = `${below}px`;
+    ta.style.height = `${Math.min(content, max)}px`;
+    box.toggleAttribute("data-scrolls", scrolls);
+    // Typing at the end: the end shows in full, with the room below it
+    if (scrolls && ta.value !== typed.current && ta.selectionEnd === ta.value.length) ta.scrollTop = ta.scrollHeight;
+    typed.current = ta.value;
     if (fromEnd < composerDrop(ta)) window.scrollTo(0, scrollRoom() - fromEnd);
-  }, [input]);
+  }, []);
+
+  // Again when the text changes, and when the buttons beside it do
+  useLayoutEffect(fit, [fit, input, context, canAttach, isStreaming, waiting]);
+
+  // And when the box gets narrower or wider
+  useEffect(() => {
+    const box = inputRef.current;
+    if (!box) return;
+    let width = box.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (box.clientWidth === width) return;
+      width = box.clientWidth;
+      fit();
+    });
+    observer.observe(box);
+    return () => observer.disconnect();
+  }, [fit]);
 
   // The on-screen keyboard shortens the viewport (see the chat layout). While the
   // textarea has focus, scroll down by the same amount, so the messages just above
   // the composer stay in view instead of sliding under it. When the keyboard
-  // closes, the browser itself keeps the page end in place.
+  // closes, the browser itself keeps the page end in place. The textarea's
+  // greatest height goes with the viewport's.
   useEffect(() => {
     let height = window.innerHeight;
     function onResize() {
       const shrunk = height - window.innerHeight;
       height = window.innerHeight;
+      fit();
       if (shrunk > 0 && document.activeElement === textAreaRef.current) window.scrollBy(0, shrunk);
     }
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, []);
+  }, [fit]);
 
   // The textarea is disabled while streaming and loses focus. Give it back when
   // the reply completes (not on mobile, where focus opens the keyboard).
@@ -245,7 +312,7 @@ export default function Composer({
 
   return (
     <form
-      className={`${styles.composer} ${attached.length || note ? styles.composerWithFiles : ""}`}
+      className={styles.composer}
       onSubmit={(e) => {
         e.preventDefault();
         submit();
@@ -304,85 +371,90 @@ export default function Composer({
           )}
         </div>
       )}
-      <textarea
-        ref={textAreaRef}
-        value={input}
-        disabled={isStreaming}
-        onChange={(e) => setInput(e.target.value)}
-        onKeyDown={(e) => {
-          // Enter sends, Shift+Enter adds a newline. Ignore Enter while an IME is composing.
-          if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      <div ref={inputRef} className={styles.composerInput}>
+        <textarea
+          ref={textAreaRef}
+          value={input}
+          disabled={isStreaming}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter sends, Shift+Enter adds a newline. Ignore Enter while an IME is composing.
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              submit();
+            }
+          }}
+          onPaste={(e) => {
+            // Pasted files, such as a screenshot, are attached
+            if (!canAttach || !e.clipboardData.files.length) return;
             e.preventDefault();
-            submit();
-          }
-        }}
-        onPaste={(e) => {
-          // Pasted files, such as a screenshot, are attached
-          if (!canAttach || !e.clipboardData.files.length) return;
-          e.preventDefault();
-          addFiles([...e.clipboardData.files]);
-        }}
-        placeholder={isStreaming ? "Model is responding..." : "Ask the llynx..."}
-        aria-label="Message"
-        rows={1}
-      />
-      {/* To the left of the attach button, or in its place when the chat takes no files */}
-      {context && <ContextIndicator used={context.used} full={context.full} />}
-      {canAttach && (
-        <>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            hidden
-            accept={acceptAttribute(accept!)}
-            onChange={(e) => {
-              addFiles([...(e.target.files ?? [])]);
-              // So that picking the same file again also counts
-              e.target.value = "";
-            }}
-          />
-          <button
-            type="button"
-            aria-label="Attach files"
-            title="Attach files"
-            className={styles.iconButton}
-            disabled={isStreaming}
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <PaperclipIcon size={20} />
-          </button>
-        </>
-      )}
-      {isStreaming ? (
-        <button
-          type="button"
-          aria-label="Stop response"
-          className={`${styles.stopButton} ${styles.iconButton}`}
-          onClick={onCancel}
-        >
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <rect x="7" y="7" width="10" height="10" rx="1" />
-          </svg>
-        </button>
-      ) : waiting ? (
-        // Sent while a file was still being checked: it goes by itself when the check is done
-        <button
-          type="button"
-          aria-label="Sending when the file is checked"
-          title="Sending when the file is checked"
-          disabled
-          className={styles.iconButton}
-        >
-          <span className={styles.spinner} aria-hidden="true" />
-        </button>
-      ) : (
-        <button type="submit" aria-label="Send" disabled={!sendable} className={styles.iconButton}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-            <path d="M4 12L20 4L12 20L11 13L4 12Z" transform="translate(-0.5 0)" />
-          </svg>
-        </button>
-      )}
+            addFiles([...e.clipboardData.files]);
+          }}
+          placeholder={isStreaming ? "Answering..." : "Ask the llynx..."}
+          aria-label="Message"
+          rows={1}
+        />
+        <div ref={mirrorRef} className={styles.composerMirror} aria-hidden="true" />
+        <div ref={actionsRef} className={styles.composerActions}>
+          {/* To the left of the attach button, or in its place when the chat takes no files */}
+          {context && <ContextIndicator used={context.used} full={context.full} />}
+          {canAttach && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                accept={acceptAttribute(accept!)}
+                onChange={(e) => {
+                  addFiles([...(e.target.files ?? [])]);
+                  // So that picking the same file again also counts
+                  e.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                aria-label="Attach files"
+                title="Attach files"
+                className={styles.composerButton}
+                disabled={isStreaming}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <PaperclipIcon size={ICON_SIZE} />
+              </button>
+            </>
+          )}
+          {isStreaming ? (
+            <button
+              type="button"
+              aria-label="Stop response"
+              className={`${styles.stopButton} ${styles.composerButton}`}
+              onClick={onCancel}
+            >
+              <svg width={ICON_SIZE} height={ICON_SIZE} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="6.5" y="6.5" width="11" height="11" rx="1.5" />
+              </svg>
+            </button>
+          ) : waiting ? (
+            // Sent while a file was still being checked: it goes by itself when the check is done
+            <button
+              type="button"
+              aria-label="Sending when the file is checked"
+              title="Sending when the file is checked"
+              disabled
+              className={styles.composerButton}
+            >
+              <span className={styles.spinner} aria-hidden="true" />
+            </button>
+          ) : (
+            <button type="submit" aria-label="Send" disabled={!sendable} className={styles.composerButton}>
+              <svg width={ICON_SIZE} height={ICON_SIZE} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M4 12L20 4L12 20L11 13L4 12Z" transform="translate(-0.5 0)" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
     </form>
   );
 }

@@ -238,6 +238,7 @@ describe("a checkpoint made while a reply ran", () => {
     expect(messages[1].trace).toEqual([
       expect.objectContaining({ kind: "tool" }),
       { kind: "checkpoint", checkpoint: { id: expect.any(String), summary: "[Summary of the steps so far.]", by: "auto" } },
+      { kind: "text", text: "Done." },
     ]);
     // The indicator goes by the last request: 70% of the window it ran in is full
     expect(contextFill(rows)).toEqual({ used: 1_700, full: 5_600 });

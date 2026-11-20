@@ -48,18 +48,20 @@ export type ToolStep = {
 // still be taken back, as nothing was said since.
 export type Checkpoint = { id: string; summary: string; by: "user" | "auto"; canUndo?: boolean };
 
-// What a model did before its answer, in order: its reasoning (and any text it
-// wrote before calling a tool), the tools it called, and the checkpoints that
+// What a model did while it worked on a reply, in order: its reasoning, the
+// text it wrote to the user, the tools it called, and the checkpoints that
 // were made while it worked. See lib/trace.ts.
 export type TraceItem =
   | { kind: "reasoning"; text: string }
+  | { kind: "text"; text: string }
   | { kind: "tool"; step: ToolStep }
   | { kind: "checkpoint"; checkpoint: Checkpoint };
 
-// A message as shown in the chat view. `trace` is what the model did before
-// its reply, `files` the files the user attached or the agent created, and
-// `error` says why its reply failed. A message with `checkpoint` is not one of
-// the conversation: it marks where the user had the conversation summarised.
+// A message as shown in the chat view. A reply's `trace` is everything it did,
+// its text included, and its `content` that text in one piece (what its copy
+// button takes). `files` are the files the user attached or the agent created,
+// and `error` says why a reply failed. A message with `checkpoint` is not one
+// of the conversation: it marks where the user had the conversation summarised.
 export type DisplayMessage = ChatMessage & { trace?: TraceItem[]; files?: FileCard[]; error?: string; checkpoint?: Checkpoint };
 
 // What a model is busy with before its reply starts, sent as { status } lines by /api/chat.
@@ -85,7 +87,7 @@ export type ConversationSummary = {
 
 export type ConversationWithMessages = ConversationSummary & {
   // The user's messages and the replies; a reply that used tools is one message
-  // whose trace holds its reasoning and tool calls in order
+  // whose trace holds its reasoning, text and tool calls in order
   messages: {
     id: string;
     role: Role;

@@ -3,20 +3,11 @@
 // stream can be replayed through it line by line (see streamedReply.test.ts).
 
 import { withFileCards, type FileCard } from "@/lib/files";
-import { addReasoning, addToAnswer, looksLikeAnswer, upsertToolStep } from "@/lib/trace";
+import { addReasoning, addText, upsertToolStep } from "@/lib/trace";
 import type { Checkpoint, ToolStep, TraceItem } from "@/lib/types";
 
 export type StreamedReply = {
-  // The text of earlier steps that shows as the answer (see looksLikeAnswer)
-  answer: string;
-  // The text of the current step: the answer, unless a tool call follows it
-  text: string;
-  // Whether `text` shows as the answer yet. While the model can call tools,
-  // it is held back until it looks like an answer or the reply ends: a model
-  // only says it calls a tool after the text before the call. Once shown, it
-  // stays in the answer.
-  shown: boolean;
-  // The reasoning and tool calls so far, in order
+  // Everything the reply did so far, in order: reasoning, text, tool calls and checkpoints
   trace: TraceItem[];
   // The files the agent made, each once
   files: FileCard[];
@@ -25,10 +16,7 @@ export type StreamedReply = {
   ended: boolean;
 };
 
-export const NEW_REPLY: StreamedReply = { answer: "", text: "", shown: false, trace: [], files: [], ended: false };
-
-/** The text that shows as the answer. */
-export const shownText = ({ answer, text, shown }: StreamedReply) => (shown ? addToAnswer(answer, text) : answer);
+export const NEW_REPLY: StreamedReply = { trace: [], files: [], ended: false };
 
 export const isFileList = (value: unknown): value is FileCard[] =>
   Array.isArray(value) && value.every((f) => typeof f?.id === "string" && typeof f?.name === "string");
@@ -49,11 +37,11 @@ const isCheckpointLine = (value: unknown): value is Checkpoint =>
 const withoutPauses = (trace: TraceItem[]): TraceItem[] =>
   trace.map((item) => (item.kind === "tool" && item.step.pauseId ? { kind: "tool", step: { ...item.step, pauseId: undefined } } : item));
 
-/**
- * The reply after one line of the stream; the same object when the line does
- * not change it. `mayCallTools` says the model can call tools (X-Tools).
- */
-export function readReplyLine(reply: StreamedReply, value: unknown, mayCallTools: boolean): StreamedReply {
+// White space that would start a text or reasoning item does not change the trace
+const withTrace = (reply: StreamedReply, trace: TraceItem[]): StreamedReply => (trace === reply.trace ? reply : { ...reply, trace });
+
+/** The reply after one line of the stream; the same object when the line does not change it. */
+export function readReplyLine(reply: StreamedReply, value: unknown): StreamedReply {
   const line = value as {
     message?: { content?: unknown; thinking?: unknown };
     tool?: unknown;
@@ -67,17 +55,7 @@ export function readReplyLine(reply: StreamedReply, value: unknown, mayCallTools
   if (line?.end === true) next = { ...next, ended: true };
   // Files the agent made show below its answer, each once
   if (isFileList(line?.files)) next = { ...next, files: withFileCards(next.files, line.files) };
-  if (isToolLine(line?.tool)) {
-    // Text before a tool call that has not shown as the answer is not the answer: it moves into the trace
-    const { answer, text, shown, trace } = next;
-    next = {
-      ...next,
-      answer: shown ? addToAnswer(answer, text) : answer,
-      text: "",
-      shown: false,
-      trace: upsertToolStep(shown ? trace : addReasoning(trace, text, true), line.tool),
-    };
-  }
+  if (isToolLine(line?.tool)) next = { ...next, trace: upsertToolStep(next.trace, line.tool) };
   // The reply waits: the tool line of that call offers the choice
   if (isPauseLine(line?.pause)) {
     next = { ...next, trace: upsertToolStep(next.trace, { id: line.pause.tool, pauseId: line.pause.id }) };
@@ -88,16 +66,13 @@ export function readReplyLine(reply: StreamedReply, value: unknown, mayCallTools
     next = { ...next, trace: [...next.trace, { kind: "checkpoint", checkpoint: { id, summary, by: "auto" } }] };
   }
   const thought = line?.message?.thinking;
-  if (typeof thought === "string" && thought) next = { ...next, trace: addReasoning(next.trace, thought) };
+  if (typeof thought === "string" && thought) next = withTrace(next, addReasoning(next.trace, thought));
   const delta = line?.message?.content;
-  if (typeof delta === "string" && delta) {
-    const text = next.text + delta;
-    next = { ...next, text, shown: next.shown || (!!text.trim() && (!mayCallTools || looksLikeAnswer(text))) };
-  }
+  if (typeof delta === "string" && delta) next = withTrace(next, addText(next.trace, delta));
   // Ollama and the OpenAI-compatible providers report a failed chat as an { error } line, which ends the reply
-  if (typeof line?.error === "string" && line.error) next = { ...next, shown: true, error: line.error };
+  if (typeof line?.error === "string" && line.error) next = { ...next, error: line.error };
   return next;
 }
 
-/** The reply once its stream is over: text still held back is the answer, as no tool call followed it. */
-export const endReply = (reply: StreamedReply): StreamedReply => ({ ...reply, shown: true, trace: withoutPauses(reply.trace) });
+/** The reply once its stream is over. */
+export const endReply = (reply: StreamedReply): StreamedReply => ({ ...reply, trace: withoutPauses(reply.trace) });

@@ -1,12 +1,14 @@
 // Tests of what a reply shows while it streams in: replies are replayed token
 // by token through what the chat view does with each line of the stream, and
-// after every line nothing that showed as the answer may be taken back.
+// after every line nothing that showed as text may be taken back.
 
 import { describe, expect, it } from "vitest";
 import { toolIcon } from "@/lib/agentTools";
+import { traceText } from "@/lib/trace";
+import type { TraceItem } from "@/lib/types";
 import { toDisplayMessages } from "@/server/chat/display";
 import recorded from "@/test/replies/code-review.json";
-import { endReply, NEW_REPLY, readReplyLine, shownText, type StreamedReply } from "./streamedReply";
+import { endReply, NEW_REPLY, readReplyLine, type StreamedReply } from "./streamedReply";
 
 type Step = { reasoning: string; content: string; calls?: { id: string; name: string; label: string; error: boolean }[] };
 
@@ -34,10 +36,10 @@ function streamOf(steps: Step[]): unknown[] {
 }
 
 /** The reply after each line of `lines`, and once the stream is over. */
-function replay(lines: unknown[], mayCallTools = true): StreamedReply[] {
+function replay(lines: unknown[]): StreamedReply[] {
   const states: StreamedReply[] = [];
   let reply = NEW_REPLY;
-  for (const line of lines) states.push((reply = readReplyLine(reply, line, mayCallTools)));
+  for (const line of lines) states.push((reply = readReplyLine(reply, line)));
   states.push(endReply(reply));
   return states;
 }
@@ -72,36 +74,41 @@ function reopened(steps: Step[]) {
   return { content: reply.content, trace: reply.trace ?? [] };
 }
 
+/** The text items of a trace. */
+const texts = (trace: TraceItem[]) => trace.flatMap((item) => (item.kind === "text" ? [item.text] : []));
+
 /**
- * Checks that, after every line, what shows as the answer is the start of the
- * answer the reply ends with (so nothing shows as the answer and then moves
- * into the trace), and that the reply ends as a reopened conversation shows it.
+ * Checks that, after every line, each text that shows is the start of the
+ * text it ends as (so no text shows and then moves or goes), and that the
+ * reply ends as a reopened conversation shows it.
  */
-function expectSteadyAnswer(steps: Step[], states: StreamedReply[]) {
+function expectSteadyText(steps: Step[], states: StreamedReply[]) {
   const last = states[states.length - 1];
-  const answer = shownText(last);
+  const final = texts(last.trace);
   states.forEach((state, i) => {
-    const shown = shownText(state);
-    if (!answer.startsWith(shown)) throw new Error(`After line ${i}, the answer showed text it later took back:\n${shown.slice(-300)}`);
+    const shown = texts(state.trace);
+    if (!shown.every((text, j) => final[j]?.startsWith(text))) {
+      throw new Error(`After line ${i}, the reply showed text it later took back:\n${shown.join("\n---\n").slice(-300)}`);
+    }
   });
-  expect({ content: answer, trace: last.trace }).toEqual(reopened(steps));
+  expect({ content: traceText(last.trace), trace: last.trace }).toEqual(reopened(steps));
 }
 
 describe("a reply that streams in", () => {
   const steps = recorded.steps as Step[];
 
-  it("never shows what a model says before a tool call as the answer, also when it is long", () => {
+  it("shows the text of each step between its reasoning and tool calls, also when it is long", () => {
     for (const { reasoning, content } of steps) expect(tokens(reasoning + content).join("")).toBe(reasoning + content);
     // The reply has text of more than 300 characters on one line before a tool call
     expect(steps.some((s) => s.calls && s.content.length > 300)).toBe(true);
 
     const states = replay(streamOf(steps));
-    expectSteadyAnswer(steps, states);
-    // That text stays in the trace: the answer is the text of the last step only
-    expect(shownText(states[states.length - 1])).toBe(steps[steps.length - 1].content);
+    expectSteadyText(steps, states);
+    const last = states[states.length - 1];
+    expect(texts(last.trace).map((t) => t.trim())).toEqual(steps.flatMap((s) => (s.content.trim() ? [s.content.trim()] : [])));
   });
 
-  it("keeps text meant for the user in the answer when a tool call follows it", () => {
+  it("keeps each step's text in its place, between the tool calls", () => {
     const toolReply: Step[] = [
       { reasoning: "The user wants the data.", content: "Let me fetch it.", calls: [{ id: "c1", name: "web_read", label: "Read data.example", error: false }] },
       {
@@ -112,17 +119,28 @@ describe("a reply that streams in", () => {
       { reasoning: "", content: "The file is above." },
     ];
     const states = replay(streamOf(toolReply));
-    expectSteadyAnswer(toolReply, states);
-    expect(shownText(states[states.length - 1])).toBe(`${toolReply[1].content}\n\n${toolReply[2].content}`);
+    expectSteadyText(toolReply, states);
+    const last = states[states.length - 1];
+    expect(last.trace.map((item) => item.kind)).toEqual(["reasoning", "text", "tool", "reasoning", "text", "tool", "text"]);
+    expect(traceText(last.trace)).toBe(toolReply.map((s) => s.content).join("\n\n"));
   });
 
-  it("streams the answer once it goes past a line break, before the reply ends", () => {
-    const answer: Step[] = [{ reasoning: "Easy.", content: "First line.\nSecond line, and more." }];
-    const lines = streamOf(answer);
-    const states = replay(lines);
-    expectSteadyAnswer(answer, states);
-    const beforeEnd = states[lines.length - 2];
-    expect(shownText(beforeEnd)).toBe(answer[0].content);
+  it("shows text at once, before a line break and before the reply ends", () => {
+    const answer: Step[] = [{ reasoning: "", content: "Hello there." }];
+    const states = replay(streamOf(answer));
+    // After the status line and the first token
+    expect(texts(states[1].trace)).toEqual(["Hello"]);
+    expectSteadyText(answer, states);
+  });
+
+  it("starts no text with white space alone", () => {
+    const lines = [
+      { message: { role: "assistant", content: "", thinking: "Plan." }, done: false },
+      { message: { role: "assistant", content: "\n\n" }, done: false },
+      { tool: { id: "c1", name: "web_read", label: "Reading a.example", icon: toolIcon("web_read"), state: "running" } },
+      { end: true },
+    ];
+    expect(replay(lines).at(-1)!.trace.map((item) => item.kind)).toEqual(["reasoning", "tool"]);
   });
 
   it("puts a checkpoint that was made while the reply ran in its trace, where it happened", () => {
@@ -138,18 +156,10 @@ describe("a reply that streams in", () => {
       { end: true },
     ];
     const last = replay(lines).at(-1)!;
-    expect(shownText(last)).toBe("The answer.");
     expect(last.trace).toEqual([
       expect.objectContaining({ kind: "tool" }),
       { kind: "checkpoint", checkpoint: { id: "k1", summary: "[Summary of the steps so far.]", by: "auto" } },
+      { kind: "text", text: "The answer." },
     ]);
-  });
-
-  it("shows text at once when the model cannot call tools", () => {
-    const answer: Step[] = [{ reasoning: "", content: "Hello there." }];
-    const states = replay(streamOf(answer), false);
-    // After the status line and the first token
-    expect(shownText(states[1])).toBe("Hello");
-    expectSteadyAnswer(answer, states);
   });
 });

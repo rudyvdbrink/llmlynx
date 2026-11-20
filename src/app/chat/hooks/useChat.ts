@@ -5,7 +5,8 @@ import { readNdjson } from "@/lib/ndjson";
 import { parseSelection } from "@/lib/selection";
 import type { FileCard } from "@/lib/files";
 import type { Checkpoint, ContextFill, DisplayMessage, ReplyStatus } from "@/lib/types";
-import { endReply, isFileList, isToolLine, NEW_REPLY, readReplyLine, shownText, type StreamedReply } from "./streamedReply";
+import { traceText } from "@/lib/trace";
+import { endReply, isFileList, isToolLine, NEW_REPLY, readReplyLine, type StreamedReply } from "./streamedReply";
 
 const isReplyStatus = (value: unknown): value is ReplyStatus =>
   value === "reading" || value === "loading" || value === "thinking" || value === "compacting";
@@ -60,8 +61,6 @@ export function useChat({
   const [isStreaming, setIsStreaming] = useState(false);
   // What the model is doing until its reply starts; null until the server says
   const [replyStatus, setReplyStatus] = useState<ReplyStatus | null>(null);
-  // True once the reply's answer shows, and again false while the model uses a tool
-  const [answering, setAnswering] = useState(false);
   // Goes up each time a tool call of a reply ends, so the sandbox panel loads again
   const [toolsDone, setToolsDone] = useState(0);
   // How full the model's context window is, as the last request said; null while that is not known
@@ -107,7 +106,6 @@ export function useChat({
       ]);
       setIsStreaming(true);
       setReplyStatus(null);
-      setAnswering(false);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -122,12 +120,11 @@ export function useChat({
       let reply: StreamedReply = NEW_REPLY;
       const show = () => {
         updateReply({
-          content: shownText(reply),
+          content: traceText(reply.trace),
           ...(reply.trace.length ? { trace: reply.trace } : {}),
           ...(reply.files.length ? { files: reply.files } : {}),
           ...(reply.error ? { error: reply.error } : {}),
         });
-        setAnswering(reply.shown);
       };
 
       try {
@@ -153,7 +150,6 @@ export function useChat({
           throw new Error((await res.text().catch(() => "")) || `Request failed (status ${res.status})`);
         }
 
-        const mayCallTools = res.headers.get("X-Tools") === "1";
         await readNdjson(res.body, (obj) => {
           const line = obj as { status?: unknown; userFiles?: unknown; tool?: unknown; cost?: unknown; context?: unknown };
           if (isReplyStatus(line?.status)) setReplyStatus(line.status);
@@ -164,7 +160,7 @@ export function useChat({
             for (const card of cards) if (card.url) URL.revokeObjectURL(card.url);
             updateUserMessage({ files: line.userFiles });
           }
-          const next = readReplyLine(reply, obj, mayCallTools);
+          const next = readReplyLine(reply, obj);
           if (next !== reply) {
             reply = next;
             show();
@@ -265,5 +261,5 @@ export function useChat({
     setContext(null);
   }, []);
 
-  return { messages, isStreaming, replyStatus, answering, toolsDone, context, send, compact, undoCompact, cancel, loadHistory, reset };
+  return { messages, isStreaming, replyStatus, toolsDone, context, send, compact, undoCompact, cancel, loadHistory, reset };
 }
