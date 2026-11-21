@@ -139,7 +139,7 @@ function PackagesList({ packages }: { packages: SandboxPackageRow[] }) {
   );
 }
 
-function Body({ tab, data, conversationId, reload, onShowRun, split, onSplit }: {
+function Body({ tab, data, conversationId, reload, onShowRun, split, onSplit, reveal }: {
   tab: Tab;
   data: SandboxView;
   conversationId: string;
@@ -147,9 +147,12 @@ function Body({ tab, data, conversationId, reload, onShowRun, split, onSplit }: 
   onShowRun: (toolCallId: string) => void;
   split: number | null;
   onSplit: (split: number) => void;
+  reveal: { id: string } | null;
 }) {
   if (tab === "files") {
-    return <FilesTab files={data.files} conversationId={conversationId} onChanged={reload} split={split} onSplit={onSplit} />;
+    return (
+      <FilesTab files={data.files} conversationId={conversationId} onChanged={reload} split={split} onSplit={onSplit} reveal={reveal} />
+    );
   }
   if (tab === "runs") {
     if (!data.runs.length) return <p className={styles.empty}>No runs yet</p>;
@@ -173,7 +176,8 @@ function Body({ tab, data, conversationId, reload, onShowRun, split, onSplit }: 
  * while code runs. From 1200px it sits beside the chat, which narrows; below
  * that it opens over the chat, with a backdrop that closes it; on phones it
  * covers the full width. `tick` changes when a run, an install or a download
- * of the reply ends, and the panel loads again.
+ * of the reply ends, and the panel loads again. `reveal` is a file a card in
+ * the chat asked to show: the files tab shows its preview.
  */
 export default function SandboxPanel({
   conversationId,
@@ -181,14 +185,21 @@ export default function SandboxPanel({
   open,
   onOpenChange,
   tick,
+  reveal,
 }: {
   conversationId: string | null;
   available: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   tick: number;
+  reveal: { id: string } | null;
 }) {
   const [tab, setTab] = useState<Tab>("files");
+  const [revealed, setRevealed] = useState(reveal);
+  if (reveal !== revealed) {
+    setRevealed(reveal);
+    if (reveal) setTab("files");
+  }
   // The tree's share of the files tab beside a preview, once the divider was dragged; kept until the page reloads
   const [split, setSplit] = useState<number | null>(null);
   const { data, error, reload } = useSandbox(conversationId, open && available, tick);
@@ -242,6 +253,7 @@ export default function SandboxPanel({
                 onShowRun={showRun}
                 split={split}
                 onSplit={setSplit}
+                reveal={reveal}
               />
             ) : (
               <p className={styles.empty}>{error ?? "Loading…"}</p>

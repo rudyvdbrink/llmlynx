@@ -16,6 +16,7 @@ import { useComposerGlide } from "./hooks/useComposerGlide";
 import MessageList from "./components/MessageList";
 import Composer from "./components/Composer";
 import SandboxPanel from "./components/sandbox/SandboxPanel";
+import { SHOW_FILE_EVENT } from "./components/FileCards";
 
 export default function ChatClientPage({
   user,
@@ -90,11 +91,27 @@ export default function ChatClientPage({
   );
   // Every chat opens with the panel collapsed
   const [sandboxOpen, setSandboxOpen] = useState(false);
+  // The file a card in the chat asked to show (a version's id): the panel opens
+  // on it, also in a chat that has no runs, installs or downloads
+  const [shownFile, setShownFile] = useState<{ id: string } | null>(null);
   const [panelChat, setPanelChat] = useState(activeConversationId);
   if (panelChat !== activeConversationId) {
     setPanelChat(activeConversationId);
     setSandboxOpen(false);
+    setShownFile(null);
   }
+  const sandboxAvailable = hasSandbox || !!shownFile;
+
+  useEffect(() => {
+    if (!activeConversationId) return;
+    function onShowFile(event: Event) {
+      event.preventDefault();
+      setShownFile({ id: (event as CustomEvent<string>).detail });
+      setSandboxOpen(true);
+    }
+    window.addEventListener(SHOW_FILE_EVENT, onShowFile);
+    return () => window.removeEventListener(SHOW_FILE_EVENT, onShowFile);
+  }, [activeConversationId]);
 
   const dockRef = useRef<HTMLDivElement | null>(null);
   useComposerGlide(dockRef);
@@ -133,7 +150,7 @@ export default function ChatClientPage({
 
   return (
     <AppShell
-      right={hasSandbox ? { open: sandboxOpen, onOpenChange: setSandboxOpen } : undefined}
+      right={sandboxAvailable ? { open: sandboxOpen, onOpenChange: setSandboxOpen } : undefined}
       sidebar={{
         user,
         model: selection,
@@ -153,10 +170,11 @@ export default function ChatClientPage({
       <div className={styles.fixedCenterLogo} aria-hidden="true" />
       <SandboxPanel
         conversationId={activeConversationId}
-        available={hasSandbox}
+        available={sandboxAvailable}
         open={sandboxOpen}
         onOpenChange={setSandboxOpen}
         tick={toolsDone}
+        reveal={shownFile}
       />
       <div className={styles.chatArea}>
         <MessageList

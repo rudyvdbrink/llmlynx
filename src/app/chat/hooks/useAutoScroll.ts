@@ -6,13 +6,21 @@ import { scrollRoom } from "@/lib/viewport";
 // Keys that scroll the page up
 const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 
-// True when the user's scroll at `target` is taken by an inner scroll area (such
-// as the sidebar's conversation list) instead of the page.
-function innerScrollsUp(target: EventTarget | null): boolean {
-  for (let el = target instanceof Element ? target : null; el && el !== document.body; el = el.parentElement) {
-    if (el.scrollTop > 0 && /auto|scroll/.test(getComputedStyle(el).overflowY)) return true;
+// Whether a scroll up where an input happened (`path`: the element and its
+// ancestors) moves the page, as browsers pass it on: not while the page cannot
+// scroll up (at its top, or held in place under the sandbox panel on phones and
+// under the image viewer), and not when an area it is in scrolls up itself, or
+// keeps scrolls to itself (overscroll-behavior, as the sandbox panel and the
+// sidebar do).
+function pageScrollsUp(path: EventTarget[]): boolean {
+  if (window.scrollY <= 0 || getComputedStyle(document.documentElement).overflowY === "hidden") return false;
+  for (const el of path) {
+    if (!(el instanceof Element) || el === document.body) break;
+    const style = getComputedStyle(el);
+    if (!/auto|scroll|hidden/.test(style.overflowY)) continue;
+    if (style.overscrollBehaviorY !== "auto" || (el.scrollTop > 0 && style.overflowY !== "hidden")) return false;
   }
-  return false;
+  return true;
 }
 
 function isEditable(target: EventTarget | null): boolean {
@@ -34,7 +42,8 @@ function messagesEnd(el: Element | null): number {
 
 /**
  * Keeps the end of the messages in view while a reply streams in, until the
- * user scrolls up. Each new reply follows again. When the messages change
+ * user scrolls up, and again once they scroll back down to it. Each new reply
+ * follows again. When the messages change
  * outside a reply (a conversation is opened), the page scrolls there once.
  * Returns a ref for an element at the end of the message list.
  */
@@ -55,9 +64,11 @@ export function useAutoScroll(messages: unknown, isStreaming: boolean) {
     // Where the page was last pinned, and how far it could scroll then
     let pinnedTop = -Infinity;
     let pinnedRoom = 0;
+    // Where the page was at the last pin or scroll event
+    let lastTop = window.scrollY;
     // With a mouse, the page moving up also counts, which catches scrollbar drags.
     // Not on touch devices: their keyboard and toolbars move the page by themselves.
-    const checkPosition = window.matchMedia("(pointer: fine)").matches;
+    const finePointer = window.matchMedia("(pointer: fine)").matches;
 
     // A page further down than the end of the messages, toward where the
     // composer rests, stays there until the reply has pushed the composer down.
@@ -70,9 +81,24 @@ export function useAutoScroll(messages: unknown, isStreaming: boolean) {
       if (!further) window.scrollTo(0, end);
       pinnedTop = window.scrollY;
       pinnedRoom = scrollRoom();
+      lastTop = pinnedTop;
     }
     function stop() {
       following = false;
+    }
+
+    // A scroll down to the end of the messages follows again. Scrolls are measured
+    // from the last pin too, so the scroll event of a pin just before a stop does
+    // not count as one.
+    function onScroll() {
+      const top = window.scrollY;
+      const down = top > lastTop;
+      lastTop = top;
+      if (following || !down || top < Math.min(messagesEnd(endRef.current), scrollRoom()) - 2) return;
+      following = true;
+      pinnedTop = -Infinity;
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
     }
 
     // Pin once per frame, before paint, so new text never shows below the composer.
@@ -82,28 +108,54 @@ export function useAutoScroll(messages: unknown, isStreaming: boolean) {
     let frame = 0;
     function tick() {
       if (!following) return;
-      if (checkPosition && window.scrollY < pinnedTop - 2 && scrollRoom() >= pinnedRoom) return stop();
+      if (finePointer && window.scrollY < pinnedTop - 2 && scrollRoom() >= pinnedRoom) return stop();
       pin();
       frame = requestAnimationFrame(tick);
     }
 
-    // Input that scrolls up stops it at once, before a pin can undo the scroll
+    // Input that scrolls the page up stops it at once, before a pin can undo the scroll
     function onWheel(e: WheelEvent) {
-      if (e.deltaY < 0 && !innerScrollsUp(e.target)) stop();
+      if (e.deltaY < 0 && pageScrollsUp(e.composedPath())) stop();
     }
-    // A finger moving down the screen scrolls up. Measured from its highest point,
-    // so a swipe that turns around counts too.
-    let touchTop = 0;
+    // A finger moving down the screen scrolls up; one moving more sideways than
+    // down swipes something sideways (code, a table), and two fingers zoom.
+    // Measured from its highest point, so a swipe that turns around counts too.
+    // A finger's moves and its end go to the element it started on, also once
+    // the reply has redrawn it (streaming text, the status line). They no longer
+    // reach the window then, so they are listened for on that element.
+    let touchTop = { x: 0, y: 0 };
+    let touchPath: EventTarget[] = [];
+    const touched = new Set<HTMLElement>();
     function onTouchStart(e: TouchEvent) {
-      touchTop = e.touches[0].clientY;
+      touchTop = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      touchPath = e.composedPath();
+      const target = e.target as HTMLElement | null;
+      if (!target || touched.has(target)) return;
+      touched.add(target);
+      target.addEventListener("touchmove", onTouchMove, { passive: true });
+      target.addEventListener("touchend", onTouchEnd);
+      target.addEventListener("touchcancel", onTouchEnd);
     }
     function onTouchMove(e: TouchEvent) {
-      const y = e.touches[0].clientY;
-      if (y > touchTop + 4 && !innerScrollsUp(e.target)) stop();
-      touchTop = Math.min(touchTop, y);
+      if (e.touches.length > 1) return;
+      const { clientX: x, clientY: y } = e.touches[0];
+      const down = y - touchTop.y;
+      if (down > 4 && down > Math.abs(x - touchTop.x) && pageScrollsUp(touchPath)) stop();
+      if (y < touchTop.y) touchTop = { x, y };
+    }
+    function onTouchEnd(e: TouchEvent) {
+      if (!e.touches.length) forgetTouches();
+    }
+    function forgetTouches() {
+      for (const target of touched) {
+        target.removeEventListener("touchmove", onTouchMove);
+        target.removeEventListener("touchend", onTouchEnd);
+        target.removeEventListener("touchcancel", onTouchEnd);
+      }
+      touched.clear();
     }
     function onKeyDown(e: KeyboardEvent) {
-      if ((SCROLL_UP_KEYS.has(e.key) || (e.key === " " && e.shiftKey)) && !isEditable(e.target)) stop();
+      if ((SCROLL_UP_KEYS.has(e.key) || (e.key === " " && e.shiftKey)) && !isEditable(e.target) && pageScrollsUp(e.composedPath())) stop();
     }
     // A press on the page scrollbar, or the middle button (autoscroll)
     function onPointerDown(e: PointerEvent) {
@@ -113,16 +165,17 @@ export function useAutoScroll(messages: unknown, isStreaming: boolean) {
     // The first pin waits for the next frame. Sending resizes the composer, which
     // briefly collapses it to measure, and that can move the page in some browsers.
     frame = requestAnimationFrame(tick);
+    window.addEventListener("scroll", onScroll, { passive: true });
     window.addEventListener("wheel", onWheel, { passive: true });
     window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchmove", onTouchMove, { passive: true });
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
     return () => {
       cancelAnimationFrame(frame);
+      window.removeEventListener("scroll", onScroll);
       window.removeEventListener("wheel", onWheel);
       window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchmove", onTouchMove);
+      forgetTouches();
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("pointerdown", onPointerDown);
     };

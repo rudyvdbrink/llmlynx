@@ -40,6 +40,8 @@
   gap: 14px;
   min-height: 0;
   overflow: hidden;
+  /* A scroll in the sidebar, also one that reaches the end of its list, never moves the page */
+  overscroll-behavior: contain;
   opacity: 1;
   transform: translateX(0);
   transition:
