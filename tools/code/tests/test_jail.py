@@ -42,7 +42,7 @@ def test_every_jail_is_sealed_after_its_last_mount():
 
 
 def test_the_limits_of_a_run_are_those_of_the_plan():
-    assert jail.RUN_SECONDS == 120
+    assert jail.RUN_SECONDS == 600
     assert jail.MEMORY_BYTES == 2048 * 1024 * 1024
     assert jail.MAX_PROCESSES == 128
     assert jail.MAX_OUTPUT_BYTES == 1024 * 1024

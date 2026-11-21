@@ -25,6 +25,7 @@ export type SandboxView = {
   files: SandboxFile[];
   runs: SandboxRunSummary[];
   packages: SandboxPackageRow[];
+  notes: string | null; // the task notes the model keeps (update_notes)
   bytes: number; // the newest versions together
   limit: number;
 };

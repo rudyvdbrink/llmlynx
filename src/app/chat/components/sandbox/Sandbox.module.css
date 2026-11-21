@@ -556,6 +556,24 @@
 .packageTable td:nth-child(3) { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .packageTable tr:not(.requested) td:first-child { color: var(--muted); }
 
+/* ===== Notes ===== */
+
+.notes {
+  flex: 1;
+  min-height: 0;
+  padding: 0 16px 12px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.notesText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ===== Size and place ===== */
 
 .backdrop { display: none; }

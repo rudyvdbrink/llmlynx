@@ -1,8 +1,8 @@
 // Tests of the chat's sandbox against the real containers (code, code-egress,
 // browser, guard, clamav and files): skipped unless LIVE_SANDBOX=1. They read
 // the servers' tokens from .env, need the internet (PyPI, npm, httpbin.org,
-// eicar.org and GitHub), and take a few minutes, two of them for the run that
-// must be stopped after 120 seconds.
+// eicar.org and GitHub), and take a quarter of an hour, ten minutes of it for the
+// run that must be stopped after 10 minutes.
 //
 //   docker compose up -d code code-egress browser egress guard clamav files
 //   LIVE_SANDBOX=1 npx vitest run src/server/sandbox/live.test.ts
@@ -427,13 +427,13 @@ describe.skipIf(!LIVE)("the sandbox, live", () => {
       expect(result.text).toMatch(/characters of the output left out/);
     }, 120_000);
 
-    it("stops an endless loop after 120 seconds", async () => {
+    it("stops an endless loop after 10 minutes", async () => {
       const chat = await newChat();
       const started = Date.now();
       const result = await chat.call("run_code", python("while True:\n    pass"));
-      expect(result.text).toMatch(/ran longer than 120 seconds/);
-      expect(Date.now() - started).toBeGreaterThan(119_000);
-      expect(Date.now() - started).toBeLessThan(170_000);
-    }, 240_000);
+      expect(result.text).toMatch(/ran longer than 10 minutes/);
+      expect(Date.now() - started).toBeGreaterThan(599_000);
+      expect(Date.now() - started).toBeLessThan(650_000);
+    }, 720_000);
   });
 });

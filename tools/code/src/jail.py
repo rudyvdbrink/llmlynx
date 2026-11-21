@@ -38,7 +38,7 @@ def memory_mb() -> int:
 
 
 # Limits of one run
-RUN_SECONDS = 120
+RUN_SECONDS = 600  # as in src/server/sandbox/code.ts
 MEMORY_BYTES = memory_mb() * 1024 * 1024
 MAX_PROCESSES = 128
 MAX_OUTPUT_BYTES = 1024 * 1024

@@ -154,8 +154,8 @@ export function contextWindowHint(tools: AgentToolName[], numCtx: number): strin
   return null;
 }
 
-/** The tools whose first call starts the chat's sandbox, which shows the sandbox panel's chevron. */
-export const SANDBOX_TOOL_NAMES: ToolName[] = ["run_code", "install_packages", "web_fetch", "git"];
+/** The tools whose first call shows the sandbox panel's chevron: those that start the chat's sandbox, and update_notes for the notes tab. */
+export const SANDBOX_TOOL_NAMES: ToolName[] = ["run_code", "install_packages", "web_fetch", "git", "update_notes"];
 
 export function isAgentTool(value: unknown): value is AgentToolName {
   return typeof value === "string" && (AGENT_TOOLS as readonly string[]).includes(value);
@@ -185,7 +185,7 @@ export function validateAgentTools(
 }
 
 // Most characters of the task notes an agent keeps (update_notes)
-export const MAX_NOTES = 2_000;
+export const MAX_NOTES = 10_000;
 
 // Most tool calls an agent may make for one reply (the slider on the agents page); 0 means no limit
 export const DEFAULT_MAX_TOOL_CALLS = 7;

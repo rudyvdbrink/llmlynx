@@ -29,6 +29,7 @@ import {
   PACKAGES_DOWNLOAD_GB,
   PACKAGES_INSTALLED_GB,
   RUN_MEMORY,
+  RUN_TIME,
   RUN_TIMEOUT_MS,
 } from "@/server/sandbox/code";
 import { runGit, splitCommand } from "@/server/sandbox/git";
@@ -113,7 +114,7 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
       "survive it, not imports, variables or functions, so save what you need to a file. To run a file of the " +
       "sandbox, use shell: python script.py. There is no network: download data with web_fetch first. Built in: " +
       "numpy, pandas, scipy, matplotlib, openpyxl, pillow and pytest for Python; install others with " +
-      `install_packages. Limits: 120 seconds, ${RUN_MEMORY} of memory, 1 MB of output. Images, SVG and HTML files it ` +
+      `install_packages. Limits: ${RUN_TIME}, ${RUN_MEMORY} of memory, 1 MB of output. Images, SVG and HTML files it ` +
       "saves show in the chat; HTML pages cannot load anything from the internet, so put their scripts and data " +
       "in the page. You get the run's id, exit code and duration, what it printed (long output in part: read the rest " +
       "with read_run_log), the failing tests when pytest ran or a JUnit XML or Jest/Vitest JSON report was written, " +
