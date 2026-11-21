@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import styles from "./Sandbox.module.css";
 import FilePreview, { fullSizeUrl } from "./FilePreview";
 import { TypeIcon } from "../FileCards";
@@ -122,7 +122,8 @@ function Tree({
  * the lower 60% of the panel, or what a drag on the divider between them made
  * of it (`split`, the tree's share); with its older versions, a download and a
  * delete. Another click on the file, or the preview's close button, gives the
- * tree the full height again.
+ * tree the full height again. `reveal` is a version a card in the chat asked
+ * to show: its file is selected at that version, with its folders open.
  */
 export default function FilesTab({
   files,
@@ -130,12 +131,14 @@ export default function FilesTab({
   onChanged,
   split,
   onSplit,
+  reveal,
 }: {
   files: SandboxFile[];
   conversationId: string;
   onChanged: () => void;
   split: number | null;
   onSplit: (split: number) => void;
+  reveal: { id: string } | null;
 }) {
   const tree = useMemo(() => buildTree(files), [files]);
   const [open, setOpen] = useState<Set<string>>(new Set());
@@ -144,6 +147,21 @@ export default function FilesTab({
   const [deleting, setDeleting] = useState(false);
   const filesRef = useRef<HTMLDivElement | null>(null);
   const treeRef = useRef<HTMLUListElement | null>(null);
+
+  // Once the files hold the version to reveal
+  const [revealed, setRevealed] = useState<{ id: string } | null>(null);
+  const revealing = reveal && reveal !== revealed ? files.find((f) => f.versions.some((v) => v.id === reveal.id)) : undefined;
+  if (reveal && revealing) {
+    setRevealed(reveal);
+    setSelected(revealing.path);
+    setVersion(reveal.id);
+    const folders = revealing.path.split("/").slice(0, -1);
+    setOpen((prev) => new Set([...prev, ...folders.map((_, i) => folders.slice(0, i + 1).join("/"))]));
+  }
+  // Its row comes into view in the tree
+  useEffect(() => {
+    if (revealed) treeRef.current?.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [revealed]);
 
   const file = files.find((f) => f.path === selected) ?? null;
   const shown = file?.versions.find((v) => v.id === version && !v.deleted) ?? file?.versions.find((v) => !v.deleted) ?? null;

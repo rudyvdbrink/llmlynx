@@ -2,6 +2,8 @@
   display: block;
   max-width: 100%;
   overflow-x: auto;
+  /* Stops at its ends instead of passing a sideways scroll on (see Chat.module.css) */
+  overscroll-behavior-x: contain;
   margin: 8px 0;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;

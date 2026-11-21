@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import styles from "../Chat.module.css";
 import { ChevronRightIcon, WarningIcon } from "@/components/icons";
 import CheckpointMarker from "./CheckpointMarker";
@@ -68,12 +68,14 @@ function Thinking({ trace = [], status }: { trace?: TraceItem[]; status: ReplySt
   const [scrolling, setScrolling] = useState(false);
   const scrollTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
-  useLayoutEffect(() => {
+  const toEnd = useCallback(() => {
     const el = scrollRef.current;
     if (!el || !following.current) return;
     el.scrollTop = el.scrollHeight;
     followedTop.current = el.scrollTop;
-  }, [trace]);
+  }, []);
+
+  useLayoutEffect(() => toEnd(), [toEnd, trace]);
 
   useEffect(() => () => clearTimeout(scrollTimer.current), []);
 
@@ -147,6 +149,9 @@ function Thinking({ trace = [], status }: { trace?: TraceItem[]; status: ReplySt
               onScroll={onScroll}
               // A wide formula scrolling sideways; scroll events do not bubble, but can be captured
               onScrollCapture={(e) => e.target !== e.currentTarget && showScrollbars()}
+              // An image in it (a screenshot's thumbnail) loads after its step shows, and makes it longer.
+              // React passes the load events of images up to here.
+              onLoad={toEnd}
             >
               {items.map((item, i) =>
                 item.kind === "tool" ? (

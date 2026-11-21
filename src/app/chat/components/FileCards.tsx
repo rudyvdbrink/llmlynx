@@ -20,6 +20,17 @@ export function TypeIcon({ name, className }: { name: string; className?: string
 const isImage = (file: FileCard) =>
   isInlineImage(file.mimeType) || isSvg(file.mimeType) || (!!file.url && fileKind(file.name) === "image");
 
+/** Text and code, which show in the sandbox panel. */
+const showsInSandbox = (file: FileCard) => !file.url && fileKind(file.name) === "text";
+
+// A file card asks the chat to show its file in the sandbox panel (see ChatClientPage.tsx)
+export const SHOW_FILE_EVENT = "llmlynx:show-file";
+
+/** Asks the chat to show the file version `id` in the sandbox panel; false when nothing showed it. */
+function showInSandbox(id: string): boolean {
+  return !window.dispatchEvent(new CustomEvent(SHOW_FILE_EVENT, { detail: id, cancelable: true }));
+}
+
 /**
  * An HTML file in a sandboxed frame: its scripts run, in an origin of its own,
  * and it can load or send nothing (see /api/attachments/:id/frame). The page
@@ -42,6 +53,8 @@ export function HtmlFrame({ id, title, className }: { id: string; title: string;
  * The files of a message: those the user attached, or those an agent made or
  * shared. Images and SVG show in the chat, and a click shows them big in an
  * ImageViewer, which goes through the message's images in turn; HTML shows in a sandboxed frame, with a button that opens it full size;
+ * text and code are cards that show the file in the sandbox panel, with a
+ * button that downloads it (they download where the chat has no such panel);
  * every other file is a card that downloads it. Files of a message that is
  * still being sent come from the browser's own copy (`url`).
  */
@@ -107,6 +120,31 @@ export default function FileCards({ files }: { files: FileCard[] }) {
                 <DownloadIcon size={14} className={styles.fileDownload} />
               </a>
             </figure>
+          );
+        }
+        if (showsInSandbox(file)) {
+          return (
+            <div key={file.id} className={`${styles.fileCard} ${styles.fileCardSplit}`}>
+              <a
+                className={styles.fileOpen}
+                href={download}
+                download={name}
+                title={`Show ${file.name} in the sandbox`}
+                onClick={(e) => {
+                  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+                  if (showInSandbox(file.id)) e.preventDefault();
+                }}
+              >
+                <TypeIcon name={file.name} className={styles.fileTypeIcon} />
+                <span className={styles.fileText}>
+                  <span className={styles.fileName}>{file.name}</span>
+                  <span className={styles.fileMeta}>{meta}</span>
+                </span>
+              </a>
+              <a className={styles.fileGet} href={download} download={name} title={`Download ${file.name}`} aria-label={`Download ${file.name}`}>
+                <DownloadIcon size={16} className={styles.fileDownload} />
+              </a>
+            </div>
           );
         }
         return (
