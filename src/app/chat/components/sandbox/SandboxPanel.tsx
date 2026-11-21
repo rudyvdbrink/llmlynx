@@ -9,12 +9,13 @@ import { showToolCall } from "../Thinking";
 import { ChevronRightIcon, DunesIcon, GitBranchIcon, PackageIcon, TerminalIcon, WarningIcon } from "@/components/icons";
 import type { SandboxPackageRow, SandboxRunSummary, SandboxView } from "@/lib/sandbox";
 
-type Tab = "files" | "runs" | "packages";
+type Tab = "files" | "runs" | "packages" | "notes";
 
 const TABS: { id: Tab; label: string; empty: string }[] = [
   { id: "files", label: "Files", empty: "No files yet" },
   { id: "runs", label: "Runs", empty: "No runs yet" },
   { id: "packages", label: "Packages", empty: "No packages yet" },
+  { id: "notes", label: "Notes", empty: "No notes yet" },
 ];
 
 const LANGUAGES: Record<string, string> = {
@@ -164,13 +165,22 @@ function Body({ tab, data, conversationId, reload, onShowRun, split, onSplit, re
       </ul>
     );
   }
+  if (tab === "notes") {
+    if (!data.notes) return <p className={styles.empty}>No notes yet</p>;
+    return (
+      <div className={styles.notes}>
+        <p className={styles.notesText}>{data.notes}</p>
+      </div>
+    );
+  }
   if (!data.packages.length) return <p className={styles.empty}>No packages yet</p>;
   return <PackagesList packages={data.packages} />;
 }
 
 /**
  * The sandbox panel: a side bar on the right of the chat, the counterpart of
- * the sidebar on the left, with the chat's files, runs and packages. Only a
+ * the sidebar on the left, with the chat's files, runs and packages, and the
+ * task notes the model keeps. Only a
  * chat with a sandbox (`available`) shows its toggle, a box with dunes, which
  * fades in at the right edge; the panel stays collapsed until it is clicked, also
  * while code runs. From 1200px it sits beside the chat, which narrows; below

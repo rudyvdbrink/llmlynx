@@ -15,7 +15,7 @@ import { TOOL_SCAN_TIMEOUT_MS, UPLOAD_VIRUS_TIMEOUT_MS } from "@/server/security
 import { scanVirus } from "@/server/security/scan";
 import type { Args, RunRecord, ToolCallContext, ToolResult } from "@/server/tools/definitions";
 import type { ToolFile } from "@/server/tools/mcp";
-import { chatLocks, RUN_MEMORY, runInSandbox, type RunOutcome } from "./code";
+import { chatLocks, RUN_MEMORY, RUN_TIME, runInSandbox, type RunOutcome } from "./code";
 import { withChatLock } from "./lock";
 import { notRun } from "./records";
 import { roomError } from "./room";
@@ -88,7 +88,7 @@ export function clipLines(text: string, budget: number): { text: string; lines: 
 }
 
 const STOPS: Record<NonNullable<RunOutcome["reason"]>, string> = {
-  timeout: "yes, after 120 s (the time limit)",
+  timeout: `yes, after ${RUN_TIME} (the time limit)`,
   memory: `yes, at ${RUN_MEMORY} of memory (the limit)`,
   processes: "yes, at 128 processes or threads (the limit)",
   output: "yes, at 1 MB of output (the limit)",
@@ -138,9 +138,9 @@ function ending(outcome: RunOutcome): { sentence: string; note?: string } {
     case "timeout":
       return {
         sentence:
-          "Stopped: it ran longer than 120 seconds. Do the work in smaller steps: save what each run finds to a file, " +
+          `Stopped: it ran longer than ${RUN_TIME}. Do the work in smaller steps: save what each run finds to a file, ` +
           "and go on from there in the next run.",
-        note: "stopped after 120 s",
+        note: `stopped after ${RUN_TIME}`,
       };
     case "memory":
       return {

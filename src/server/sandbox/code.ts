@@ -57,8 +57,13 @@ const RUN_MEMORY_MB = Math.floor(envNumber("CODE_RUN_MEMORY_MB", 2048));
 /** The memory of one run, for the model: "2 GB" or "1536 MB". */
 export const RUN_MEMORY = RUN_MEMORY_MB % 1024 === 0 ? `${RUN_MEMORY_MB / 1024} GB` : `${RUN_MEMORY_MB} MB`;
 
-// A run may wait for its turn behind runs of other chats (see CODE_MAX_CONCURRENCY)
-export const RUN_TIMEOUT_MS = 300_000;
+// The time limit of one run, which the code container has too (RUN_SECONDS in tools/code/src/jail.py)
+export const RUN_SECONDS = 600;
+/** The time limit of one run, for the model and the tool line: "10 minutes". */
+export const RUN_TIME = `${RUN_SECONDS / 60} minutes`;
+// The run, the container's 30 s to copy the files and start (GRACE_SECONDS in jail.py), and as much
+// again to wait for its turn behind a run of another chat (see CODE_MAX_CONCURRENCY)
+export const RUN_TIMEOUT_MS = 2 * (RUN_SECONDS + 30) * 1000;
 // The container's own limit, 12 minutes per GB to download (see packages.py), and time to answer
 export const INSTALL_TIMEOUT_MS = Math.max(300, Math.round(PACKAGES_DOWNLOAD_GB * 720)) * 1000 + 120_000;
 

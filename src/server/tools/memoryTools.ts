@@ -72,7 +72,7 @@ export const MEMORY_TOOLS: ToolDefinition[] = [
     description:
       "Keep your task notes: the goal, the plan and how far it is, decisions and why, and what did not work. Each " +
       "call replaces the notes, so give all of them. They stay in your working memory when older steps are cleared, " +
-      `so keep them short and up to date (at most ${MAX_NOTES} characters). The user does not see them.`,
+      `so keep them short and up to date (at most ${MAX_NOTES} characters). They are not a reply: the user only sees them in the sandbox panel.`,
     parameters: {
       type: "object",
       properties: { notes: { type: "string", description: "All of the notes, as short lines" } },

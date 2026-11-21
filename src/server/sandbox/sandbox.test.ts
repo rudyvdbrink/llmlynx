@@ -136,8 +136,8 @@ describe("run_code", () => {
     expect((await chat.call("run_code", { language: "python", code: "x" })).note).toBe("exit code 1");
     fakes.run = { status: "timeout", exit_code: -9, reason: "timeout" };
     const timeout = await chat.call("run_code", { language: "python", code: "x" });
-    expect(timeout.text).toMatch(/longer than 120 seconds/);
-    expect(timeout.note).toBe("stopped after 120 s");
+    expect(timeout.text).toMatch(/longer than 10 minutes/);
+    expect(timeout.note).toBe("stopped after 10 minutes");
     // A run stopped at a limit says what to do instead
     expect(timeout.text).toContain("Do the work in smaller steps");
     fakes.run = { status: "error", exit_code: -9, reason: "output" };

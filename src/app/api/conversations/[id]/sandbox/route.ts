@@ -3,6 +3,7 @@ import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { jsonError } from "@/server/http";
 import { sandboxHistory } from "@/server/files/store";
+import { taskNotes } from "@/server/chat/memory";
 import { MAX_SANDBOX_BYTES } from "@/lib/files";
 import type { SandboxView } from "@/lib/sandbox";
 
@@ -10,7 +11,8 @@ type Ctx = { params: Promise<{ id: string }> };
 
 // GET /api/conversations/:id/sandbox -> SandboxView
 // The chat's sandbox for the sandbox panel: its files with their versions,
-// its runs of code and installs (newest first), and its installed packages.
+// its runs of code and installs (newest first), its installed packages, and
+// the model's task notes.
 // Only for the user who owns the chat.
 export async function GET(_req: Request, ctx: Ctx) {
   const { id } = await ctx.params;
@@ -19,7 +21,7 @@ export async function GET(_req: Request, ctx: Ctx) {
   const owned = await prisma.conversation.findFirst({ where: { id, userId: user.id }, select: { id: true } });
   if (!owned) return jsonError("Not found", 404);
 
-  const [history, runs, packages] = await Promise.all([
+  const [history, runs, packages, notes] = await Promise.all([
     sandboxHistory(id),
     prisma.sandboxRun.findMany({
       where: { conversationId: id },
@@ -30,6 +32,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       where: { conversationId: id },
       orderBy: [{ ecosystem: "asc" }, { requested: "desc" }, { name: "asc" }],
     }),
+    taskNotes(id),
   ]);
   const view: SandboxView = {
     files: history.map((versions) => ({
@@ -56,6 +59,7 @@ export async function GET(_req: Request, ctx: Ctx) {
       requested: p.requested,
       installedAt: p.installedAt.toISOString(),
     })),
+    notes,
     bytes: history.reduce((sum, versions) => sum + versions[0].size, 0),
     limit: MAX_SANDBOX_BYTES,
   };
