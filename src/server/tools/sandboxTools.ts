@@ -214,7 +214,10 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
       "status, log --oneline -10, diff, add -A, commit -m \"message\", checkout -b feature, merge or pull. A " +
       "repository is a folder of the sandbox: its files are files of the sandbox, which every tool can read and " +
       "change, but its .git folder is not in the sandbox: only this tool sees it. Only public https:// repositories can be cloned, fetched and pulled, and nothing can be pushed. One " +
-      "command per call, without shell operators such as && or |.",
+      "command per call, without shell operators such as && or |. Most commands on a repository work, also stash, " +
+      "rebase, cherry-pick, archive and format-patch; push, submodule, ls-remote and worktree do not. git sees only " +
+      "the repository's folder: a path it writes, such as archive -o, is relative to that folder. For the files of " +
+      "another commit, use show <commit>:<path>, or archive -o <file> <commit> and unpack it with run_code.",
     parameters: {
       type: "object",
       properties: {

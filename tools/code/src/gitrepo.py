@@ -70,6 +70,9 @@ NOT_HERE = {
     "changes instead, such as with git format-patch or git archive.",
     "submodule": "git submodule is not available: the sandbox only clones the repository itself.",
     "ls-remote": "git ls-remote is not available: clone the repository, or fetch, and look at its branches there.",
+    "worktree": "git worktree is not available: a repository has one work tree here, its folder. For the files of "
+    "another commit, use git archive -o <file in the repository's folder> <commit> and unpack it with run_code, "
+    "such as tar -xf <file> -C <folder>, or git show <commit>:<path> for one file; or set changes aside with git stash.",
 }
 
 # Options that make git run another program, use other repositories, or reach the network on its own.
@@ -195,7 +198,10 @@ def check_url(url: str) -> str:
 def check_path(value: str, option: str) -> str:
     parts = value.replace("\\", "/").split("/")
     if not value or value.startswith(("/", "~")) or any(p in ("..",) or p.lower() == ".git" for p in parts):
-        raise GitError(f"{option} must name a place in the repository's folder, without .. or .git.")
+        raise GitError(
+            f"{option} must be a path relative to the repository's folder, such as out/repo.tar, without .. or .git: "
+            "git sees only that folder, not the rest of the sandbox. Move the file elsewhere with run_code afterwards."
+        )
     return value
 
 

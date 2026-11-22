@@ -359,7 +359,7 @@
 @supports (animation-timeline: scroll()) {
   .bubble :global(.katex-display),
   .thinkingText :global(.katex-display) {
-    animation: mathScrollFade linear both;
+    animation: mathScrollFade 1ms linear both;
     animation-timeline: scroll(self inline);
     -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--math-fade-left), #000 calc(100% - var(--math-fade-right)), transparent);
             mask-image: linear-gradient(to right, transparent, #000 var(--math-fade-left), #000 calc(100% - var(--math-fade-right)), transparent);
@@ -503,9 +503,13 @@
   display: flex;
   flex-direction: column;
 }
+/* One grid row, which can fold away (.chained). No minimum, or a folded row
+   keeps its content's padding. */
 .part {
   --dot-y: 22px;
   position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
   padding-left: 8px;
 }
 .textPart { --dot-y: 21.5px; }
@@ -553,6 +557,22 @@
   margin: 0;
 }
 .livePart:last-child::before { height: calc(var(--dot-y) - 10px); }
+
+/* Once the reply is over, the parts before its last text fold away behind one
+   toggle (the chain), each by shrinking its one grid row. The line through
+   them stays, so that it joins the chain's dot to the last text's. */
+.chained { transition: grid-template-rows 0.35s ease; }
+.chained > * { transition: opacity 0.35s ease; }
+.chained > :not(.dot) {
+  min-height: 0;
+  overflow: clip;
+}
+.chained.folded { grid-template-rows: minmax(0, 0fr); }
+.chained.folded > * {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.35s ease, visibility 0s 0.35s;
+}
 
 /* The text of a part; the room for the copy button is below the last one (.replyEnd) */
 .messageRow.bot .part .bubble { padding-bottom: 0; }
@@ -839,7 +859,7 @@
     animation-timeline: scroll(self block);
   }
   .thinkingText {
-    animation: thinkingScrollFade linear both, containScroll linear both;
+    animation: thinkingScrollFade 1ms linear both, containScroll 1ms linear both;
     animation-timeline: scroll(self block);
     -webkit-mask-image: linear-gradient(transparent, #000 var(--thinking-fade-top), #000 calc(100% - var(--thinking-fade-bottom)), transparent);
             mask-image: linear-gradient(transparent, #000 var(--thinking-fade-top), #000 calc(100% - var(--thinking-fade-bottom)), transparent);
@@ -849,6 +869,9 @@
 @media (prefers-reduced-motion: reduce) {
   .thinkingPanel,
   .thinkingPanel.open,
+  .chained,
+  .chained > *,
+  .chained.folded > *,
   .thinkingChevron { transition: none; }
 }
 

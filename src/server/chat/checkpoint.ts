@@ -24,7 +24,17 @@ import type { ToolDefinition } from "@/server/tools/definitions";
 import { hasFileTools } from "@/server/tools/policy";
 import type { Budget } from "./budget";
 import { readFacts, workingMemory } from "./memory";
-import { patchMetadata, summaryText, withoutMemory, withSummary, type CheckpointMeta, type UserMessage, type ViewMessage } from "./view";
+import { toolFacts, type ToolStep } from "./toolFacts";
+import {
+  patchMetadata,
+  storedCalls,
+  summaryText,
+  withoutMemory,
+  withSummary,
+  type CheckpointMeta,
+  type UserMessage,
+  type ViewMessage,
+} from "./view";
 
 // What the summary may take, in tokens, when the cut is chosen
 const SUMMARY_TOKENS = 1_500;
@@ -38,8 +48,6 @@ const DEFAULT_ATTACH_CHARS = 20_000;
 const QUOTE_CHARS = 400;
 const LAST_QUOTE_CHARS = 4_000;
 const MAX_QUOTES = 12;
-// Most steps the facts list
-const MAX_STEPS = 60;
 
 const SUMMARY_HEAD = "[Summary of the conversation so far. The earlier messages were cleared to save room; this takes their place.]";
 
@@ -98,17 +106,40 @@ function transcript(messages: ViewMessage[], maxChars: number): string {
 
 /**
  * The facts of the conversation up to the step at `upTo`: what the user
- * asked, and what was done with tools, as the stored steps say. The numbers
- * are those read_result takes.
+ * asked, and what was done with tools, as the stored steps and their calls
+ * say (see toolFacts.ts). `recall`: the model has read_result.
  */
-async function facts(conversationId: string, upTo: number): Promise<string> {
-  const rows = await prisma.message.findMany({
-    where: { conversationId, role: { in: ["user", "tool"] }, position: { lte: upTo } },
-    orderBy: { position: "asc" },
-    select: { role: true, position: true, content: true, toolName: true, metadata: true },
+async function facts(conversationId: string, upTo: number, recall: boolean): Promise<string> {
+  const upToHere = { conversationId, position: { lte: upTo } };
+  const byPosition = { position: "asc" } as const;
+  const [userRows, stepRows, callRows, files] = await Promise.all([
+    prisma.message.findMany({ where: { ...upToHere, role: "user" }, orderBy: byPosition, select: { content: true } }),
+    prisma.message.findMany({
+      where: { ...upToHere, role: "tool" },
+      orderBy: byPosition,
+      select: { position: true, toolName: true, toolCallId: true, metadata: true },
+    }),
+    prisma.message.findMany({ where: { ...upToHere, role: "assistant" }, orderBy: byPosition, select: { position: true, toolCalls: true } }),
+    conversationFiles(conversationId),
+  ]);
+  const asked = userRows.filter((r) => r.content.trim());
+  // Each result's call: the one with its id in the last assistant step before it
+  const calls = new Map<string, Record<string, unknown>>();
+  let next = 0;
+  const steps: ToolStep[] = stepRows.map((row) => {
+    for (; next < callRows.length && callRows[next].position < row.position; next++) {
+      for (const call of storedCalls(callRows[next].toolCalls)) calls.set(call.id, call.arguments);
+    }
+    const meta = (row.metadata ?? {}) as { label?: unknown; error?: unknown; run?: { status?: unknown } };
+    return {
+      position: row.position,
+      toolName: row.toolName,
+      args: (row.toolCallId && calls.get(row.toolCallId)) || {},
+      label: typeof meta.label === "string" ? meta.label : null,
+      error: meta.error === true,
+      runStatus: typeof meta.run?.status === "string" ? meta.run.status : null,
+    };
   });
-  const asked = rows.filter((r) => r.role === "user" && r.content.trim());
-  const steps = rows.filter((r) => r.role === "tool");
   const lines: string[] = [];
   if (asked.length) {
     lines.push("What the user asked, in order:");
@@ -119,14 +150,7 @@ async function facts(conversationId: string, upTo: number): Promise<string> {
       lines.push(`- ${last ? "Their latest message: " : ""}"${quote(row.content, last ? LAST_QUOTE_CHARS : QUOTE_CHARS)}"`);
     });
   }
-  if (steps.length) {
-    lines.push("", "What you did with tools, as llmlynx recorded it:");
-    if (steps.length > MAX_STEPS) lines.push(`(${steps.length - MAX_STEPS} earlier steps are left out.)`);
-    for (const row of steps.slice(-MAX_STEPS)) {
-      const label = (row.metadata as { label?: unknown } | null)?.label;
-      lines.push(`- ${typeof label === "string" && label ? label : `Used ${row.toolName ?? "a tool"}`} (result ${row.position})`);
-    }
-  }
+  if (steps.length) lines.push("", ...toolFacts(steps, files, recall));
   return lines.join("\n");
 }
 
@@ -288,7 +312,7 @@ export async function makeCheckpoint({
   if (!judgment && by === "user") throw new SummaryFailed("The model wrote no summary.");
   const summary = [
     SUMMARY_HEAD,
-    await facts(conversationId, upTo),
+    await facts(conversationId, upTo, tools.some((t) => t.name === "read_result")),
     `Your own note on where things stand:\n${judgment || "(No note was written.)"}`,
   ]
     .filter(Boolean)

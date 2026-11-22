@@ -1,14 +1,17 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import styles from "../Chat.module.css";
+import { ChevronRightIcon } from "@/components/icons";
 import MarkdownMessage from "./MarkdownMessage";
 import CopyButton from "./CopyButton";
-import Thinking from "./Thinking";
+import Thinking, { useShowToolCall } from "./Thinking";
 import FileCards from "./FileCards";
 import type { DisplayMessage, ReplyStatus, TraceItem } from "@/lib/types";
 
 const errorNote = (error: string) => `*(Error: ${error})*`;
+
+const NO_ITEMS: TraceItem[] = [];
 
 // A part of a reply: text the model wrote to the user, or what it did between two such texts
 type Part = { kind: "text"; text: string } | { kind: "thinking"; items: TraceItem[] };
@@ -31,6 +34,16 @@ function partsOf(trace: TraceItem[], error?: string): Part[] {
 }
 
 /**
+ * The trace items of the parts before the reply's last text, when there is
+ * more than one such part to fold away. Otherwise (also while the reply has no
+ * text at its end) null.
+ */
+function chainOf(parts: Part[]): TraceItem[] | null {
+  if (parts.length < 3 || parts[parts.length - 1].kind !== "text") return null;
+  return parts.flatMap((part) => (part.kind === "thinking" ? part.items : []));
+}
+
+/**
  * The colour of a thinking part's dot: amber when a tool call in it failed or
  * the security checks withheld its result, so the user can find what went
  * wrong; blue when it used tools; grey when it only reasoned.
@@ -48,8 +61,11 @@ function dotOf(items: TraceItem[]): string {
  * each part, and a line joins them; a reply that is only text has neither.
  * While the reply comes in (`live`), its
  * last part shows what the model is doing now, with the status icon in the
- * place of its dot; when that is text, its dot pulses. Below the parts: the
- * files the agent made, and the copy button once the reply is over.
+ * place of its dot; when that is text, its dot pulses. Once it is over, a
+ * chain of parts before its last text (see chainOf) folds away behind a
+ * "Show chain of thought" toggle, with a dot coloured by all that the chain did.
+ * Below the parts: the files the agent made, and the copy button once the
+ * reply is over.
  */
 function Reply({ msg, live, status }: { msg: DisplayMessage; live: boolean; status: ReplyStatus | null }) {
   const parts = useMemo(() => partsOf(msg.trace ?? [], msg.error), [msg.trace, msg.error]);
@@ -57,14 +73,38 @@ function Reply({ msg, live, status }: { msg: DisplayMessage; live: boolean; stat
   const waiting = live && parts[parts.length - 1]?.kind !== "text";
   const shown: Part[] = waiting && !parts.length ? [{ kind: "thinking", items: [] }] : parts;
 
+  const chain = useMemo(() => (live ? null : chainOf(parts)), [live, parts]);
+  const [chainOpen, setChainOpen] = useState(false);
+  // The sandbox panel's link to a run in the chain opens it
+  const openChain = useCallback(() => setChainOpen(true), []);
+  useShowToolCall(chain ?? NO_ITEMS, openChain);
+
   return (
     <div className={`${styles.messageRow} ${styles.bot}`}>
       <div className={styles.timeline}>
+        {chain && (
+          <div key="chain" className={styles.part}>
+            <span className={`${styles.dot} ${dotOf(chain)}`} />
+            <div className={styles.thinking}>
+              <button
+                type="button"
+                className={styles.thinkingToggle}
+                aria-expanded={chainOpen}
+                onClick={() => setChainOpen((o) => !o)}
+              >
+                <ChevronRightIcon className={styles.thinkingChevron} />
+                {chainOpen ? "Hide chain of thought" : "Show chain of thought"}
+              </button>
+            </div>
+          </div>
+        )}
         {shown.map((part, i) => {
           const last = i === shown.length - 1;
+          // The parts in the chain fold away, each in its place, so that none of them renders anew
+          const chained = chain && !last ? `${styles.chained} ${chainOpen ? "" : styles.folded}` : "";
           if (part.kind === "text") {
             return (
-              <div key={`text${i}`} className={`${styles.part} ${styles.textPart}`}>
+              <div key={`text${i}`} className={`${styles.part} ${styles.textPart} ${chained}`}>
                 {shown.length > 1 && <span className={`${styles.dot} ${styles.dotText} ${live && last ? styles.dotLive : ""}`} />}
                 <div className={styles.bubble}>
                   <MarkdownMessage content={part.text} />
@@ -74,7 +114,7 @@ function Reply({ msg, live, status }: { msg: DisplayMessage; live: boolean; stat
           }
           const current = waiting && last;
           return (
-            <div key={`thinking${i}`} className={`${styles.part} ${current ? styles.livePart : ""}`}>
+            <div key={`thinking${i}`} className={`${styles.part} ${current ? styles.livePart : ""} ${chained}`}>
               {!current && <span className={`${styles.dot} ${dotOf(part.items)}`} />}
               <Thinking trace={part.items} status={current ? status : "done"} />
             </div>

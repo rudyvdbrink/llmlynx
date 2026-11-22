@@ -196,6 +196,11 @@ services:
       - ./tools/code/egress.conf:/etc/squid/squid.conf:ro
     ports:
       - 127.0.0.1:${CODE_MCP_PORT:-8794}:8794
+    # Names that point to the host and the LAN, as a public name can: squid must refuse them as it refuses
+    # those addresses. For the live tests (src/server/sandbox/live.test.ts), without depending on outside DNS.
+    extra_hosts:
+      - loopback.test:127.0.0.1
+      - lan.test:192.168.1.10
     # Not depends_on code: recreating code would stop it. It finds code again by itself.
     networks: [code, code-egress]
     restart: unless-stopped

@@ -29,7 +29,7 @@ runs no package code, a run executes package code but has no network.
   UNUSED_DAYS; the next run installs them again from the chat's lock.
 
 Layout of PACKAGES_DIR (a volume of its own):
-  chats/<chat>/python/            pip --target: what PYTHONPATH points to in a run
+  chats/<chat>/python/            pip --target: mounted at /opt/packages/python in a run (see ../sitecustomize.py)
   chats/<chat>/node/node_modules/ mounted at /node_modules in a run
   chats/<chat>/<ecosystem>.lock   the SHA-256 of the lock the folder was installed from
   chats/<chat>/.used              touched by every run and install
