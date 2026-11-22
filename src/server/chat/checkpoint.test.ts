@@ -101,9 +101,9 @@ describe("a compaction the user asks for", () => {
         "What the user asked, in order:",
         '- Their latest message: "Write a report about lynxes. Start with an outline."',
         "",
-        "What you did with tools, as llmlynx recorded it:",
-        "- Read a.example/lynx (result 2)",
-        "- Created outline.md (result 4)",
+        "What you did with tools (2 steps), as llmlynx recorded it. The numbers in square brackets are result numbers: give one to read_result to get that tool result back in full.",
+        "- Read a.example/lynx [2]",
+        "- Created outline.md [4]",
         "",
         `Your own note on where things stand:\n${NOTE}`,
       ].join("\n")
@@ -177,7 +177,7 @@ describe("a compaction the user asks for", () => {
     // The facts are those of the whole conversation, as they are stored
     expect(made!.summary).toContain('- "Write a report about lynxes. Start with an outline."');
     expect(made!.summary).toContain('- Their latest message: "Now the first chapter."');
-    expect(made!.summary).toContain("- Created outline.md (result 4)");
+    expect(made!.summary).toContain("- Created outline.md [4]");
     expect(made!.summary).toContain("Done: chapter one.");
   });
 });
