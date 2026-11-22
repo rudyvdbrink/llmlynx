@@ -153,13 +153,11 @@ def prepare(run_dir: Path, language: str, code: str, files: list[tuple[str, byte
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
     (run_dir / "in" / "code").write_text(code, encoding="utf-8")
-    env = dict(BASE_ENV)
-    if "python" in packages:
-        env["PYTHONPATH"] = "/opt/packages/python"
+    # Python finds the chat's packages without PYTHONPATH, which the code may set for itself (see ../sitecustomize.py)
     config = {
         "language": language,
         "cwd": cwd,
-        "env": env,
+        "env": dict(BASE_ENV),
         "core": core,
         "limits": {
             "seconds": RUN_SECONDS,

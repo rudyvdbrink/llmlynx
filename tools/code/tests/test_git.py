@@ -39,6 +39,8 @@ def test_local_commands_are_taken(argv):
     [
         ["push", "origin", "main"],
         ["submodule", "update"],
+        ["worktree", "add", "../pristine", "HEAD"],
+        ["archive", "-o", "/sandbox/pristine.tar", "HEAD"],
         ["-c", "core.pager=sh", "log"],
         ["--git-dir=/tmp/x", "status"],
         ["difftool"],
@@ -99,6 +101,13 @@ def test_local_commands_are_taken(argv):
 def test_what_would_run_a_program_or_reach_out_is_refused(argv):
     with pytest.raises(GitError):
         parse(argv)
+
+
+def test_a_refusal_says_what_works_instead():
+    with pytest.raises(GitError, match=r"git archive -o <file in the repository's folder> <commit>"):
+        parse(["worktree", "add", "../pristine", "HEAD"])
+    with pytest.raises(GitError, match=r"relative to the repository's folder, such as out/repo.tar"):
+        parse(["archive", "-o", "/sandbox/pristine.tar", "HEAD"])
 
 
 def test_a_clone_downloads_what_its_options_say_and_runs_against_the_copy():

@@ -273,6 +273,13 @@ describe.skipIf(!LIVE)("the sandbox, live", () => {
       ].join("\n");
       const run = await chat.call("run_code", python(use));
       expect(run.text).toContain("offline");
+      // Also when the code sets PYTHONPATH for itself, or Python ignores it
+      const own = await chat.call("run_code", {
+        language: "shell",
+        code: "PYTHONPATH=src python -c 'import tabulate; print(tabulate.__version__)' && python -E -c 'import tabulate'",
+      });
+      expect(own.text).toContain("0.9.0");
+      expect(own.text).toMatch(/exit code: 0/);
       const js = await chat.call("run_code", { language: "javascript", code: "console.log(require('left-pad')('7', 3, '0'))" });
       expect(js.text).toContain("007");
       const packages = await prisma.sandboxPackage.findMany({ where: { conversationId: chat.conversationId } });
@@ -346,8 +353,10 @@ describe.skipIf(!LIVE)("the sandbox, live", () => {
 
     it("downloads from public HTTPS addresses only, and never pushes", async () => {
       const chat = await newChat();
-      const lan = await git(chat, "clone https://localtest.me/a/b");
-      expect(lan.text).toMatch(/Only public addresses/);
+      // Names that resolve to the host and the LAN, from code-egress's hosts file (see docker-compose.yml)
+      for (const host of ["loopback.test", "lan.test"]) {
+        expect((await git(chat, `clone https://${host}/a/b`)).text).toMatch(/Only public addresses/);
+      }
       for (const command of ["clone http://github.com/octocat/Hello-World", "clone https://192.168.1.10/a/b", "clone file:///etc", "push"]) {
         expect((await git(chat, command)).error).toBe(true);
       }
@@ -357,9 +366,9 @@ describe.skipIf(!LIVE)("the sandbox, live", () => {
           `python3 -c "import urllib.request as u; o = u.build_opener(u.ProxyHandler({'https': 'http://code-egress:3129'})); ` +
             `print(o.open('${url}', timeout=20).status)" 2>&1 || true`
         );
-      expect(fetch("https://example.com/")).toMatch(/^200/m);
-      expect(fetch("https://host.docker.internal:3000/")).toMatch(/403|Forbidden|Tunnel connection failed/);
-      expect(fetch("https://localtest.me/")).toMatch(/403|Forbidden|Tunnel connection failed/);
+      expect(fetch("https://github.com/")).toMatch(/^200/m);
+      // Refused for the address, not because the name could not be found
+      for (const url of ["https://loopback.test/", "https://lan.test/", "https://loopback.test:3000/"]) expect(fetch(url)).toMatch(/403 Forbidden/);
     }, 180_000);
 
     it("never lets a .git folder run anything, even one changed outside the git tool", async () => {

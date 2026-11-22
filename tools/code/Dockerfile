@@ -42,6 +42,10 @@ COPY gitconfig /opt/git/gitconfig
 COPY jail /opt/jail
 RUN MPLCONFIGDIR=/opt/jail/matplotlib python -c "import matplotlib.font_manager" \
     && chmod -R a+rX /opt/jail
+# How a run finds the chat's packages, also when its code sets PYTHONPATH (see sitecustomize.py)
+COPY sitecustomize.py /opt/
+RUN mv /opt/sitecustomize.py "$(python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')/" \
+    && python -c "import sitecustomize"
 COPY src /opt/server/src
 COPY bench.py /opt/server/
 # The server runs as an unprivileged user, in a read-only container; installed
