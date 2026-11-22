@@ -34,6 +34,18 @@ export function showToolCall(id: string) {
 }
 const SHOW_TOOL_EVENT = "llmlynx:show-tool";
 
+/** Calls `show` when the sandbox panel asks to show a tool call that `trace` holds. `show` must not change. */
+export function useShowToolCall(trace: TraceItem[], show: (id: string) => void) {
+  useEffect(() => {
+    function onShow(event: Event) {
+      const id = (event as CustomEvent<string>).detail;
+      if (trace.some((item) => item.kind === "tool" && item.step.id === id)) show(id);
+    }
+    window.addEventListener(SHOW_TOOL_EVENT, onShow);
+    return () => window.removeEventListener(SHOW_TOOL_EVENT, onShow);
+  }, [trace, show]);
+}
+
 /**
  * Shows what the model does between the texts of its reply (see Reply.tsx),
  * with one status line that says what it is doing now: a spinner with
@@ -80,17 +92,12 @@ function Thinking({ trace = [], status }: { trace?: TraceItem[]; status: ReplySt
   useEffect(() => () => clearTimeout(scrollTimer.current), []);
 
   // The sandbox panel's link to a run: the trace that holds its call opens, and the call scrolls into view
-  useEffect(() => {
-    function onShow(event: Event) {
-      const id = (event as CustomEvent<string>).detail;
-      if (!trace.some((item) => item.kind === "tool" && item.step.id === id)) return;
-      setOpen(true);
-      // After the panel has opened
-      setTimeout(() => document.getElementById(`tool-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 400);
-    }
-    window.addEventListener(SHOW_TOOL_EVENT, onShow);
-    return () => window.removeEventListener(SHOW_TOOL_EVENT, onShow);
-  }, [trace]);
+  const showStep = useCallback((id: string) => {
+    setOpen(true);
+    // After the panel has opened
+    setTimeout(() => document.getElementById(`tool-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 400);
+  }, []);
+  useShowToolCall(trace, showStep);
 
   function onScroll() {
     const el = scrollRef.current;
