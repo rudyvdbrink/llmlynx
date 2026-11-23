@@ -32,14 +32,18 @@
   z-index: 0;
 }
 
-/* Messages */
+/* Messages. As a scroll container it clips on all sides: its left padding
+   leaves room for a live reply's status icon, which sits centred on the
+   timeline 3.5px left of the reply (see .livePart), and its margin keeps the
+   messages in place. */
 .messages {
   flex: 1;
   display: flex;
   flex-direction: column;
   gap: 8px;
   overflow-y: auto;
-  padding: 2px 6px 2px 2px;
+  margin-left: -2px;
+  padding: 2px 6px 2px 4px;
 }
 
 .messageRow { display: flex; }
@@ -504,12 +508,14 @@
   flex-direction: column;
 }
 /* One grid row, which can fold away (.chained). No minimum, or a folded row
-   keeps its content's padding. */
+   keeps its content's padding. Nor for its column, or a long line that does
+   not wrap (a tool's label in the status line) widens the part past the page. */
 .part {
   --dot-y: 22px;
   position: relative;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   padding-left: 8px;
 }
 .textPart { --dot-y: 21.5px; }
@@ -846,10 +852,11 @@
   90% { --thinking-fade-bottom: 32px; }
   100% { --thinking-fade-top: 32px; --thinking-fade-bottom: 0px; }
 }
-/* While the reasoning (or flagged text in it) is long enough to scroll, a
-   scroll that reaches its end stops there instead of moving the page; while it
-   is short, it passes scrolls on. Its scroll timeline is only active while it
-   can scroll. */
+/* While the reasoning (or flagged text) is long enough to scroll, a scroll
+   that reaches its end stops there instead of moving the page; while it is
+   short, it passes scrolls on. Its scroll timeline is only active while it
+   can scroll. Flagged text in the reasoning passes scrolls on to the
+   reasoning, or a dialog in it could not be scrolled into view. */
 @keyframes containScroll {
   from, to { overscroll-behavior-y: contain; }
 }
@@ -858,6 +865,7 @@
     animation: containScroll linear both;
     animation-timeline: scroll(self block);
   }
+  .thinkingText .flaggedText { animation: none; }
   .thinkingText {
     animation: thinkingScrollFade 1ms linear both, containScroll 1ms linear both;
     animation-timeline: scroll(self block);
@@ -1013,6 +1021,8 @@
 }
 /* The icon's 16px box next to the first line of the text, which is 18.2px high */
 .toolNotice > .warnIcon { margin-top: 1px; }
+/* Text opened in it (Expandable) brings it into view clear of the trace's fade at the bottom */
+.toolNotice { scroll-margin-bottom: 32px; }
 .toolNotice > .choices { grid-column: 2; }
 .toolNoticeAsking {
   margin: 6px 0 8px;
