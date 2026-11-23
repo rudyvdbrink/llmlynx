@@ -36,19 +36,20 @@ function securityNote({ flag, source = "this source", decision }: StepSecurity):
  */
 export function Expandable({ label, text }: { label: string; text: string }) {
   const [open, setOpen] = useState(false);
-  const box = useRef<HTMLSpanElement | null>(null);
-  // Opened, the text comes into view, also within the trace's own scrolling area
+  const root = useRef<HTMLSpanElement | null>(null);
+  // Opened, the text comes into view with what holds it, such as a dialog's
+  // choices below it, also within the trace's own scrolling area
   useEffect(() => {
-    if (open) box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    if (open) (root.current?.parentElement ?? root.current)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [open]);
   return (
-    <span className={styles.flagged}>
+    <span ref={root} className={styles.flagged}>
       <button type="button" className={styles.flaggedToggle} aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <ChevronRightIcon className={styles.thinkingChevron} />
         {label}
       </button>
       {open && (
-        <span ref={box} className={styles.flaggedText}>
+        <span className={styles.flaggedText}>
           {text}
         </span>
       )}
