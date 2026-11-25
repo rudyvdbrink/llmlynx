@@ -280,7 +280,7 @@ export async function saveFileText(id: string, text: string | null, info: FileIn
 /** A prompt injection scan of a part of an untrusted file's text, as it is remembered with the file. */
 export type RememberedScan = { flagged: boolean; score: number; chunk?: string };
 
-/** The key of a remembered scan of a file's whole text, such as that of a download (see checkFile). */
+/** The key of a remembered scan of a file's whole text: downloads stored before only their start was scanned had one. */
 export const WHOLE_TEXT = "all";
 
 /**

@@ -6,7 +6,8 @@
 // name says, such as a web page saved as photo.jpg, is not stored. The file is
 // checked as a file from the internet (checkFile): a virus discards it, an
 // injection withholds it and pauses the reply, and one that could not be
-// checked is not stored.
+// checked is not stored. Only the start of its text the model gets here is
+// scanned for injections; the rest is scanned when the model reads it.
 
 import { baseName, cleanFilePath, extensionOf, fileKind, formatSize, mimeTypeOf, typeLabel } from "@/lib/files";
 import { sniffType } from "@/server/files/sniff";
@@ -95,7 +96,9 @@ export async function webFetch(args: Args, ctx: ToolCallContext): Promise<ToolRe
   const full = roomError(files, [{ name, size: data.length }]);
   if (full) return failure(full);
 
-  // Checked as a file from the internet: a virus, then its text for prompt injections
+  // The start of its text that the model gets here
+  const room = Math.max(500, ctx.textBudget - 400);
+  // Checked as a file from the internet: a virus, then that start for prompt injections
   const check = await checkFile({
     data,
     name,
@@ -104,6 +107,7 @@ export async function webFetch(args: Args, ctx: ToolCallContext): Promise<ToolRe
     signal: ctx.signal,
     tool: "web_fetch",
     host: hostOf(finalUrl),
+    preview: room,
   });
   if (check.outcome === "virus") return flaggedResult("virus", host);
   if (check.outcome === "unchecked") return flaggedResult("unchecked", host);
@@ -115,7 +119,6 @@ export async function webFetch(args: Args, ctx: ToolCallContext): Promise<ToolRe
   const kind = typeLabel(name);
   const head = [`Downloaded ${finalUrl} to ${name} in the sandbox (${formatSize(data.length)}, ${kind}).`];
   if (check.text?.trim()) {
-    const room = Math.max(500, ctx.textBudget - 400);
     const start = check.text.slice(0, room);
     head.push(
       start.length < check.text.length
@@ -138,7 +141,6 @@ export async function webFetch(args: Args, ctx: ToolCallContext): Promise<ToolRe
         origin: "internet",
         text: check.text,
         info: check.info,
-        scanned: true,
       },
     ],
     error: false,

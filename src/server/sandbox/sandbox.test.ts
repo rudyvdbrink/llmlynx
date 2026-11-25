@@ -266,11 +266,19 @@ describe("web_fetch", () => {
     expect(result.text).toContain("a,b\n1,2");
     const [file] = await conversationFiles(chat.conversationId);
     expect([file.name, file.origin]).toEqual(["data/table.csv", "internet"]);
-    // Its whole text passed the scan: reading it scans nothing again
-    fakes.guardTexts = [];
-    resetScanners();
-    await chat.call("read_file", { file: "table.csv" });
-    expect(fakes.guardTexts).toEqual([]);
+  });
+
+  it("scans only the start the model gets, and the rest of the file when the model reads it", async () => {
+    const chat = await newChat({}, `Get ${URL}`);
+    fakes.downloads.set(URL, { type: "text/csv", data: `${"lynx,cat\n".repeat(1000)}note,${INJECTION}\n` });
+    const result = await chat.call("web_fetch", { url: URL }, 2000);
+    expect(result.error).toBe(false);
+    expect(fakes.guardTexts).toHaveLength(1);
+    expect(fakes.guardTexts[0]).not.toContain(INJECTION);
+    // The part with the injection was not read yet: it is scanned, and withheld, when it is
+    const read = await chat.call("read_file", { file: "table.csv", start: 8000 }, 2000);
+    expect(read.text).toBe(WITHHELD_NOTICE);
+    expect(chat.security.context.tainted).toBe(true);
   });
 
   it("stores a download that did not change only once", async () => {

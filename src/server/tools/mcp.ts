@@ -10,8 +10,7 @@ export type ToolImage = { mimeType: string; data: string }; // data: base64
  * A file a tool made, such as a document the model asked for, to store in the
  * chat's sandbox under `name` (its path there). `origin` says it came from
  * code or the internet (see FileOrigin in server/files/store.ts); `text` and
- * `info` are what converting it gave, when that was done already, and
- * `scanned` says its whole text passed the prompt injection scan.
+ * `info` are what converting it gave, when that was done already.
  * `restoredFrom` is the older version an undo copied it from.
  */
 export type ToolFile = {
@@ -21,7 +20,6 @@ export type ToolFile = {
   origin?: "code" | "internet";
   text?: string | null;
   info?: object | null;
-  scanned?: boolean;
   restoredFrom?: string;
 };
 
