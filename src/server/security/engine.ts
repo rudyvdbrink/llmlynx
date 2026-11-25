@@ -64,9 +64,13 @@ export async function openSecurity({
  * following the detection table: a virus is discarded, a prompt injection is
  * withheld and pauses the reply for the user's choice, and content that could
  * not be checked is withheld. `source` is what was flagged: a page's host, or
- * a file name.
+ * a file name. `tooLong`: not checked because it was too long to scan in time.
  */
-export function flaggedResult(flag: StepSecurity["flag"], source: string, score?: number, chunk?: string): ToolResult {
+export function flaggedResult(
+  flag: StepSecurity["flag"],
+  source: string,
+  { score, chunk, tooLong }: { score?: number; chunk?: string; tooLong?: boolean } = {}
+): ToolResult {
   const none = { images: [], files: [], error: true };
   if (flag === "virus") {
     return {
@@ -79,7 +83,7 @@ export function flaggedResult(flag: StepSecurity["flag"], source: string, score?
   if (flag === "unchecked") {
     return {
       ...none,
-      text: "Error: the content could not be checked; try again later or answer without it.",
+      text: `Error: this content ${tooLong ? "was too long to check for safety in time" : "could not be checked for safety"}, so it was withheld. Do not request it again; use other sources or answer without it.`,
       note: "not checked",
       security: { flag, source },
     };
@@ -132,10 +136,11 @@ export async function checkAfterCall(
   if (viruses.some((virus) => virus.status === "flagged")) return { ...flaggedResult("virus", source), ...done };
   if (injection.status === "flagged") {
     context.tainted = true;
-    return { ...flaggedResult("injection", source, injection.score, injection.chunk), ...done };
+    return { ...flaggedResult("injection", source, injection), ...done };
   }
-  if (injection.status === "unchecked" || viruses.some((virus) => virus.status === "unchecked")) {
-    return { ...flaggedResult("unchecked", source), ...done };
+  const unchecked = [injection, ...viruses].filter((scan) => scan.status === "unchecked");
+  if (unchecked.length) {
+    return { ...flaggedResult("unchecked", source, { tooLong: unchecked.some((scan) => scan.tooLong) }), ...done };
   }
 
   return { ...result, text };
@@ -168,7 +173,7 @@ export async function checkFileRead({
   const hash = contentHash(clean);
   const flagged = (score: number, chunk?: string) => {
     session.context.tainted = true;
-    return { blocked: flaggedResult("injection", file.name, score, chunk) };
+    return { blocked: flaggedResult("injection", file.name, { score, chunk }) };
   };
 
   const known = await rememberedScan(file.id, hash);
@@ -179,7 +184,7 @@ export async function checkFileRead({
   }
 
   const scan = await scanInjection(clean, { timeoutMs: TOOL_SCAN_TIMEOUT_MS, signal, audit: session.audit, tool });
-  if (scan.status === "unchecked") return { blocked: flaggedResult("unchecked", file.name) };
+  if (scan.status === "unchecked") return { blocked: flaggedResult("unchecked", file.name, scan) };
   if (scan.status === "flagged") {
     await rememberScan(file.id, hash, { flagged: true, score: scan.score, ...(scan.chunk ? { chunk: scan.chunk } : {}) });
     return flagged(scan.score, scan.chunk);
