@@ -6,7 +6,7 @@ import { uniqueName, type FileCard } from "@/lib/files";
 import { parseSelection, toSelection } from "@/lib/selection";
 import type { ApprovalDecision, PauseDecision, StepSecurity } from "@/lib/types";
 import type { ReadFact, RunRecord } from "@/server/tools/definitions";
-import { staleText, staleVersions, WHOLE_TEXT, type ExpectedVersion, type StaleVersion } from "@/server/files/store";
+import { staleText, staleVersions, type ExpectedVersion, type StaleVersion } from "@/server/files/store";
 import { addConversationCost, conversationCost } from "./cost";
 import { saveRequestSetup, type RequestSetupInput } from "./setup";
 import type { CheckpointMeta, StepRun } from "./view";
@@ -434,8 +434,6 @@ export function createAssistantReply({
           ...(f.origin ? { origin: f.origin } : {}),
           ...(f.text !== undefined ? { text: f.text } : {}),
           ...(f.info ? { info: f.info as Prisma.InputJsonObject } : {}),
-          // Its whole text passed the scan when it arrived: reading it needs no scan (see checkFileRead)
-          ...(f.scanned ? { scans: { [WHOLE_TEXT]: { flagged: false, score: 0 } } } : {}),
           ...(f.restoredFrom ? { restoredFrom: f.restoredFrom } : {}),
         })),
         // A deletion holds no data: it marks where the file's history ends

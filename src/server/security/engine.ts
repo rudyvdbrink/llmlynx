@@ -5,8 +5,11 @@
 // detection.
 //
 // After a call of a tool whose result comes from the internet, the result is
-// scanned (scan.ts) before the model gets anything. A file is checked once,
-// when it arrives (checkFile).
+// scanned (scan.ts) before the model gets anything. A file is checked when
+// it arrives (checkFile); of a download, only the start of its text the model
+// gets then is scanned for injections, and the rest when the model reads it
+// (checkFileRead). The guard scans only the text that can carry instructions
+// (extract.ts).
 
 import { fileKind } from "@/lib/files";
 import type { ApprovalDecision, PauseDecision, StepSecurity } from "@/lib/types";
@@ -16,6 +19,7 @@ import { isUntrusted, rememberedScan, rememberScan, type ConversationFile, type 
 import type { Args, ToolDefinition, ToolResult } from "@/server/tools/definitions";
 import { contentHash, type AuditLog } from "./audit";
 import { contextFromSteps, type SecurityContext } from "./context";
+import { formatOf, guardText } from "./extract";
 import { FILE_GUARD_TIMEOUT_MS, TOOL_SCAN_TIMEOUT_MS, UPLOAD_VIRUS_TIMEOUT_MS } from "./limits";
 import { openPause } from "./pause";
 import { scanInjection, scanVirus } from "./scan";
@@ -183,7 +187,7 @@ export async function checkFileRead({
     return known.flagged ? flagged(known.score, known.chunk) : { text: clean };
   }
 
-  const scan = await scanInjection(clean, { timeoutMs: TOOL_SCAN_TIMEOUT_MS, signal, audit: session.audit, tool });
+  const scan = await scanInjection(guardText(clean, formatOf(file.name)), { timeoutMs: TOOL_SCAN_TIMEOUT_MS, signal, audit: session.audit, tool });
   if (scan.status === "unchecked") return { blocked: flaggedResult("unchecked", file.name, scan) };
   if (scan.status === "flagged") {
     await rememberScan(file.id, hash, { flagged: true, score: scan.score, ...(scan.chunk ? { chunk: scan.chunk } : {}) });
@@ -269,10 +273,12 @@ export type FileCheck =
 
 /**
  * Checks a file, for any source: the virus scan and the conversion to text
- * run in parallel on the bytes, and a virus stops the conversion. The text of
- * a file from the internet is then scanned for a prompt injection. A file the
- * user attached is not: it is the user's own, and the scan of a large file
- * takes minutes. `text` is the file as the model reads it (null for an image,
+ * run in parallel on the bytes, and a virus stops the conversion. Of a file
+ * from the internet, the start of its text the model gets now (`preview`
+ * characters, all of it without) is then scanned for a prompt injection; the
+ * rest is scanned when the model reads it (checkFileRead). A file the user
+ * attached is not scanned for injections: it is the user's own, and the scan
+ * of a large file takes minutes. `text` is the file as the model reads it (null for an image,
  * and for a file that cannot be converted: `info.error` says why). Throws
  * only when `signal` aborts.
  */
@@ -284,6 +290,7 @@ export async function checkFile({
   signal,
   tool,
   host,
+  preview,
 }: {
   data: Uint8Array;
   name: string;
@@ -292,6 +299,7 @@ export async function checkFile({
   signal: AbortSignal;
   tool?: string; // the tool that fetched it, for the log
   host?: string | null; // where it came from, for the log
+  preview?: number;
 }): Promise<FileCheck> {
   const user = source === "user";
   const unchecked: FileCheck = { outcome: "unchecked", action: user ? "refuse" : "withhold" };
@@ -321,7 +329,8 @@ export async function checkFile({
   const { text, info } = converted;
   if (user || !text) return { outcome: "clean", text, info };
 
-  const injection = await scanInjection(text, { timeoutMs: FILE_GUARD_TIMEOUT_MS, signal, audit, tool, host });
+  const shown = preview === undefined ? text : text.slice(0, preview);
+  const injection = await scanInjection(guardText(shown, formatOf(name, text)), { timeoutMs: FILE_GUARD_TIMEOUT_MS, signal, audit, tool, host });
   if (injection.status === "flagged") return { outcome: "injection", action: "pause", score: injection.score, chunk: injection.chunk };
   if (injection.status === "unchecked") return unchecked;
   return { outcome: "clean", text, info };

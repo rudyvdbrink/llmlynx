@@ -10,7 +10,7 @@
 export const TOOL_SCAN_TIMEOUT_MS = 20_000;
 /** How long the virus scan of a file may take */
 export const UPLOAD_VIRUS_TIMEOUT_MS = 30_000;
-/** How long the injection scan of the whole text of a file from the internet may take; tools/guard stops by itself just before */
+/** How long the injection scan of the start of a download's text, which the model gets with it, may take; tools/guard stops by itself just before */
 export const FILE_GUARD_TIMEOUT_MS = 180_000;
 /** How many injection verdicts are remembered, by the hash of their text */
 export const VERDICT_CACHE_SIZE = 500;

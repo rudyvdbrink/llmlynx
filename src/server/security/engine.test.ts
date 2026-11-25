@@ -190,8 +190,8 @@ describe("after a call: no setting switches the checks off", () => {
 });
 
 describe("the check of a file from the internet", () => {
-  const check = (text: string, name = "report.txt") =>
-    checkFile({ data: Buffer.from(text), name, source: "internet", audit, signal: signal() });
+  const check = (text: string, name = "report.txt", preview?: number) =>
+    checkFile({ data: Buffer.from(text), name, source: "internet", audit, signal: signal(), preview });
 
   it("passes a clean file with its text", async () => {
     expect(await check("Quarterly figures.")).toEqual({
@@ -235,6 +235,21 @@ describe("the check of a file from the internet", () => {
     fakes.clamd = "up";
     fakes.files = "down"; // without its text, it cannot be scanned
     expect(await check("Some text.")).toEqual({ outcome: "unchecked", action: "withhold" });
+  });
+
+  it("scans only the start the model gets, and of it only what can carry instructions", async () => {
+    const stops = Array.from({ length: 200 }, (_, i) => ({ name: "Centraal", lat: 52.37 + i / 1000, open: true }));
+    const route = JSON.stringify({ stops, note: `Later: ${INJECTION}` });
+    // The injection is past the start: it is scanned when the model reads that part (checkFileRead)
+    expect(await check(route, "route", route.indexOf('"note"'))).toMatchObject({ outcome: "clean", text: route });
+    expect(fakes.guardTexts).toEqual(["stops\nname\nCentraal\nlat\nopen"]);
+  });
+
+  it("finds an injection in a string of JSON and in the text of a page", async () => {
+    const route = JSON.stringify({ stops: [{ name: "Centraal", lat: 52.37 }], note: `Hello. ${INJECTION}` });
+    expect(await check(route, "route.json", 10_000)).toMatchObject({ outcome: "injection" });
+    const page = `<html><body><div class="card"><p>Hello. ${INJECTION}</p></div></body></html>`;
+    expect(await check(page, "page.html", 10_000)).toMatchObject({ outcome: "injection" });
   });
 
   it("only scans an image for viruses", async () => {
