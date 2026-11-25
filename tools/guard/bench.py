@@ -7,7 +7,7 @@ takes. On the server:
     docker compose run --rm --no-deps guard python /app/bench.py
 
 The target on a Raspberry Pi 5 with the 22m model is under 2 seconds for the
-page: the app waits at most 8 seconds for the scan of a tool result.
+page: the app waits at most 20 seconds for the scan of a tool result.
 
 Usage: python bench.py [model directory]
 """

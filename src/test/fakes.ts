@@ -256,7 +256,7 @@ export async function clamdScan(data: Uint8Array, { signal }: { signal?: AbortSi
   const text = Buffer.from(data).toString("latin1");
   fakes.clamdScans.push(text);
   if (fakes.clamd === "down") throw new Error("clamd cannot be reached: connect ECONNREFUSED");
-  if (fakes.clamd === "silent") throw new Error("clamd did not answer within 8000 ms.");
+  if (fakes.clamd === "silent") return untilAborted(signal);
   if (fakes.clamdGate) await Promise.race([fakes.clamdGate, untilAborted(signal)]);
   if (text.includes(UNSCANNABLE)) return { infected: true, signature: "Heuristics.Limits.Exceeded.MaxFiles" };
   return text.includes(VIRUS) ? { infected: true, signature: SIGNATURE } : { infected: false };

@@ -2,14 +2,16 @@
 // how long things are kept. None of them is a setting.
 
 // --- Scanners (scan.ts)
-/** How long the scans of a tool result may take, together */
-export const TOOL_SCAN_TIMEOUT_MS = 8_000;
+/**
+ * How long the scans of a tool result may take, together. The guard scans one
+ * text at a time (GUARD_MAX_CONCURRENCY), so this includes the wait behind the
+ * scans of other tool calls.
+ */
+export const TOOL_SCAN_TIMEOUT_MS = 20_000;
 /** How long the virus scan of a file may take */
 export const UPLOAD_VIRUS_TIMEOUT_MS = 30_000;
 /** How long the injection scan of the whole text of a file from the internet may take; tools/guard stops by itself just before */
 export const FILE_GUARD_TIMEOUT_MS = 180_000;
-/** After a scan failed or timed out, its scanner is skipped for this long */
-export const BREAKER_MS = 30_000;
 /** How many injection verdicts are remembered, by the hash of their text */
 export const VERDICT_CACHE_SIZE = 500;
 

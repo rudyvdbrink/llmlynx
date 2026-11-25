@@ -1,10 +1,10 @@
 // Tests of the scanners as the checks use them: the verdict cache, the
-// timeout, the circuit breaker, and what is logged.
+// timeout, and what is logged.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fakes, INJECTION, SIGNATURE, UNSCANNABLE, VIRUS } from "@/test/fakes";
 import { contentHash, type SecurityEventInput } from "./audit";
-import { BREAKER_MS, VERDICT_CACHE_SIZE } from "./limits";
+import { VERDICT_CACHE_SIZE } from "./limits";
 import { resetScanners, scanInjection, scanVirus } from "./scan";
 
 vi.mock("@/server/tools/mcp", () => import("@/test/fakes"));
@@ -26,10 +26,7 @@ beforeEach(() => {
   events = [];
 });
 
-afterEach(() => {
-  vi.useRealTimers();
-  vi.unstubAllEnvs();
-});
+afterEach(() => vi.unstubAllEnvs());
 
 describe("scanInjection", () => {
   it("reports clean and flagged text with the guard's score", async () => {
@@ -76,50 +73,37 @@ describe("scanInjection", () => {
     expect(fakes.guardTexts.length).toBe(calls + 1);
   });
 
-  it("treats text as not checked when the guard cannot be reached, and then skips the guard", async () => {
+  it("treats text as not checked when the guard cannot be reached, and asks the guard again for the next text", async () => {
     fakes.guard = "down";
     expect(await scanInjection("page one", options())).toEqual({ status: "unchecked" });
     expect(await scanInjection("page two", options())).toEqual({ status: "unchecked" });
-    // The circuit breaker is open: the second scan did not try the guard
-    expect(fakes.guardTexts).toEqual(["page one"]);
+    expect(fakes.guardTexts).toEqual(["page one", "page two"]);
     expect(events.map((event) => [event.verdict, event.reason])).toEqual([
       ["block", "unchecked"],
       ["block", "unchecked"],
     ]);
   });
 
-  it("tries the guard again after the circuit breaker's 30 seconds", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    fakes.guard = "down";
-    await scanInjection("page one", options());
-    fakes.guard = "up";
-    vi.setSystemTime(Date.now() + BREAKER_MS - 1000);
-    expect(await scanInjection("page two", options())).toEqual({ status: "unchecked" });
-    vi.setSystemTime(Date.now() + 2000);
-    expect(await scanInjection("page two", options())).toEqual({ status: "clean", score: 0.02 });
-  });
-
   it("does not remember a text that could not be checked", async () => {
     fakes.guard = "down";
     await scanInjection("the page", options());
     fakes.guard = "up";
-    resetScanners();
     expect(await scanInjection("the page", options())).toEqual({ status: "clean", score: 0.02 });
   });
 
-  it("gives up on a guard that does not answer in time, and opens the circuit breaker", async () => {
+  it("gives up on a guard that does not answer in time, without effect on the next scan", async () => {
     fakes.guard = "silent";
     const started = Date.now();
-    expect(await scanInjection("a slow page", options({ timeoutMs: 60 }))).toEqual({ status: "unchecked" });
+    expect(await scanInjection("a slow page", options({ timeoutMs: 60 }))).toEqual({ status: "unchecked", tooLong: true });
     expect(Date.now() - started).toBeLessThan(1500);
     fakes.guard = "up";
-    expect(await scanInjection("the next page", options())).toEqual({ status: "unchecked" });
-    expect(fakes.guardTexts).toEqual(["a slow page"]);
+    expect(await scanInjection("the next page", options())).toEqual({ status: "clean", score: 0.02 });
+    expect(fakes.guardTexts).toEqual(["a slow page", "the next page"]);
   });
 
-  it("keeps the circuit breaker closed when the guard answers that it cannot scan a text", async () => {
+  it("treats text the guard answers is too long to scan as not checked, and too long", async () => {
     fakes.guard = "refuses";
-    expect(await scanInjection("a very long text", options())).toEqual({ status: "unchecked" });
+    expect(await scanInjection("a very long text", options())).toEqual({ status: "unchecked", tooLong: true });
     fakes.guard = "up";
     expect(await scanInjection("the next page", options())).toEqual({ status: "clean", score: 0.02 });
   });
@@ -164,20 +148,14 @@ describe("scanVirus", () => {
     expect(events[1].contentHash).toBe(contentHash(infected));
   });
 
-  it("treats bytes as not checked when clamd fails or does not answer, and then skips clamd", async () => {
+  it("treats bytes as not checked when clamd fails or does not answer, without effect on the next scan", async () => {
     fakes.clamd = "silent";
-    expect(await scanVirus(Buffer.from("one"), options())).toEqual({ status: "unchecked" });
-    fakes.clamd = "up";
-    expect(await scanVirus(Buffer.from("two"), options())).toEqual({ status: "unchecked" });
-    expect(fakes.clamdScans).toEqual(["one"]);
-    resetScanners();
-    expect(await scanVirus(Buffer.from("two"), options())).toEqual({ status: "clean" });
-  });
-
-  it("has a circuit breaker of its own", async () => {
+    expect(await scanVirus(Buffer.from("one"), options({ timeoutMs: 60 }))).toEqual({ status: "unchecked", tooLong: true });
     fakes.clamd = "down";
-    await scanVirus(Buffer.from("one"), options());
-    expect(await scanInjection("a page", options())).toEqual({ status: "clean", score: 0.02 });
+    expect(await scanVirus(Buffer.from("two"), options())).toEqual({ status: "unchecked" });
+    fakes.clamd = "up";
+    expect(await scanVirus(Buffer.from("three"), options())).toEqual({ status: "clean" });
+    expect(fakes.clamdScans).toEqual(["one", "two", "three"]);
   });
 
   it("treats bytes clamd could not scan whole as not checked, not as a virus, and keeps using clamd", async () => {

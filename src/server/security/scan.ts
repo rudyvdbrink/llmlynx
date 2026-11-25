@@ -1,15 +1,14 @@
 // The two scanners, as the checks use them: the guard (tools/guard), which
 // scores text for prompt injections, and clamd, which scans bytes for
 // malware. Both run in the stack; no content leaves the server. Every scan
-// has a timeout and is logged. A scanner that failed or timed out is skipped
-// for a while (circuit breaker), so a broken one makes nobody wait twice;
-// what it should have scanned then counts as not checked.
+// has a timeout and is logged. What a scan that failed or timed out should
+// have checked counts as not checked; the next scan tries the scanner again.
 
 import { callMcpTool } from "@/server/tools/mcp";
 import { contentHash, type AuditLog } from "./audit";
 import { clamdScan } from "./clamd";
 import { clamavServer, guardServer } from "./config";
-import { BREAKER_MS, VERDICT_CACHE_SIZE } from "./limits";
+import { VERDICT_CACHE_SIZE } from "./limits";
 
 /**
  * "empty": there was no text to scan. A flagged scan has the text of the chunk
@@ -18,11 +17,16 @@ import { BREAKER_MS, VERDICT_CACHE_SIZE } from "./limits";
 export type InjectionScan =
   | { status: "clean"; score: number }
   | { status: "flagged"; score: number; chunk?: string }
-  | { status: "unchecked" | "empty" };
+  | Unchecked
+  | { status: "empty" };
+
+/** `tooLong`: the scan ran out of time, or the guard answered that the text is too long to scan in time */
+export type Unchecked = { status: "unchecked"; tooLong?: true };
+const TOO_LONG: Unchecked = { status: "unchecked", tooLong: true };
 
 type Verdict = Extract<InjectionScan, { status: "clean" | "flagged" }>;
 
-export type VirusScan = { status: "clean" | "unchecked" } | { status: "flagged"; signature: string };
+export type VirusScan = { status: "clean" } | Unchecked | { status: "flagged"; signature: string };
 
 // What clamd reports for content it could not scan whole, past one of its limits (AlertExceedsMax in
 // tools/clamav/clamd.conf): not a virus, but not checked either
@@ -35,22 +39,6 @@ export type ScanOptions = {
   tool?: string; // the tool whose result is scanned, for the log
   host?: string | null; // the page's host, for the log
 };
-
-function createBreaker() {
-  let openUntil = 0;
-  return {
-    isOpen: () => Date.now() < openUntil,
-    trip() {
-      openUntil = Date.now() + BREAKER_MS;
-    },
-    reset() {
-      openUntil = 0;
-    },
-  };
-}
-
-const guardBreaker = createBreaker();
-const clamBreaker = createBreaker();
 
 // The newest verdicts of the guard by the SHA-256 of their text, so identical text is never scored
 // twice; a flagged one keeps the text of its chunk that scored highest
@@ -70,11 +58,9 @@ function remember(hash: string, verdict: Verdict) {
   if (verdicts.size > VERDICT_CACHE_SIZE) verdicts.delete(verdicts.keys().next().value!);
 }
 
-/** Forgets the verdicts and closes the circuit breakers. For tests. */
+/** Forgets the verdicts. For tests. */
 export function resetScanners() {
   verdicts.clear();
-  guardBreaker.reset();
-  clamBreaker.reset();
 }
 
 /**
@@ -97,18 +83,14 @@ export async function scanInjection(text: string, { timeoutMs, signal, audit, to
 
   const known = recall(hash);
   if (known) return log(known);
-  if (guardBreaker.isOpen()) return log({ status: "unchecked" });
+  const timeout = AbortSignal.timeout(timeoutMs);
   try {
-    const out = await callMcpTool(
-      server,
-      "guard_scan_text",
-      { text },
-      { signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]), timeoutMs }
-    );
+    const out = await callMcpTool(server, "guard_scan_text", { text }, { signal: AbortSignal.any([signal, timeout]), timeoutMs });
     if (out.isError) {
       // The guard answered that it cannot scan this text, such as one that is too long: it is not broken
       console.error(`The guard could not scan a text: ${out.text.slice(0, 200)}`);
-      return log({ status: "unchecked" });
+      // tools/guard/src/server.py: "The text is too long to scan in time."
+      return log(/too long/i.test(out.text) ? TOO_LONG : { status: "unchecked" });
     }
     const answer = JSON.parse(out.text) as { score?: unknown; flagged?: unknown; chunk?: unknown };
     if (typeof answer.score !== "number" || typeof answer.flagged !== "boolean") throw new Error("unexpected answer");
@@ -120,9 +102,8 @@ export async function scanInjection(text: string, { timeoutMs, signal, audit, to
     return log(verdict);
   } catch (err) {
     if (signal.aborted) throw err;
-    guardBreaker.trip();
-    console.error(`The guard did not answer; skipping it for ${BREAKER_MS / 1000} s: ${(err as Error)?.message || err}`);
-    return log({ status: "unchecked" });
+    console.error(`The guard did not answer: ${(err as Error)?.message || err}`);
+    return log(timeout.aborted ? TOO_LONG : { status: "unchecked" });
   }
 }
 
@@ -139,16 +120,15 @@ export async function scanVirus(data: Uint8Array, { timeoutMs, signal, audit, to
     return result;
   };
 
-  if (clamBreaker.isOpen()) return log({ status: "unchecked" });
+  const timeout = AbortSignal.timeout(timeoutMs);
   try {
-    const result = await clamdScan(data, { ...server, timeoutMs, signal });
+    const result = await clamdScan(data, { ...server, timeoutMs, signal: AbortSignal.any([signal, timeout]) });
     if (!result.infected) return log({ status: "clean" });
     if (result.signature.startsWith(LIMIT_EXCEEDED)) return log({ status: "unchecked" });
     return log({ status: "flagged", signature: result.signature });
   } catch (err) {
     if (signal.aborted) throw err;
-    clamBreaker.trip();
-    console.error(`The virus scan failed; skipping clamd for ${BREAKER_MS / 1000} s: ${(err as Error)?.message || err}`);
-    return log({ status: "unchecked" });
+    console.error(`The virus scan failed: ${(err as Error)?.message || err}`);
+    return log(timeout.aborted ? TOO_LONG : { status: "unchecked" });
   }
 }

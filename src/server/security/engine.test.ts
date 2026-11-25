@@ -121,11 +121,11 @@ describe("after a call: content from the internet", () => {
     expect(checked.pause).toEqual({ source: "web search" });
   });
 
-  it("withholds content that could not be checked, without a pause or taint, and opens the circuit breaker", async () => {
+  it("withholds content that could not be checked, without a pause or taint", async () => {
     fakes.guard = "down";
     const checked = await after("A page nobody could scan. https://site.example/next");
     expect(checked).toEqual({
-      text: "Error: the content could not be checked; try again later or answer without it.",
+      text: "Error: this content could not be checked for safety, so it was withheld. Do not request it again; use other sources or answer without it.",
       images: [],
       files: [],
       error: true,
@@ -133,10 +133,17 @@ describe("after a call: content from the internet", () => {
       security: { flag: "unchecked", source: "site.example" },
     });
     expect(session.context.tainted).toBe(false);
-    // The guard is skipped now: the next result does not wait for it again
+    // The failure does not carry over: the next result is scanned as usual
     fakes.guard = "up";
-    expect((await after("Another page.")).note).toBe("not checked");
-    expect(fakes.guardTexts).toEqual(["A page nobody could scan. https://site.example/next"]);
+    expect(await after("Another page.")).toEqual(result("Another page."));
+    expect(fakes.guardTexts).toEqual(["A page nobody could scan. https://site.example/next", "Another page."]);
+  });
+
+  it("tells the model when content was too long to scan in time", async () => {
+    fakes.guard = "refuses";
+    expect((await after("A very long page.")).text).toBe(
+      "Error: this content was too long to check for safety in time, so it was withheld. Do not request it again; use other sources or answer without it."
+    );
   });
 
   it("withholds content when the virus scanner is down", async () => {
@@ -206,7 +213,7 @@ describe("the check of a file from the internet", () => {
     // It comes without its text: the model gets none of it
     expect("text" in outcome).toBe(false);
     // The same result, and so the same dialog, as a flagged page: the file's name is its source
-    expect(flaggedResult("injection", "report.txt", 0.98)).toEqual({
+    expect(flaggedResult("injection", "report.txt", { score: 0.98 })).toEqual({
       text: WITHHELD_NOTICE,
       images: [],
       files: [],

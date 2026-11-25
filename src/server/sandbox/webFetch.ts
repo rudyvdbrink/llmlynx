@@ -109,7 +109,7 @@ export async function webFetch(args: Args, ctx: ToolCallContext): Promise<ToolRe
   if (check.outcome === "unchecked") return flaggedResult("unchecked", host);
   if (check.outcome === "injection") {
     security.context.tainted = true;
-    return flaggedResult("injection", host, check.score, check.chunk);
+    return flaggedResult("injection", host, check);
   }
 
   const kind = typeLabel(name);
