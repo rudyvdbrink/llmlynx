@@ -176,7 +176,10 @@ async function searchText(pattern: string, files: ConversationFile[], args: Args
         const text = group.hits.map((h) => h.text).join("\n");
         const checked = await checkFileRead({ file: group.file, text, tool: "search_workspace", session: ctx.security, signal: ctx.signal });
         if ("blocked" in checked) {
-          group.withheld = checked.blocked.security?.flag === "injection" ? "it looked like instructions aimed at the model" : "it could not be checked";
+          const injection = checked.blocked.security?.flag === "injection";
+          // No flag is stored for it: the user cannot mark it a false positive
+          if (injection) ctx.security.context.leftOut = true;
+          group.withheld = injection ? "it looked like instructions aimed at the model" : "it could not be checked";
         } else {
           const cleaned = checked.text.split("\n");
           group.hits.forEach((h, i) => (h.text = cleaned[i] ?? h.text));
@@ -265,6 +268,7 @@ async function diffText(changes: Prepared[], newVersions: string[], budget: numb
       const checked = ctx.security
         ? await checkFileRead({ file: change.file, text: hunks, tool: "edit_files", session: ctx.security, signal: ctx.signal })
         : null;
+      if (checked && "blocked" in checked && checked.blocked.security?.flag === "injection") ctx.security!.context.leftOut = true;
       hunks = checked && "text" in checked ? checked.text : "(The diff is not shown: the file's text could not be checked. Read the file to see it.)";
     }
     if (hunks.length + head.length + 1 > left) {

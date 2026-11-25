@@ -1059,6 +1059,15 @@
 .flaggedToggle:hover,
 .flaggedToggle:focus-visible { color: var(--text); outline: none; }
 .flaggedToggle[aria-expanded="true"] .thinkingChevron { transform: rotate(90deg); }
+/* In place of the button that marked flagged text a false positive, as high as it */
+.falsePositive {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  color: var(--muted);
+}
+.falsePositiveCheck { flex: none; color: #22c55e; }
 .flaggedText {
   display: block;
   align-self: stretch;
