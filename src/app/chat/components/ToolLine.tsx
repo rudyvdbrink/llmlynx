@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import styles from "../Chat.module.css";
-import { ChevronRightIcon, FileIcon, GitBranchIcon, GlobeIcon, PackageIcon, SpannerIcon, TerminalIcon, WarningIcon } from "@/components/icons";
+import { CheckIcon, ChevronRightIcon, FileIcon, GitBranchIcon, GlobeIcon, PackageIcon, SpannerIcon, TerminalIcon, WarningIcon } from "@/components/icons";
 import type { ToolIcon } from "@/lib/agentTools";
 import type { ApprovalDecision, PauseDecision, StepSecurity, ToolStep } from "@/lib/types";
 
@@ -32,9 +32,9 @@ function securityNote({ flag, source = "this source", decision }: StepSecurity):
  * Text behind a chevron, collapsed at first: what the classifier flagged, the
  * code a dialog asks about, or the summary of a checkpoint. It shows as plain
  * text in a box that scrolls, never as markdown, so no link in it can be
- * clicked and no image in it loads.
+ * clicked and no image in it loads. `children` show below it while it is open.
  */
-export function Expandable({ label, text }: { label: string; text: string }) {
+export function Expandable({ label, text, children }: { label: string; text: string; children?: ReactNode }) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLSpanElement | null>(null);
   // Opened, the text comes into view with what holds it, such as a dialog's
@@ -53,7 +53,44 @@ export function Expandable({ label, text }: { label: string; text: string }) {
           {text}
         </span>
       )}
+      {open && children}
     </span>
+  );
+}
+
+/**
+ * Below text flagged as a prompt injection: the user marks the flag a false
+ * positive, so it no longer taints the chat and code runs without asking.
+ * `rowId` is the stored step. Once marked, a green check says so in its place.
+ */
+function FalsePositive({ rowId, marked }: { rowId: string; marked: boolean }) {
+  const [state, setState] = useState<"open" | "sending" | "marked">(marked ? "marked" : "open");
+
+  async function mark() {
+    setState("sending");
+    const res = await fetch(`/api/chat/flags/${encodeURIComponent(rowId)}`, { method: "POST" }).catch(() => null);
+    // On a failure, the button is there again
+    setState(res?.ok ? "marked" : "open");
+  }
+
+  if (state === "marked") {
+    return (
+      <span className={styles.falsePositive} role="status">
+        <CheckIcon size={16} className={styles.falsePositiveCheck} />
+        Marked as a false positive
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={styles.choiceButton}
+      onClick={mark}
+      disabled={state === "sending"}
+      title="This text is harmless: code in this chat runs without asking again"
+    >
+      Mark as false positive
+    </button>
   );
 }
 
@@ -137,7 +174,13 @@ export default function ToolLine({ step }: { step: ToolStep }) {
         >
           <WarningIcon className={styles.warnIcon} />
           <span>{securityNote(security)}</span>
-          {security.chunk && <Expandable label="Flagged text" text={security.chunk} />}
+          {security.chunk && (
+            <Expandable label="Flagged text" text={security.chunk}>
+              {security.flag === "injection" && step.rowId && !asking && (
+                <FalsePositive rowId={step.rowId} marked={!!security.falsePositive} />
+              )}
+            </Expandable>
+          )}
           {asking && (
             <span className={styles.choices}>
               <button

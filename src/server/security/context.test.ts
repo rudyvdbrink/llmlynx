@@ -9,7 +9,7 @@ import { addFile, addMessage, newConversation, newUser } from "@/test/db";
 import { fakes, INJECTION } from "@/test/fakes";
 import { createAuditLog } from "./audit";
 import { contextFromSteps, type StoredStep } from "./context";
-import { openSecurity } from "./engine";
+import { openSecurity, stillTainted } from "./engine";
 import { resetScanners } from "./scan";
 
 vi.mock("@/server/tools/mcp", () => import("@/test/fakes"));
@@ -35,6 +35,12 @@ describe("the context of stored steps", () => {
   it("is tainted by a tool result that was flagged as a prompt injection", () => {
     const flagged = { label: "Could not read x (withheld)", error: true, security: { flag: "injection", score: 0.9 } };
     expect(contextFromSteps([step(flagged)]).tainted).toBe(true);
+  });
+
+  it("is not tainted by a flag the user marked a false positive", () => {
+    const marked = { error: true, security: { flag: "injection", score: 0.9, falsePositive: true } };
+    expect(contextFromSteps([step(marked)]).tainted).toBe(false);
+    expect(contextFromSteps([step(marked), step({ error: true, security: { flag: "injection" } })]).tainted).toBe(true);
   });
 
   it("is not tainted by a virus, content that could not be checked, or a plain result", () => {
@@ -73,6 +79,15 @@ describe("the context of a stored conversation", () => {
     const first = await open();
     expect(query).toHaveBeenCalledTimes(1);
     expect(first!.context.tainted).toBe(false);
+  });
+
+  it("stays tainted in a reply for text left out without a stored flag, whatever the user marked", async () => {
+    const { userId, conversationId, audit } = await conversation();
+    const session = { userId, audit, context: { tainted: true, leftOut: true } };
+    expect(await stillTainted(session, conversationId)).toBe(true);
+    // Tainted by a stored flag only: with none left, it is not any more
+    const flagged = { userId, audit, context: { tainted: true } };
+    expect(await stillTainted(flagged, conversationId)).toBe(false);
   });
 
   it("stays tainted over rebuilds once a tool result was flagged", async () => {

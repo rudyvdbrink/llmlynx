@@ -24,6 +24,7 @@ export type StepSecurity = {
   source?: string; // what was flagged: a page's host, or a file name
   decision?: PauseDecision; // what the user chose, once they did
   chunk?: string; // injection: the text the classifier flagged (its chunk with the highest score), for the user only
+  falsePositive?: boolean; // injection: the user marked the flag a false positive, so it no longer taints the chat
 };
 
 // A tool the model called while working on a reply, as the chat view shows it.
@@ -40,6 +41,7 @@ export type ToolStep = {
   // answer. `detail` is what would run: the code, or the packages to install
   approval?: { decision?: ApprovalDecision; detail?: string };
   pauseId?: string; // set while the reply waits for the user's choice about this step
+  rowId?: string; // the stored step, on one flagged as a prompt injection: to mark the flag a false positive
 };
 
 // A checkpoint: from here on the model gets `summary` in place of the steps

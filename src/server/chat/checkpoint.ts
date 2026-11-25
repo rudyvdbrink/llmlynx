@@ -196,7 +196,11 @@ async function recentFiles(conversationId: string, maxChars: number, security: S
     if (isUntrusted(file)) {
       if (!security) continue;
       const checked = await checkFileRead({ file, text, tool: "read_file", session: security, signal });
-      if ("blocked" in checked) continue;
+      if ("blocked" in checked) {
+        // No flag is stored for it: the user cannot mark it a false positive
+        if (checked.blocked.security?.flag === "injection") security.context.leftOut = true;
+        continue;
+      }
       text = checked.text;
     }
     blocks.push(`<file name="${file.name.replace(/"/g, "&quot;")}">\n${text}\n</file>`);

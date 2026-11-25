@@ -49,13 +49,14 @@ const filesOf = (row: Row): FileCard[] =>
 
 /** What the security checks found in a tool step's result, as stored in its metadata. */
 function storedSecurity(value: unknown): StepSecurity | null {
-  const { flag, source, decision, chunk } = (value ?? {}) as Record<string, unknown>;
+  const { flag, source, decision, chunk, falsePositive } = (value ?? {}) as Record<string, unknown>;
   if (flag !== "injection" && flag !== "virus" && flag !== "unchecked") return null;
   return {
     flag,
     ...(typeof source === "string" ? { source } : {}),
     ...(decision === "remove" || decision === "stop" ? { decision } : {}),
     ...(typeof chunk === "string" && chunk ? { chunk } : {}),
+    ...(flag === "injection" && falsePositive === true ? { falsePositive } : {}),
   };
 }
 
@@ -150,6 +151,7 @@ export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = n
       ...(typeof meta.label === "string" ? { label: meta.label } : {}),
       ...(screenshot ? { attachmentId: screenshot.id } : {}),
       ...(security ? { security } : {}),
+      ...(security?.flag === "injection" ? { rowId: row.id } : {}),
       ...(approval ? { approval } : {}),
     });
     const files = [

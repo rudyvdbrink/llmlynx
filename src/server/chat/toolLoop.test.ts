@@ -68,7 +68,7 @@ async function chat(turns: ModelTurn["calls"][], message = `Read ${PAGE} and ${O
     .then(() => audit.flush());
 
   const stored = () =>
-    prisma.message.findMany({ where: { conversationId }, orderBy: { position: "asc" }, select: { role: true, content: true, metadata: true } });
+    prisma.message.findMany({ where: { conversationId }, orderBy: { position: "asc" }, select: { id: true, role: true, content: true, metadata: true } });
   const paused = () => vi.waitFor(() => expect(pauses.length).toBe(1)).then(() => pauses[0]);
   return {
     userId,
@@ -142,6 +142,8 @@ describe("a prompt injection in content from the internet", () => {
     // The step is stored as the model gets it, with the note of the loop: a later request sends it again as it was
     expect(steps.at(-1)).toMatchObject({ role: "tool", content: `${WITHHELD_NOTICE}\n\n[Tool calls: 1 of 7 used, 6 left for this reply.]` });
     expect(steps.at(-1)?.metadata).toMatchObject({ error: true, security: { flag: "injection", score: 0.98 } });
+    // The tool line knows the stored step, to mark its flag a false positive
+    expect(run.lines.at(-1)?.rowId).toBe(steps.at(-1)?.id);
     expect(run.turnsMade()).toBe(1); // the model waits
 
     answerPause(pause.id, run.userId, "stop");

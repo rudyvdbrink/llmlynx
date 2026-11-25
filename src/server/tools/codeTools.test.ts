@@ -163,6 +163,8 @@ describe("search_workspace", () => {
     expect(result.text).toContain("lines 2 (their text is withheld: it looked like instructions aimed at the model)");
     expect(result.text).not.toContain(INJECTION);
     expect(chat.security.context.tainted).toBe(true);
+    // No flag is stored for it, which the user could mark a false positive: it taints the rest of the reply
+    expect(chat.security.context.leftOut).toBe(true);
   });
 
   it("refuses text over more than one line", async () => {

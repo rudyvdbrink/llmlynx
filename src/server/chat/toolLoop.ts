@@ -9,7 +9,7 @@ import { createHash } from "node:crypto";
 import { shownInChat, type FileCard } from "@/lib/files";
 import type { ApprovalDecision, ToolStep } from "@/lib/types";
 import { notRun, runCode } from "@/server/sandbox/records";
-import { awaitApproval, awaitDecision } from "@/server/security/engine";
+import { awaitApproval, awaitDecision, stillTainted } from "@/server/security/engine";
 import { hostOf } from "@/server/security/urls";
 import type { ToolCallContext, ToolDefinition } from "@/server/tools/definitions";
 import { runTool, type ToolResult } from "@/server/tools/run";
@@ -207,7 +207,7 @@ export async function runToolLoop<Turn extends ModelTurn>({
     // In a tainted chat, text that tried to instruct the model may try to get code run: the user decides first
     let approval: { decision: ApprovalDecision } | undefined;
     const session = toolContext?.security;
-    if (def?.effects.exec && !refused && session?.context.tainted) {
+    if (def?.effects.exec && !refused && session && (await stillTainted(session, toolContext!.conversationId))) {
       const decision = await awaitApproval({
         session,
         tool: call.name,
@@ -317,6 +317,7 @@ export async function runToolLoop<Turn extends ModelTurn>({
       state,
       ...(attachmentId ? { attachmentId } : {}),
       ...(security ? { security } : {}),
+      ...(security?.flag === "injection" && saved.id ? { rowId: saved.id } : {}),
       ...(approval ? { approval } : {}),
     });
     const cards = [...shownInChat(call.name, saved.files), ...(result.shared ?? [])];

@@ -8,7 +8,7 @@ import type { FileCard } from "@/lib/files";
 import type { ToolStep } from "@/lib/types";
 import { prisma } from "@/server/db/prisma";
 import { createAuditLog } from "@/server/security/audit";
-import { openSecurity } from "@/server/security/engine";
+import { markFalsePositive, openSecurity } from "@/server/security/engine";
 import { answerPause } from "@/server/security/pause";
 import { resetScanners } from "@/server/security/scan";
 import { getToolDefinition } from "@/server/tools/definitions";
@@ -24,18 +24,23 @@ vi.mock("@/server/security/clamd", () => import("@/test/fakes"));
 const tools = ["run_code", "install_packages", "share_file"].map((name) => getToolDefinition(name)!);
 const runPython = (code: string) => ({ name: "run_code", arguments: { language: "python", code } });
 
-/** A chat with a model that makes `turns` and then answers; with `tainted`, flagged text is in it already. */
-async function chat(turns: ModelTurn["calls"][], { tainted = false } = {}) {
+/**
+ * A chat with a model that makes `turns` and then answers; with `tainted`,
+ * flagged text is in it already (`flagId`), which with `falsePositive` the
+ * user marked a false positive.
+ */
+async function chat(turns: ModelTurn["calls"][], { tainted = false, falsePositive = false } = {}) {
   const userId = await newUser();
   const conversationId = await newConversation(userId);
   await addMessage(conversationId, { role: "user", content: "Work on it" });
+  let flagId: string | null = null;
   if (tainted) {
-    await addMessage(conversationId, {
+    flagId = await addMessage(conversationId, {
       role: "tool",
       content: "Withheld",
       toolCallId: "old",
       toolName: "web_read",
-      metadata: { label: "x", error: true, security: { flag: "injection", score: 0.9 } },
+      metadata: { label: "x", error: true, security: { flag: "injection", score: 0.9, ...(falsePositive ? { falsePositive } : {}) } },
     });
   }
   const audit = createAuditLog(userId, conversationId);
@@ -71,7 +76,7 @@ async function chat(turns: ModelTurn["calls"][], { tainted = false } = {}) {
   const paused = () => vi.waitFor(() => expect(pauses.length).toBe(1)).then(() => pauses[0]);
   const rows = () =>
     prisma.message.findMany({ where: { conversationId }, orderBy: { position: "asc" }, select: DISPLAY_MESSAGE_SELECT });
-  return { userId, conversationId, done, stopper, lines, pauses, files, paused, rows };
+  return { userId, conversationId, flagId, done, stopper, lines, pauses, files, paused, rows };
 }
 
 /** The reply of a chat as the chat view shows it after a reload, with the files the model shared. */
@@ -133,6 +138,38 @@ describe("in a tainted chat", () => {
     await run.done;
     expect(fakes.runs).toEqual([]);
     expect(run.pauses).toHaveLength(1);
+  });
+});
+
+describe("in a chat whose flag the user marked a false positive", () => {
+  it("runs code without asking", async () => {
+    const run = await chat([[runPython("print(42)")]], { tainted: true, falsePositive: true });
+    await run.done;
+    expect(run.pauses).toEqual([]);
+    expect(fakes.runs).toHaveLength(1);
+  });
+
+  it("stops asking in the reply that asks while the user marks it", async () => {
+    const run = await chat([[runPython("x")], [runPython("y")]], { tainted: true });
+    const pause = await run.paused();
+    expect(await markFalsePositive(run.userId, run.flagId!)).toBe(true);
+    answerPause(pause.id, run.userId, "run");
+    await run.done;
+    // The second run did not ask
+    expect(run.pauses).toHaveLength(1);
+    expect(fakes.runs).toHaveLength(2);
+    expect(await eventsOf(run.userId)).toContainEqual(
+      expect.objectContaining({ tool: "web_read", check: "decision", verdict: "allow", reason: "false_positive", conversationId: run.conversationId })
+    );
+  });
+
+  it("only takes the mark from the chat's own user, for a flagged injection", async () => {
+    const run = await chat([], { tainted: true });
+    expect(await markFalsePositive(await newUser(), run.flagId!)).toBe(false);
+    const plain = await addMessage(run.conversationId, { role: "tool", content: "x", toolCallId: "p", toolName: "web_read", metadata: { error: true, security: { flag: "virus" } } });
+    expect(await markFalsePositive(run.userId, plain)).toBe(false);
+    expect(await markFalsePositive(run.userId, "no-such-step")).toBe(false);
+    await run.done;
   });
 });
 

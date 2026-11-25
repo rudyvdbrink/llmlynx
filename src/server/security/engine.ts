@@ -11,13 +11,14 @@
 // (checkFileRead). The guard scans only the text that can carry instructions
 // (extract.ts).
 
+import type { Prisma } from "@prisma/client";
 import { fileKind } from "@/lib/files";
 import type { ApprovalDecision, PauseDecision, StepSecurity } from "@/lib/types";
 import { prisma } from "@/server/db/prisma";
 import { convertFile } from "@/server/files/convert";
 import { isUntrusted, rememberedScan, rememberScan, type ConversationFile, type FileInfo } from "@/server/files/store";
 import type { Args, ToolDefinition, ToolResult } from "@/server/tools/definitions";
-import { contentHash, type AuditLog } from "./audit";
+import { contentHash, createAuditLog, type AuditLog } from "./audit";
 import { contextFromSteps, type SecurityContext } from "./context";
 import { formatOf, guardText } from "./extract";
 import { FILE_GUARD_TIMEOUT_MS, TOOL_SCAN_TIMEOUT_MS, UPLOAD_VIRUS_TIMEOUT_MS } from "./limits";
@@ -59,8 +60,49 @@ export async function openSecurity({
   audit: AuditLog;
 }): Promise<SecuritySession | null> {
   if (!tools.length) return null;
+  return { userId, audit, context: await storedContext(conversationId) };
+}
+
+/** The context of the stored conversation `conversationId`, with one query. */
+async function storedContext(conversationId: string): Promise<SecurityContext> {
   const steps = await prisma.message.findMany({ where: { conversationId, role: "tool" }, select: { metadata: true } });
-  return { userId, audit, context: contextFromSteps(steps) };
+  return contextFromSteps(steps);
+}
+
+/**
+ * Whether the chat of `session` is still tainted, before code runs in it: the
+ * user may have marked its flags false positives since the reply started.
+ * Text left out in this reply without a stored flag still taints it. Every
+ * earlier result of the reply is stored by then: its calls run one by one.
+ */
+export async function stillTainted(session: SecuritySession, conversationId: string): Promise<boolean> {
+  const { context } = session;
+  if (!context.tainted || context.leftOut) return context.tainted;
+  context.tainted = (await storedContext(conversationId)).tainted;
+  return context.tainted;
+}
+
+/**
+ * Marks the prompt injection flag of the stored tool step `stepId` a false
+ * positive, at the word of `userId`, whose conversation it must be in: it no
+ * longer taints the chat, so code runs without asking. The flagged content
+ * stays withheld. The mark is logged. Returns false when there is no such
+ * flagged step.
+ */
+export async function markFalsePositive(userId: string, stepId: string): Promise<boolean> {
+  const step = await prisma.message.findFirst({
+    where: { id: stepId, role: "tool", conversation: { userId } },
+    select: { metadata: true, toolName: true, conversationId: true },
+  });
+  const metadata = (step?.metadata ?? {}) as Prisma.JsonObject;
+  const security = metadata.security as Prisma.JsonObject | undefined;
+  if (!step || security?.flag !== "injection") return false;
+  if (security.falsePositive === true) return true;
+  await prisma.message.update({ where: { id: stepId }, data: { metadata: { ...metadata, security: { ...security, falsePositive: true } } } });
+  const audit = createAuditLog(userId, step.conversationId);
+  audit.add({ tool: step.toolName ?? undefined, check: "decision", verdict: "allow", reason: "false_positive", decision: "false_positive" });
+  await audit.flush();
+  return true;
 }
 
 /**
