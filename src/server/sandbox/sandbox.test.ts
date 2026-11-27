@@ -343,11 +343,16 @@ describe("web_fetch: what the file is", () => {
     ]);
   });
 
-  it("keeps an image as it is, and points a model that can see to view_image", async () => {
+  it("keeps an image as it is, points a model that can see to view_image, and says how to show it", async () => {
     const chat = await newChat();
     fakes.downloads.set("https://photos.example/lynx.jpeg", { type: "image/jpeg", data: JPEG });
     const result = await chat.call("web_fetch", { url: "https://photos.example/lynx.jpeg" }, 8000, true);
     expect(result.text).toContain("It is an image: look at it with view_image.");
+    expect(result.text).toContain("Show it in your reply with ![caption](lynx.jpeg).");
+    // A name with a space goes in angle brackets, which markdown needs for it
+    fakes.downloads.set("https://photos.example/snow.jpeg", { type: "image/jpeg", data: JPEG });
+    const spaced = await chat.call("web_fetch", { url: "https://photos.example/snow.jpeg", name: "snow lynx.jpeg" });
+    expect(spaced.text).toContain("Show it in your reply with ![caption](<snow lynx.jpeg>).");
     const [file] = await conversationFiles(chat.conversationId);
     expect(file.name).toBe("lynx.jpeg");
     expect(await fileData(file.id)).toEqual(JPEG);

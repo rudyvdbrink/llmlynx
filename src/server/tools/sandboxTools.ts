@@ -79,9 +79,9 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
     icon: AGENT_TOOL_INFO.web_fetch.icon,
     description:
       "Download a file from a URL into this chat's sandbox, such as a CSV dataset, a PDF report, a spreadsheet or " +
-      "an image, so that code can work on it or you can share it with the user (at most 20 MB). Use the URL of the " +
-      "file itself, not of a page that shows it. You get its name in the sandbox, its size and type, and the start " +
-      "of its text. To read a web page, use web_read instead.",
+      "an image, so that code can work on it, or so that you can show it in your reply or share it with the user " +
+      "(at most 20 MB). Use the URL of the file itself, not of a page that shows it. You get its name in the " +
+      "sandbox, its size and type, and the start of its text. To read a web page, use web_read instead.",
     parameters: {
       type: "object",
       properties: {
@@ -239,9 +239,8 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
     description:
       "Give the user a file of this chat's sandbox: it shows as a file card below your reply, from which they open " +
       "or download it. Use it when the user asks for a file, or when a run made a file the user asked for, rather " +
-      "than downloading or making it again. To show the user images from the web, download them with web_fetch " +
-      "and share each one: downloads do not show in the chat until shared. Images, SVG and HTML that a run saves " +
-      "show in the chat already: do not share those.",
+      "than downloading or making it again. To show an image, put it in your reply with ![caption](name) instead. " +
+      "Images, SVG and HTML that a run saves show in the chat already: do not share those.",
     parameters: {
       type: "object",
       properties: { file: { type: "string", description: "The file's name in the sandbox, as in the list of this conversation's files" } },

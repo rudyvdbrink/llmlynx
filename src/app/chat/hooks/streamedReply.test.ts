@@ -162,4 +162,21 @@ describe("a reply that streams in", () => {
       { kind: "text", text: "The answer." },
     ]);
   });
+
+  it("keeps the newest list of the sandbox's image files, which the text's images are matched against", () => {
+    const panda = { id: "p1", name: "panda.jpg", mimeType: "image/jpeg", size: 10 };
+    const chart = { id: "c1", name: "chart.png", mimeType: "image/png", size: 20 };
+    const states = replay([
+      { status: "thinking" },
+      { images: [panda] },
+      { message: { role: "assistant", content: "One moment." }, done: false },
+      { images: [panda, chart] },
+      { message: { role: "assistant", content: "![A chart](chart.png)" }, done: false },
+      { end: true },
+    ]);
+    expect(states[1].imageFiles).toEqual([panda]);
+    expect(states.at(-1)!.imageFiles).toEqual([panda, chart]);
+    // They are not files of the reply
+    expect(states.at(-1)!.files).toEqual([]);
+  });
 });

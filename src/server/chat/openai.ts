@@ -446,6 +446,7 @@ export function streamOpenAIChat(
           isCancelled: () => cancelled,
           sendTool: (step) => send({ tool: step }),
           sendFiles: (files) => send({ files }),
+          sendImages: (images) => send({ images }),
           sendPause: (pause) => send({ pause }),
           sendError: (error) => send({ error }),
           view,

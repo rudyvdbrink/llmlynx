@@ -3,10 +3,11 @@ import { prisma } from "@/server/db/prisma";
 import { takeUploads, type UploadsToSend } from "@/server/files/uploads";
 import type { ToolFile, ToolImage } from "@/server/tools/mcp";
 import { uniqueName, type FileCard } from "@/lib/files";
+import { imageRefs, resolveImage } from "@/lib/inlineImages";
 import { parseSelection, toSelection } from "@/lib/selection";
 import type { ApprovalDecision, PauseDecision, StepSecurity } from "@/lib/types";
 import type { ReadFact, RunRecord } from "@/server/tools/definitions";
-import { staleText, staleVersions, type ExpectedVersion, type StaleVersion } from "@/server/files/store";
+import { conversationFiles, staleText, staleVersions, type ExpectedVersion, type StaleVersion } from "@/server/files/store";
 import { addConversationCost, conversationCost } from "./cost";
 import { saveRequestSetup, type RequestSetupInput } from "./setup";
 import type { CheckpointMeta, StepRun } from "./view";
@@ -210,6 +211,19 @@ class StaleFiles extends Error {
   }
 }
 
+/**
+ * The ids of the image files that `text` shows (see lib/inlineImages.ts), as
+ * the sandbox has them now: stored with the step, so that the reply keeps
+ * showing these versions after the files change.
+ */
+async function shownImageIds(conversationId: string, text: string): Promise<string[]> {
+  const refs = imageRefs(text);
+  if (!refs.length) return [];
+  const files = await conversationFiles(conversationId).catch(() => []);
+  const ids = refs.flatMap((ref) => resolveImage(ref.src, files)?.id ?? []);
+  return [...new Set(ids)];
+}
+
 /** A tool call as stored in Message.toolCalls. */
 export type StoredToolCall = { id: string; name: string; arguments: Record<string, unknown> };
 
@@ -286,6 +300,8 @@ export type AssistantReply = {
  * `modelKey` is the selection the user chats with, which the conversation keeps;
  * `model` is the "<provider>:<model>" that writes the reply (for an agent, its
  * base model), and `setup` is what that model is given besides the conversation.
+ * With `showsImages`, as for an agent with tools that work on files, each step
+ * keeps the versions of the image files its text shows (see shownImageIds).
  */
 export function createAssistantReply({
   conversationId,
@@ -293,12 +309,14 @@ export function createAssistantReply({
   modelKey,
   model,
   setup,
+  showsImages = false,
 }: {
   conversationId: string;
   userId: string;
   modelKey: string;
   model: string;
   setup: RequestSetupInput;
+  showsImages?: boolean;
 }): AssistantReply {
   let text = "";
   let reasoning = "";
@@ -356,13 +374,15 @@ export function createAssistantReply({
 
   async function assistantStep(toolCalls?: StoredToolCall[]): Promise<{ id: string; position: number }> {
     setupId ??= await prisma.$transaction((tx) => saveRequestSetup(tx, userId, setup));
+    const images = showsImages ? await shownImageIds(conversationId, text) : [];
+    const metadata = { ...(usage ? { usage } : {}), ...(images.length ? { images } : {}) };
     const step = await saveStep({
       role: "assistant",
       content: text,
       reasoning: reasoning || null,
       model,
       setupId,
-      ...(usage ? { metadata: { usage } } : {}),
+      ...(Object.keys(metadata).length ? { metadata } : {}),
       ...(toolCalls ? { toolCalls: toolCalls as Prisma.InputJsonValue } : {}),
     });
     text = "";

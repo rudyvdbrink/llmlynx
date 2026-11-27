@@ -62,9 +62,18 @@ export type TraceItem =
 // A message as shown in the chat view. A reply's `trace` is everything it did,
 // its text included, and its `content` that text in one piece (what its copy
 // button takes). `files` are the files the user attached or the agent created,
-// and `error` says why a reply failed. A message with `checkpoint` is not one
-// of the conversation: it marks where the user had the conversation summarised.
-export type DisplayMessage = ChatMessage & { trace?: TraceItem[]; files?: FileCard[]; error?: string; checkpoint?: Checkpoint };
+// and `error` says why a reply failed. A reply's `imageFiles` are the image files
+// the names in its text are matched against (see lib/inlineImages.ts): while
+// it streams, those of the sandbox; once stored, those its text showed. A
+// message with `checkpoint` is not one of the conversation: it marks where the
+// user had the conversation summarised.
+export type DisplayMessage = ChatMessage & {
+  trace?: TraceItem[];
+  files?: FileCard[];
+  imageFiles?: FileCard[];
+  error?: string;
+  checkpoint?: Checkpoint;
+};
 
 // What a model is busy with before its reply starts, sent as { status } lines by /api/chat.
 // "reading": the files the user attached are read first. "compacting": it
@@ -96,6 +105,7 @@ export type ConversationWithMessages = ConversationSummary & {
     content: string;
     trace?: TraceItem[];
     files?: FileCard[];
+    imageFiles?: FileCard[]; // a reply's: the image files its text shows
     checkpoint?: Checkpoint;
     createdAt: string;
   }[];

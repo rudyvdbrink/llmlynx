@@ -4,7 +4,8 @@
 // of each step, and the tool calls, in order; its content is all that text,
 // and its files those the file tools made, the images, SVG and HTML a
 // run of code made, and those the model shared (see shownInChat), each once,
-// as its newest version (see withFileCards). A user
+// as its newest version (see withFileCards); its imageFiles are the image files
+// its text shows, as stored with each step (see lib/inlineImages.ts). A user
 // message's files are those the user attached. A checkpoint (see
 // checkpoint.ts) is a marker: one the user asked for stands between the
 // messages, one made while a reply ran is in that reply's trace.
@@ -67,11 +68,17 @@ function storedApproval(value: unknown): ToolStep["approval"] | null {
   return decision === "run" || decision === "skip" ? { decision } : {};
 }
 
-/** The ids of the files a tool step shared with the user (share_file), from its metadata. */
-export function sharedIds(metadata: unknown): string[] {
-  const shared = (metadata as { shared?: unknown } | null)?.shared;
-  return Array.isArray(shared) ? shared.filter((id): id is string => typeof id === "string") : [];
+/** The ids stored under `key` in a step's metadata. */
+function idsOf(metadata: unknown, key: "shared" | "images"): string[] {
+  const ids = (metadata as Record<string, unknown> | null)?.[key];
+  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
 }
+
+/** The ids of the files a tool step shared with the user (share_file), from its metadata. */
+export const sharedIds = (metadata: unknown): string[] => idsOf(metadata, "shared");
+
+/** The ids of the image files an assistant step's text shows, from its metadata. */
+export const shownImageIds = (metadata: unknown): string[] => idsOf(metadata, "images");
 
 function storedCalls(value: Prisma.JsonValue): StoredToolCall[] {
   return Array.isArray(value)
@@ -79,8 +86,12 @@ function storedCalls(value: Prisma.JsonValue): StoredToolCall[] {
     : [];
 }
 
-/** `shared` holds the cards of the files that tool steps shared, by id (see sharedIds). */
-export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = new Map()): DisplayRow[] {
+/**
+ * `cards` holds, by id, the cards of the files that steps name in their
+ * metadata: those tool steps shared (see sharedIds), and the images that
+ * assistant steps show (see shownImageIds).
+ */
+export function toDisplayMessages(rows: Row[], cards: Map<string, FileCard> = new Map()): DisplayRow[] {
   const out: DisplayRow[] = [];
   let reply: (DisplayRow & { trace: TraceItem[] }) | null = null;
 
@@ -125,6 +136,9 @@ export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = n
       // Each step's reasoning and text start a new trace item or paragraph
       reply.trace = addReasoning(reply.trace, row.reasoning ?? "", true);
       reply.trace = addText(reply.trace, row.content, true);
+      // A later step that shows a newer version of a file shows that one in the whole reply
+      const images = shownImageIds(row.metadata).flatMap((id) => cards.get(id) ?? []);
+      if (images.length) reply.imageFiles = withFileCards(reply.imageFiles ?? [], images);
       // A call without a stored result was stopped, or its result could not be stored
       for (const call of storedCalls(row.toolCalls)) {
         reply.trace = upsertToolStep(reply.trace, {
@@ -156,7 +170,7 @@ export function toDisplayMessages(rows: Row[], shared: Map<string, FileCard> = n
     });
     const files = [
       ...shownInChat(row.toolName ?? "", filesOf(row)),
-      ...sharedIds(row.metadata).flatMap((id) => shared.get(id) ?? []),
+      ...sharedIds(row.metadata).flatMap((id) => cards.get(id) ?? []),
     ];
     if (files.length) reply.files = withFileCards(reply.files ?? [], files);
   }

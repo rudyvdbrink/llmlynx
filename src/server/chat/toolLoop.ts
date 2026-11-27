@@ -7,11 +7,14 @@
 
 import { createHash } from "node:crypto";
 import { shownInChat, type FileCard } from "@/lib/files";
+import { isImageFile } from "@/lib/inlineImages";
 import type { ApprovalDecision, ToolStep } from "@/lib/types";
+import { conversationFiles } from "@/server/files/store";
 import { notRun, runCode } from "@/server/sandbox/records";
 import { awaitApproval, awaitDecision, stillTainted } from "@/server/security/engine";
 import { hostOf } from "@/server/security/urls";
 import type { ToolCallContext, ToolDefinition } from "@/server/tools/definitions";
+import { hasFileTools } from "@/server/tools/policy";
 import { runTool, type ToolResult } from "@/server/tools/run";
 import type { Usage } from "./budget";
 import type { ContextManager } from "./context";
@@ -45,6 +48,9 @@ const MAX_DETAIL = 20_000;
 
 // How often the very same call may fail: the next time it is not run, and the model answers
 const MAX_SAME_FAILURES = 3;
+
+// Most image files an { images } line names: the newest ones
+const MAX_IMAGE_FILES = 300;
 
 const repeatedResult = (failures: number): ToolResult => ({
   text:
@@ -140,7 +146,10 @@ export function addToLastMessage<Message extends { content: string }>(messages: 
  * left. When they are used up, the model gets a request to answer with what
  * it has. Each call is announced with `sendTool` (state "running"), run, and
  * announced again with its outcome; files a call made are announced with
- * `sendFiles`. Every step is saved to `reply`, as the model got it.
+ * `sendFiles`. Every step is saved to `reply`, as the model got it. With
+ * tools that work on files, `sendImages` gets the sandbox's image files
+ * before each request in which they changed, as the model can show them in
+ * its text (see lib/inlineImages.ts).
  *
  * When a result from the internet looks like a prompt injection (see
  * server/security/engine.ts), it is withheld and the reply pauses: `sendPause`
@@ -157,6 +166,7 @@ export async function runToolLoop<Turn extends ModelTurn>({
   isCancelled,
   sendTool,
   sendFiles,
+  sendImages,
   sendPause,
   sendError,
   view,
@@ -172,6 +182,7 @@ export async function runToolLoop<Turn extends ModelTurn>({
   isCancelled: () => boolean;
   sendTool: (step: Partial<ToolStep> & { id: string }) => void;
   sendFiles: (files: FileCard[]) => void;
+  sendImages?: (images: FileCard[]) => void;
   /**
    * Announces a pause: `id` is what the user's choice is sent under, `tool` the
    * call's id, `source` what was flagged. `kind` "approval": the user is asked
@@ -338,8 +349,27 @@ export async function runToolLoop<Turn extends ModelTurn>({
     return { result, message, stop: decision === "stop" };
   }
 
+  // The ids of the image files sent last: none at first, so that an empty sandbox sends nothing
+  let sentImages = "";
+
+  /** Sends the sandbox's image files, the newest MAX_IMAGE_FILES, when they changed since they were last sent. */
+  async function sendImageFiles() {
+    if (!sendImages || !toolContext || !hasFileTools(tools)) return;
+    const files = await conversationFiles(toolContext.conversationId).catch(() => null);
+    if (!files) return;
+    const images: FileCard[] = files
+      .filter(isImageFile)
+      .slice(-MAX_IMAGE_FILES)
+      .map(({ id, name, mimeType, size }) => ({ id, name, mimeType, size }));
+    const ids = images.map((f) => f.id).join(",");
+    if (ids === sentImages) return;
+    sentImages = ids;
+    sendImages(images);
+  }
+
   /** One request to the model, with the view reduced first when it would not fit, and measured after. */
   async function request(mayCallTools: boolean): Promise<Turn> {
+    await sendImageFiles();
     await context?.prepare(view);
     const turn = await nextTurn(view, mayCallTools);
     context?.measured(view, turn.usage);

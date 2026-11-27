@@ -4,7 +4,7 @@ import { prisma } from "@/server/db/prisma";
 import { getCurrentUser } from "@/server/auth/session";
 import { jsonError, optionalString, readJsonObject } from "@/server/http";
 import { deleteUnusedSetups } from "@/server/chat/setup";
-import { contextFill, DISPLAY_MESSAGE_SELECT, sharedIds, toDisplayMessages } from "@/server/chat/display";
+import { contextFill, DISPLAY_MESSAGE_SELECT, sharedIds, shownImageIds, toDisplayMessages } from "@/server/chat/display";
 import { forgetPackages } from "@/server/sandbox/code";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -35,8 +35,9 @@ export async function GET(_req: Request, ctx: Ctx) {
   });
   if (!conversation) return jsonError("Not found", 404);
 
-  // The files that tool steps shared with the user (share_file), which other steps made
-  const ids = conversation.messages.flatMap((m) => sharedIds(m.metadata));
+  // The files that tool steps shared with the user (share_file) and the images the replies' texts show,
+  // which other steps made
+  const ids = [...new Set(conversation.messages.flatMap((m) => [...sharedIds(m.metadata), ...shownImageIds(m.metadata)]))];
   const shared = ids.length
     ? await prisma.messageAttachment.findMany({
         where: { id: { in: ids }, deleted: false, message: { conversationId: id } },

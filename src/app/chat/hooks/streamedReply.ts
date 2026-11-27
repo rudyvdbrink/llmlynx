@@ -11,12 +11,14 @@ export type StreamedReply = {
   trace: TraceItem[];
   // The files the agent made, each once
   files: FileCard[];
+  // The sandbox's image files, which the names in the reply's text are matched against (see lib/inlineImages.ts)
+  imageFiles: FileCard[];
   error?: string;
   // The stream's { end } line came: it was not cut off
   ended: boolean;
 };
 
-export const NEW_REPLY: StreamedReply = { trace: [], files: [], ended: false };
+export const NEW_REPLY: StreamedReply = { trace: [], files: [], imageFiles: [], ended: false };
 
 export const isFileList = (value: unknown): value is FileCard[] =>
   Array.isArray(value) && value.every((f) => typeof f?.id === "string" && typeof f?.name === "string");
@@ -48,6 +50,7 @@ export function readReplyLine(reply: StreamedReply, value: unknown): StreamedRep
     pause?: unknown;
     checkpoint?: unknown;
     files?: unknown;
+    images?: unknown;
     error?: unknown;
     end?: unknown;
   } | null;
@@ -55,6 +58,8 @@ export function readReplyLine(reply: StreamedReply, value: unknown): StreamedRep
   if (line?.end === true) next = { ...next, ended: true };
   // Files the agent made show below its answer, each once
   if (isFileList(line?.files)) next = { ...next, files: withFileCards(next.files, line.files) };
+  // Sent before a request of the model, when they changed: the list in full
+  if (isFileList(line?.images)) next = { ...next, imageFiles: line.images };
   if (isToolLine(line?.tool)) next = { ...next, trace: upsertToolStep(next.trace, line.tool) };
   // The reply waits: the tool line of that call offers the choice
   if (isPauseLine(line?.pause)) {

@@ -10,6 +10,7 @@
 
 import { randomBytes } from "node:crypto";
 import { fileKind, formatSize, isArtifact, mimeTypeOf, cleanFilePath } from "@/lib/files";
+import { isImageFile, markdownRef } from "@/lib/inlineImages";
 import { conversationFiles, fileData } from "@/server/files/store";
 import { TOOL_SCAN_TIMEOUT_MS, UPLOAD_VIRUS_TIMEOUT_MS } from "@/server/security/limits";
 import { scanVirus } from "@/server/security/scan";
@@ -317,7 +318,12 @@ async function keepResults(
     ...deletions.map((name) => `deleted ${name}`),
   ];
   const shown = files.filter((f) => isArtifact(f.mimeType)).map((f) => f.name);
-  if (shown.length) notes.push(`The user sees these in the chat below your reply, so do not share or link to them: ${shown.join(", ")}.`);
+  if (shown.length) notes.push(`The user sees these in the chat below your reply, so do not share them or write links to them: ${shown.join(", ")}.`);
+  // Charts and other images can also show within the text, where the reply talks about them
+  const showable = files.filter(isImageFile).map((f) => f.name);
+  if (showable.length) {
+    notes.push(`To show ${showable.length === 1 ? "it" : "an image"} within your reply's text instead, write ![caption](${markdownRef(showable[0])}).`);
+  }
   // A model that can see checks its own charts the way it looks at any image
   const images = files.filter((f) => fileKind(f.name) === "image").map((f) => f.name);
   if (ctx.vision && images.length) {

@@ -14,7 +14,7 @@ import { UploadRefused } from "@/server/files/uploads";
 import { createAuditLog } from "@/server/security/audit";
 import { openSecurity } from "@/server/security/engine";
 import { textBudget } from "@/server/tools/definitions";
-import { attachAccept } from "@/server/tools/policy";
+import { attachAccept, hasFileTools } from "@/server/tools/policy";
 import { toSelection } from "@/lib/selection";
 import { fileProblem, MAX_FILES_PER_MESSAGE } from "@/lib/files";
 
@@ -158,6 +158,8 @@ export async function POST(req: NextRequest) {
     modelKey: target.modelKey,
     model: toSelection(target.kind, target.model),
     setup: setup.stored,
+    // As the tool loop sends the sandbox's image files to the chat view (see runToolLoop)
+    showsImages: hasFileTools(setup.tools),
   });
 
   // What the security checks log is written in one go when the reply ends

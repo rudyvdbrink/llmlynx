@@ -209,7 +209,8 @@ describe("what the chat shows of a run", () => {
     expect(reply.files?.map((f) => f.id)).toEqual([versions[1].id]);
     // The model is told the user sees it
     const [result] = (await run.rows()).filter((r) => r.toolName === "run_code");
-    expect(result.content).toContain("The user sees these in the chat below your reply, so do not share or link to them: plot.png.");
+    expect(result.content).toContain("The user sees these in the chat below your reply, so do not share them or write links to them: plot.png.");
+    expect(result.content).toContain("To show it within your reply's text instead, write ![caption](plot.png).");
   });
 
   it("shows nothing of a deleted file, nor its deletion", async () => {

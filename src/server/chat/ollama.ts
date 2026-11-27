@@ -311,6 +311,7 @@ export function streamOllamaChat(
           isCancelled: () => cancelled,
           sendTool: (step) => send(JSON.stringify({ tool: step })),
           sendFiles: (files) => send(JSON.stringify({ files })),
+          sendImages: (images) => send(JSON.stringify({ images })),
           sendPause: (pause) => send(JSON.stringify({ pause })),
           sendError: (error) => send(JSON.stringify({ error })),
           view,

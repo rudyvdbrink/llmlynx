@@ -10,6 +10,7 @@
 // scanned for injections; the rest is scanned when the model reads it.
 
 import { baseName, cleanFilePath, extensionOf, fileKind, formatSize, mimeTypeOf, typeLabel } from "@/lib/files";
+import { markdownRef } from "@/lib/inlineImages";
 import { sniffType } from "@/server/files/sniff";
 import { conversationFiles, fileData, findFile } from "@/server/files/store";
 import { checkFile, flaggedResult } from "@/server/security/engine";
@@ -127,6 +128,7 @@ export async function webFetch(args: Args, ctx: ToolCallContext): Promise<ToolRe
     );
   } else if (fileKind(name) === "image") {
     head.push(ctx.vision ? "It is an image: look at it with view_image." : "It is an image.");
+    head.push(`Show it in your reply with ![caption](${markdownRef(name)}).`);
   } else {
     head.push(check.info?.error ? `Its text could not be read: ${check.info.error}` : "It has no text.");
   }

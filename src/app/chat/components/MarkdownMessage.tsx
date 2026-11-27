@@ -1,7 +1,7 @@
 "use client";
 
 import React, { memo, useMemo, useRef } from "react";
-import ReactMarkdown, { type Components, type ExtraProps, type Options } from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform, type Components, type ExtraProps, type Options, type UrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import remarkMath from "remark-math";
@@ -10,7 +10,9 @@ import rehypeHighlight from "rehype-highlight";
 import tableStyles from "../Table.module.css";
 import chatStyles from "../Chat.module.css";
 import CopyButton from "./CopyButton";
-import ImageLink from "./ImageLink";
+import ImageFigure from "./ImageFigure";
+import rehypeImageGroups from "./imageGroups";
+import { InlineImage } from "./ReplyImages";
 
 /**
  * Normalize TeX-style delimiters \( ... \) and \[ ... \] in the raw markdown
@@ -106,17 +108,27 @@ const COMPONENTS: Components = {
     </div>
   ),
   pre: PreWithCopy,
-  img: ImageLink,
+  // Images: those that stand alone are grouped into figures (see imageGroups.ts), the others show in their line
+  img: InlineImage,
+  figure: ImageFigure,
 };
 
 const REMARK_PLUGINS: Options["remarkPlugins"] = [remarkMath, remarkGfm, remarkBreaks];
-const REHYPE_PLUGINS: Options["rehypePlugins"] = [[rehypeKatex, { throwOnError: false }], rehypeHighlight];
+const REHYPE_PLUGINS: Options["rehypePlugins"] = [[rehypeKatex, { throwOnError: false }], rehypeHighlight, rehypeImageGroups];
+
+/**
+ * URLs as react-markdown keeps them, and also an image's source with the
+ * scheme a model may put before a file name, such as sandbox:/mnt/data/a.png.
+ * It names a file of the sandbox, never anything the browser fetches.
+ */
+const urlTransform: UrlTransform = (url, key, node) =>
+  node.tagName === "img" && key === "src" && /^\s*(?:sandbox|file|attachment):/i.test(url) ? url : defaultUrlTransform(url);
 
 function MarkdownMessage({ content }: { content: string }) {
   const normalized = useMemo(() => normalizeTeXDelimiters(content), [content]);
 
   return (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS}>
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={COMPONENTS} urlTransform={urlTransform}>
       {normalized}
     </ReactMarkdown>
   );

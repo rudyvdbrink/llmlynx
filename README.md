@@ -4,20 +4,20 @@
   <img src="./public/logo_bg.png" width="256" alt="LLMLYNX Logo" />
 </p>
 
-> Fast, elegant, independent and free.
 
 ---
 
 ## Overview
 
-LLMLYNX is a lightweight, Next.js–based web interface for interacting with Large Language Models (LLMs). Any model hosted locally through ollama, or externally through Open Router or OpenAI are supported. Model interactions via ollama and data storage happen locally so your data remains your own property. 
+LLMLYNX is a lightweight harness and interface for Large Language Models (LLMs). It's designed with a local-first mindset and intended to get the most out of models that can run on consumer hardware. However, it supports models of any size, including external API calls through Open Router or OpenAI. Model interactions via [Ollama](https://ollama.ai/) and data storage happen locally so your data remains your own property.    
 
 LLMLYNX is designed to be:
 
-- **Self‑hosted** - run entirely on your own machine or server via [Ollama](https://ollama.ai/).
-- **Extensible** - plug in custom agents, tools, or retrieval layers.
-- **Secure by design** - web content is screened for prompt injection and malicious code.
-- **Performant** - streams tokens in real time.
+- **Self‑contained**: Can run entirely on your own machine or server, including inference.
+- **Extensible**:  Define custom agents and enable tools as desired.
+- **Secure**: web content is screened for prompt injection and malicious code, code execution happens inside of a sandbox environment.
+
+This project is in active development, so expect things to break along the way. 
 
 <p align="center" style="padding:16px;">
   <img src="./public/screen.png" alt="LLMLYNX Logo" />
