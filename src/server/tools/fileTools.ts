@@ -6,7 +6,7 @@
 // definition is.
 
 import { AGENT_TOOL_INFO } from "@/lib/agentTools";
-import { baseName, cleanFilePath, extensionOf, fileKind, MAX_FILE_BYTES, mimeTypeOf } from "@/lib/files";
+import { baseName, cleanFilePath, extensionOf, fileKind, isCode, MAX_FILE_BYTES, mimeTypeOf } from "@/lib/files";
 import { fileText, MAX_RENDERED_PAGES, prepareImage, renderPdfPages, serverError } from "@/server/files/convert";
 import { sniffType } from "@/server/files/sniff";
 import { decodeSource, isSourceFile, isUtf8Text, lineStarts, numbered, sourceLines } from "@/server/files/source";
@@ -102,9 +102,12 @@ async function callFilesServer(
     if (full) return failure(full);
     // Its version, for a next edit of it
     const version = files.length === 1 ? ` Its version is ${contentVersion(Buffer.from(files[0].data, "base64"))}.` : "";
-    const note = files.length
-      ? " The user gets it as a file card below your reply: do not write a link to it, nor repeat all of its content."
-      : "";
+    // Source code stays in the sandbox, as part of the work there, unless the model gives it to the user
+    const note = !files.length
+      ? ""
+      : files.some((f) => !isCode(f.name))
+        ? " The user gets it as a file card below your reply: do not write a link to it, nor repeat all of its content."
+        : " The user does not see it: if the user asked for this file, give it with share_file.";
     return { text: out.text.trim() + version + note, images: [], files, error: false };
   } catch (err) {
     if (ctx.signal.aborted) throw err;
@@ -370,7 +373,7 @@ export const FILE_TOOLS: ToolDefinition[] = [
     description:
       "Create a text file for the user to download: plain text, markdown, CSV, JSON, HTML, SVG or code " +
       "(Python, JavaScript, Go and so on). The extension of the name sets the type. The user gets the file " +
-      "as a card below your reply.",
+      "as a card below your reply; a code file only when you share it with share_file.",
     parameters: {
       type: "object",
       properties: {
@@ -410,7 +413,8 @@ export const FILE_TOOLS: ToolDefinition[] = [
     name: "edit_file",
     icon: AGENT_TOOL_INFO.edit_file.icon,
     description:
-      "Change a file of this conversation and give the user the new version, as a file card below your reply. " +
+      "Change a file of this conversation and give the user the new version, as a file card below your reply (a code " +
+      "file only when you share it with share_file). " +
       "Works on text and code files, and on the text of Word, PowerPoint and Excel files, whose formatting " +
       "stays as it is. Each edit replaces text that must occur in the file exactly once, unless all is true; in " +
       "Word and PowerPoint, within one paragraph, written without markdown. For Excel, cells can also be set.",

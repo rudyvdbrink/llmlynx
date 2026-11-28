@@ -9,13 +9,13 @@
 
 ## Overview
 
-LLMLYNX is a lightweight harness and interface for Large Language Models (LLMs). It's designed with a local-first mindset and intended to get the most out of models that can run on consumer hardware. However, it supports models of any size, including external API calls through Open Router or OpenAI. Model interactions via [Ollama](https://ollama.ai/) and data storage happen locally so your data remains your own property.    
+LLMLYNX is a lightweight harness and interface for Large Language Models (LLMs). It's designed with a local-first mindset and intended to get the most out of models that can run on consumer hardware. Nevertheless, it supports models of any size, including external API calls through Open Router or OpenAI. Model interactions via [Ollama](https://ollama.ai/) and data storage happen locally so your data remains your own property.    
 
 LLMLYNX is designed to be:
 
-- **Self‑contained**: Can run entirely on your own machine or server, including inference.
-- **Extensible**:  Define custom agents and enable tools as desired.
-- **Secure**: web content is screened for prompt injection and malicious code, code execution happens inside of a sandbox environment.
+- **Self‑contained**: Can run entirely on your own machine or server, including inference, so you own the full chain from query to data storage.
+- **Performant**: Context is automatically compressed and managed when approaching window limits so agents can operate over long horizons while maintaining task focus.
+- **Secure**: web content is screened for prompt injection and malicious code, code execution happens inside of an isolated sandbox environment.
 
 This project is in active development, so expect things to break along the way. 
 
@@ -104,7 +104,7 @@ Custom agents can search the web, read pages, take screenshots, read, create and
 | Create documents | Word, PDF and PowerPoint files, written by the model in markdown | a model that can call tools |
 | Create spreadsheets | Excel workbooks, with formulas | a model that can call tools |
 | Download files | Downloads a file, such as a dataset or a report, into the chat's sandbox, for code to work on | a model that can call tools |
-| Run code | Runs Python, JavaScript, TypeScript and shell commands (such as pytest or npm test) in the chat's sandbox, without network. numpy, pandas, scipy, matplotlib, openpyxl, pillow and pytest are built in. Charts and pages it makes show in the chat | a model that can call tools |
+| Run code | Runs Python, JavaScript, TypeScript and shell commands (such as pytest or npm test) in the chat's sandbox, without network. numpy, pandas, scipy, matplotlib, openpyxl, pillow and pytest are built in. Charts and pages it makes show in the chat when the agent shows or shares them | a model that can call tools |
 | Install packages | Installs packages from PyPI and npm for the chat's code: ready-built wheels only, and npm packages without their install scripts | Run code |
 | Git | Clones public repositories over HTTPS into the chat's sandbox, and runs git on them: history, diffs, branches, commits, merges and pulls. Nothing can be pushed | a model that can call tools |
 
@@ -136,13 +136,15 @@ All tools and guards run in their own containers:
 
 ## Security
 
-**Secrets.** Passwords and recovery codes are stored as salted bcrypt hashes (never plain text). API keys for OpenAI and OpenRouter must stay readable to be used, so they are encrypted (AES-256-GCM). Setup creates the encryption key, and a random token for each container. The containers can only be reached from the machine itself and are gated by an access token. 
-
-**Scanning.** Everything an agent gets from the internet is checked on the server before a model sees it. Nothing is sent to an outside service for this. ClamAV scans for viruses, and Llama Prompt Guard 2 scans for prompt injection. Files you attach yourself are scanned for viruses only.
+**Scanning.** Everything an agent gets from the internet is checked on the server before a model sees it. Nothing is sent to an outside service for this. ClamAV scans for viruses, and a custom [ONNX export of Llama Prompt Guard 2](https://github.com/rudyvdbrink/PromptGuardONNX) scans for prompt injection. Files you attach yourself are scanned for viruses only.
 
 - A virus: the file is refused, or the web content is thrown away.
 - A prompt injection: the reply pauses, and you choose to remove the content and continue, or to stop. A chevron shows the text that was flagged.
 - Content that could not be checked is withheld.
+
+**Secrets.** Passwords and recovery codes are stored as salted bcrypt hashes. API keys for OpenAI and OpenRouter must stay readable to be used, so they are encrypted (AES-256-GCM). Setup creates the encryption key, and a random token for each container. The containers can only be reached from the machine itself and are gated by an access token. 
+
+
 
 ---
 

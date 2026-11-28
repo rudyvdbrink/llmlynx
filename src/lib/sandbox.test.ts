@@ -36,10 +36,12 @@ describe("paths in the sandbox", () => {
 });
 
 describe("files in the chat", () => {
-  it("shows images, SVG and HTML that a run made, every file a file tool made, and nothing downloaded", () => {
+  it("shows what a file tool made but source code, and nothing that a run made or was downloaded", () => {
     const made = [card("a.png", "image/png"), card("b.svg", "image/svg+xml"), card("c.html", "text/html"), card("d.csv", "text/csv")];
-    expect(shownInChat("run_code", made).map((f) => f.name)).toEqual(["a.png", "b.svg", "c.html"]);
-    expect(shownInChat("create_file", made)).toHaveLength(4);
+    const code = [card("src/main.py", "text/plain"), card("app.TS", "text/plain"), card("Dockerfile", "text/plain"), card("pyproject.toml", "text/plain")];
+    expect(shownInChat("run_code", made)).toEqual([]);
+    expect(shownInChat("create_file", [...made, ...code]).map((f) => f.name)).toEqual(["a.png", "b.svg", "c.html", "d.csv"]);
+    expect(shownInChat("edit_file", code)).toEqual([]);
     expect(shownInChat("web_fetch", made)).toEqual([]);
     expect(shownInChat("git", made)).toEqual([]);
     expect(isArtifact("application/pdf")).toBe(false);

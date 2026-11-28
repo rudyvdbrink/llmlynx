@@ -154,8 +154,21 @@ export function contextWindowHint(tools: AgentToolName[], numCtx: number): strin
   return null;
 }
 
-/** The tools whose first call shows the sandbox panel's chevron: those that start the chat's sandbox, and update_notes for the notes tab. */
-export const SANDBOX_TOOL_NAMES: ToolName[] = ["run_code", "install_packages", "web_fetch", "git", "update_notes"];
+/**
+ * The tools whose first call shows the sandbox panel's chevron: those that start the chat's sandbox, those that
+ * write code files, which show no card to open the panel with, and update_notes for the notes tab.
+ */
+export const SANDBOX_TOOL_NAMES: ToolName[] = [
+  "run_code",
+  "install_packages",
+  "web_fetch",
+  "git",
+  "create_file",
+  "edit_file",
+  "edit_files",
+  "undo_file",
+  "update_notes",
+];
 
 export function isAgentTool(value: unknown): value is AgentToolName {
   return typeof value === "string" && (AGENT_TOOLS as readonly string[]).includes(value);

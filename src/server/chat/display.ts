@@ -2,8 +2,8 @@
 // The steps of one reply (assistant steps that call tools, the tool results,
 // and the answer) become one message: its trace holds the reasoning, the text
 // of each step, and the tool calls, in order; its content is all that text,
-// and its files those the file tools made, the images, SVG and HTML a
-// run of code made, and those the model shared (see shownInChat), each once,
+// and its files those the file tools made but source code, and those the
+// model shared (see shownInChat), each once,
 // as its newest version (see withFileCards); its imageFiles are the image files
 // its text shows, as stored with each step (see lib/inlineImages.ts). A user
 // message's files are those the user attached. A checkpoint (see

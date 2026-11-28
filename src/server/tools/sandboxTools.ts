@@ -114,9 +114,9 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
       "survive it, not imports, variables or functions, so save what you need to a file. To run a file of the " +
       "sandbox, use shell: python script.py. There is no network: download data with web_fetch first. Built in: " +
       "numpy, pandas, scipy, matplotlib, openpyxl, pillow and pytest for Python; install others with " +
-      `install_packages. Limits: ${RUN_TIME}, ${RUN_MEMORY} of memory, 1 MB of output. Images, SVG and HTML files it ` +
-      "saves show in the chat; HTML pages cannot load anything from the internet, so put their scripts and data " +
-      "in the page. You get the run's id, exit code and duration, what it printed (long output in part: read the rest " +
+      `install_packages. Limits: ${RUN_TIME}, ${RUN_MEMORY} of memory, 1 MB of output. The user does not see the files ` +
+      "it saves: show an image in your reply with ![caption](name), and give a file with share_file. HTML pages cannot " +
+      "load anything from the internet, so put their scripts and data in the page. You get the run's id, exit code and duration, what it printed (long output in part: read the rest " +
       "with read_run_log), the failing tests when pytest ran or a JUnit XML or Jest/Vitest JSON report was written, " +
       "and which files it made, changed or deleted.",
     parameters: {
@@ -239,8 +239,8 @@ export const SANDBOX_TOOLS: ToolDefinition[] = [
     description:
       "Give the user a file of this chat's sandbox: it shows as a file card below your reply, from which they open " +
       "or download it. Use it when the user asks for a file, or when a run made a file the user asked for, rather " +
-      "than downloading or making it again. To show an image, put it in your reply with ![caption](name) instead. " +
-      "Images, SVG and HTML that a run saves show in the chat already: do not share those.",
+      "than downloading or making it again: files a run makes, and code files, do not show by themselves. To show an " +
+      "image, put it in your reply with ![caption](name) instead.",
     parameters: {
       type: "object",
       properties: { file: { type: "string", description: "The file's name in the sandbox, as in the list of this conversation's files" } },

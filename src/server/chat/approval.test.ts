@@ -183,15 +183,21 @@ describe("in a chat that is not tainted", () => {
 });
 
 describe("what the chat shows of a run", () => {
-  it("shows the images, SVG and HTML a run made, and the files the model shared; other files only in the sandbox", async () => {
+  it("shows only the files of a run that the model shared; the others, images too, only in the sandbox", async () => {
     fakes.run = { changed: { "plot.png": "png", "page.html": "<p>hi</p>", "logo.svg": "<svg/>", "data.csv": "a" } };
-    const run = await chat([[runPython("...")], [{ name: "share_file", arguments: { file: "data.csv" } }]]);
+    const run = await chat([
+      [runPython("...")],
+      [{ name: "share_file", arguments: { file: "page.html" } }],
+      [{ name: "share_file", arguments: { file: "data.csv" } }],
+    ]);
     await run.done;
-    expect(run.files.map((f) => f.name)).toEqual(["plot.png", "page.html", "logo.svg", "data.csv"]);
+    expect(run.files.map((f) => f.name)).toEqual(["page.html", "data.csv"]);
 
     // After a reload, the same
     const reply = await reloaded(run);
-    expect(reply.files?.map((f) => f.name)).toEqual(["plot.png", "page.html", "logo.svg", "data.csv"]);
+    expect(reply.files?.map((f) => f.name)).toEqual(["page.html", "data.csv"]);
+    const [result] = (await run.rows()).filter((r) => r.toolName === "run_code");
+    expect(result.content).toContain("write ![caption](plot.png) in your reply to show an image there, and give a page with share_file.");
     const runs = await prisma.sandboxRun.findMany({ where: { conversationId: run.conversationId } });
     expect(runs).toHaveLength(1);
   });
@@ -207,15 +213,17 @@ describe("what the chat shows of a run", () => {
     expect(versions).toHaveLength(2);
     const reply = await reloaded(run);
     expect(reply.files?.map((f) => f.id)).toEqual([versions[1].id]);
-    // The model is told the user sees it
+    // The model is told the user does not see it, and how to show it
     const [result] = (await run.rows()).filter((r) => r.toolName === "run_code");
-    expect(result.content).toContain("The user sees these in the chat below your reply, so do not share them or write links to them: plot.png.");
-    expect(result.content).toContain("To show it within your reply's text instead, write ![caption](plot.png).");
+    expect(result.content).toContain(
+      "The user does not see the files a run makes. Show only those the user asked for or your reply is about, not what " +
+        "tests or other runs leave behind: write ![caption](plot.png) in your reply to show an image there."
+    );
   });
 
   it("shows nothing of a deleted file, nor its deletion", async () => {
     fakes.run = { changed: { "a.png": "png" } };
-    const run = await chat([[runPython("make")]]);
+    const run = await chat([[runPython("make")], [{ name: "share_file", arguments: { file: "a.png" } }]]);
     await run.done;
     fakes.run = { deleted: ["a.png"] };
     await prisma.message.create({
@@ -229,8 +237,8 @@ describe("what the chat shows of a run", () => {
         attachments: { create: { name: "a.png", mimeType: "application/octet-stream", data: Buffer.alloc(0), deleted: true } },
       },
     });
-    const [, reply] = toDisplayMessages(await run.rows());
-    expect(reply.files?.map((f) => f.name)).toEqual(["a.png"]); // the version the run made, which the chat showed
+    const reply = await reloaded(run);
+    expect(reply.files?.map((f) => f.name)).toEqual(["a.png"]); // the version the run made, which the model shared
     expect(JSON.stringify(reply)).not.toContain('"deleted"');
   });
 });

@@ -9,7 +9,7 @@
 // Output too long for the result is kept whole with the run, for read_run_log.
 
 import { randomBytes } from "node:crypto";
-import { fileKind, formatSize, isArtifact, mimeTypeOf, cleanFilePath } from "@/lib/files";
+import { fileKind, formatSize, isHtml, mimeTypeOf, cleanFilePath } from "@/lib/files";
 import { isImageFile, markdownRef } from "@/lib/inlineImages";
 import { conversationFiles, fileData } from "@/server/files/store";
 import { TOOL_SCAN_TIMEOUT_MS, UPLOAD_VIRUS_TIMEOUT_MS } from "@/server/security/limits";
@@ -317,12 +317,17 @@ async function keepResults(
       .map((f) => `${existing.has(f.name.toLowerCase()) ? "changed" : "made"} ${f.name} (${formatSize(f.size)})`),
     ...deletions.map((name) => `deleted ${name}`),
   ];
-  const shown = files.filter((f) => isArtifact(f.mimeType)).map((f) => f.name);
-  if (shown.length) notes.push(`The user sees these in the chat below your reply, so do not share them or write links to them: ${shown.join(", ")}.`);
-  // Charts and other images can also show within the text, where the reply talks about them
+  // The user sees nothing of what a run made until the model shows it: only what the user asked for, not what tests left
   const showable = files.filter(isImageFile).map((f) => f.name);
-  if (showable.length) {
-    notes.push(`To show ${showable.length === 1 ? "it" : "an image"} within your reply's text instead, write ![caption](${markdownRef(showable[0])}).`);
+  const pages = files.filter((f) => isHtml(f.mimeType)).map((f) => f.name);
+  if (showable.length || pages.length) {
+    notes.push(
+      "The user does not see the files a run makes. Show only those the user asked for or your reply is about, not " +
+        "what tests or other runs leave behind" +
+        (showable.length ? `: write ![caption](${markdownRef(showable[0])}) in your reply to show an image there` : "") +
+        (pages.length ? `${showable.length ? ", and" : ":"} give a page with share_file` : "") +
+        "."
+    );
   }
   // A model that can see checks its own charts the way it looks at any image
   const images = files.filter((f) => fileKind(f.name) === "image").map((f) => f.name);

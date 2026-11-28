@@ -106,7 +106,7 @@ export function toolGuidance(tools: ToolDefinition[], maxToolCalls: number): str
   if (makers.length) {
     lines.push(
       `- When the user asks for a file, make it with ${makers.join(" or ")} rather than writing it in your reply. ` +
-        "The user gets it as a file card below your reply."
+        "The user gets it as a file card below your reply; a code file only when you share it with share_file."
     );
   }
   if (has("edit_file")) {
