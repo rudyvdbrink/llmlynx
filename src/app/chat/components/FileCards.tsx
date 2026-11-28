@@ -56,9 +56,11 @@ export function HtmlFrame({ id, title, className }: { id: string; title: string;
  * text and code are cards that show the file in the sandbox panel, with a
  * button that downloads it (they download where the chat has no such panel);
  * every other file is a card that downloads it. Files of a message that is
- * still being sent come from the browser's own copy (`url`).
+ * still being sent come from the browser's own copy (`url`). With
+ * `onOpenImage`, a click on an image calls it instead, as a reply shows its
+ * images in a viewer of its own (see Reply.tsx).
  */
-export default function FileCards({ files }: { files: FileCard[] }) {
+export default function FileCards({ files, onOpenImage }: { files: FileCard[]; onOpenImage?: (id: string) => void }) {
   // The images, in order, and which one the viewer shows
   const images: (ViewerImage & { id: string })[] = files.filter(isImage).map((file) => ({
     id: file.id,
@@ -109,7 +111,8 @@ export default function FileCards({ files }: { files: FileCard[] }) {
                 onClick={(e) => {
                   if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
                   e.preventDefault();
-                  setViewing(images.findIndex((image) => image.id === file.id));
+                  if (onOpenImage) onOpenImage(file.id);
+                  else setViewing(images.findIndex((image) => image.id === file.id));
                 }}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element -- an authenticated API image, not a static asset */}

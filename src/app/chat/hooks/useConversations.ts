@@ -45,6 +45,7 @@ export function useConversations(selection: string, setSelection: (val: string) 
           content: m.content,
           trace: m.trace,
           files: m.files,
+          ...(m.imageFiles ? { imageFiles: m.imageFiles } : {}),
           ...(m.checkpoint ? { checkpoint: m.checkpoint } : {}),
         })),
         context: conversation.context ?? null,

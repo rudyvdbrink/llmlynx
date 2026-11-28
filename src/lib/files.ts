@@ -116,11 +116,7 @@ export const isSvg = (mimeType: string) => mimeType === "image/svg+xml";
 /** HTML shows in a sandboxed frame (see /api/attachments/:id/frame). */
 export const isHtml = (mimeType: string) => mimeType === "text/html";
 
-/**
- * Files that show in the chat as what they are, rather than as a card to
- * download: images, SVG and HTML. A run of code shows these in the chat by
- * itself; its other files only appear in the sandbox panel.
- */
+/** Files that show in the chat as what they are, rather than as a card to download: images, SVG and HTML. */
 export function isArtifact(mimeType: string): boolean {
   return isInlineImage(mimeType) || isSvg(mimeType) || isHtml(mimeType);
 }
@@ -193,18 +189,27 @@ export function cleanFilePath(raw: string): string | null {
 /** "out/plot.png" -> "plot.png" */
 export const baseName = (path: string) => path.split("/").pop() ?? path;
 
+// Source code, and the files that build and set it up: work in the sandbox, not something to give the user
+const CODE_EXTENSIONS = new Set([
+  "css", "scss", "js", "mjs", "cjs", "jsx", "ts", "tsx", "py", "go", "rs", "java", "kt", "c", "h", "cpp", "hpp", "cc",
+  "cs", "rb", "php", "swift", "sh", "bash", "zsh", "ps1", "bat", "sql", "r", "lua", "pl", "scala", "dart", "vue",
+  "svelte", "dockerfile", "makefile", "gitignore", "env", "toml", "ini", "cfg", "conf",
+]);
+
+/** "src/main.py" -> true, "notes.md" -> false */
+export const isCode = (name: string) => CODE_EXTENSIONS.has(extensionOf(name));
+
 /**
- * Which of the files a tool call stored show in the chat, below the reply: all
- * that a file tool made; of what a run of code made, only the images, SVG and
- * HTML (its other files only appear in the sandbox panel, so a run that writes
- * many files does not flood the chat); nothing that was downloaded, that git
- * checked out, or that edit_files changed in source code (its diff says what
- * changed). The model shows any other file with share_file.
+ * Which of the files a tool call stored show in the chat, as cards below the
+ * reply: those that a file tool made or changed, but no source code. Nothing
+ * that a run of code made (a run of tests can make many charts and pages),
+ * that was downloaded, that git checked out, or that edit_files changed (its
+ * diff says what changed). Those stay in the sandbox panel. The model shows
+ * an image in its reply's text, and gives any file with share_file.
  */
 export function shownInChat(toolName: string, files: FileCard[]): FileCard[] {
-  if (toolName === "run_code") return files.filter((f) => isArtifact(f.mimeType));
-  if (["web_fetch", "install_packages", "git", "edit_files"].includes(toolName)) return [];
-  return files;
+  if (["run_code", "web_fetch", "install_packages", "git", "edit_files"].includes(toolName)) return [];
+  return files.filter((f) => !isCode(f.name));
 }
 
 /**

@@ -1170,7 +1170,7 @@
   margin: 0;
   max-width: min(320px, 100%);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 3px;
   overflow: hidden;
   background: var(--surface);
 }
@@ -1242,7 +1242,7 @@
   display: block;
   max-width: calc(100vw - 144px);
   max-height: calc(100dvh - 112px);
-  border-radius: 8px;
+  border-radius: 3px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
   user-select: none;
   -webkit-user-select: none;
@@ -1270,7 +1270,7 @@
 
 /* Phones: the image takes the width, the arrows lie over its edges */
 @media (max-width: 760px) {
-  .viewerImage { max-width: calc(100vw - 24px); border-radius: 6px; }
+  .viewerImage { max-width: calc(100vw - 24px); }
   .viewerPrev { left: 8px; }
   .viewerNext { right: 8px; }
   .viewerClose { right: 8px; }
@@ -1279,6 +1279,223 @@
 @media (prefers-reduced-motion: reduce) {
   .viewer[open],
   .viewer::backdrop { animation: none; }
+}
+
+/* ===== Images in the text of a reply (ReplyImages.tsx, ImageFigure.tsx,
+   Carousel.tsx): image files of the sandbox that the model names. A click
+   shows one big, in the reply's viewer. ===== */
+.inlineImage,
+.figureImage,
+.carouselImage {
+  text-decoration: none;
+  outline: none;
+}
+.inlineImage img,
+.figureImage img,
+.carouselImage img {
+  display: block;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.inlineImage:focus-visible,
+.figureImage:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* In a line of text: small, in the middle of the line */
+.inlineImage {
+  display: inline-block;
+  vertical-align: middle;
+  max-width: 100%;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.inlineImage img { max-width: 100%; max-height: 160px; }
+/* In a table: smaller still */
+td .inlineImage img,
+th .inlineImage img { max-width: 140px; max-height: 96px; }
+
+/* An image that stands alone, with its alt text as its caption */
+.imageFigure {
+  margin: 8px 0;
+  width: fit-content;
+  max-width: min(480px, 100%);
+}
+.figureImage {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.figureImage img { max-width: 100%; max-height: 360px; margin: 0 auto; }
+.imageCaption {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* In the place of an image whose name matches no file yet, while the reply streams in */
+.imagePlaceholder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  text-align: center;
+  vertical-align: middle;
+  overflow: hidden;
+  animation: imagePulse 1.4s ease-in-out infinite;
+}
+.imagePlaceholderText { overflow-wrap: anywhere; }
+.inlinePlaceholder { width: 120px; height: 80px; border-radius: 2px; }
+.figurePlaceholder { display: flex; width: 240px; max-width: 100%; height: 160px; }
+.carouselPlaceholder { width: 100%; height: 100%; border: 0; border-radius: 0; }
+@keyframes imagePulse {
+  50% { opacity: 0.55; }
+}
+
+/* Images one after the other: one at a time, scrolled sideways, with nothing over
+   the image. Below it a bar with the caption and the previous and next buttons,
+   then a thumbnail of every image */
+.carousel {
+  margin: 8px 0;
+  width: min(640px, 100%);
+}
+/* The bubble of a text with a carousel takes the width, so that the carousel has one to scroll in */
+.bubble:has(.carousel) { width: 100%; }
+.carouselTrack {
+  display: flex;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  /* Stops at its ends instead of passing a sideways scroll on */
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--surface);
+  outline: none;
+}
+.carouselTrack::-webkit-scrollbar { display: none; }
+.carouselTrack:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+.carouselSlide {
+  flex: 0 0 100%;
+  height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+}
+.carouselImage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+.carouselImage img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.carouselImage:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+
+.carouselBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
+/* One line, so that the thumbnails below stay where they are; the whole caption is in its title */
+.carouselCaption {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.carouselNav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.carouselButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.carouselButton:hover:not(:disabled) { color: var(--text); background: var(--surface-hover); }
+.carouselButton:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; color: var(--text); }
+.carouselButton:disabled { opacity: 0.35; cursor: default; }
+.carouselCount {
+  min-width: 48px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.carouselThumbs {
+  position: relative;
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+.carouselThumbs::-webkit-scrollbar { height: 6px; }
+.carouselThumbs::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 999px; }
+.carouselThumb {
+  flex: none;
+  width: 56px;
+  height: 42px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--surface);
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity 0.12s ease, border-color 0.12s ease;
+}
+.carouselThumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.carouselThumb:hover { opacity: 0.9; }
+/* Inside the thumbnail, which the strip would cut off outside it, and apart from the current one's border */
+.carouselThumb:focus-visible { outline: 2px solid var(--text); outline-offset: -4px; opacity: 1; }
+.carouselThumbCurrent { border-color: var(--accent); opacity: 1; }
+.carouselThumbEmpty { display: block; width: 100%; height: 100%; padding: 0; border: 0; border-radius: 0; }
+
+@media (max-width: 600px) {
+  .carouselSlide { height: 260px; }
+}
+
+/* In a table cell: smaller, with a width of its own, as the cell takes it from its content.
+   On a phone it leaves room for another column next to it */
+td .carousel,
+th .carousel { width: min(260px, calc(100vw - 180px)); margin: 2px 0; }
+td .carouselSlide,
+th .carouselSlide { height: 180px; }
+td .carouselThumb,
+th .carouselThumb { width: 40px; height: 30px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .imagePlaceholder { animation: none; }
 }
 
 /* ===== The context indicator in the composer (ContextIndicator.tsx): how full

@@ -123,6 +123,7 @@ export function useChat({
           content: traceText(reply.trace),
           ...(reply.trace.length ? { trace: reply.trace } : {}),
           ...(reply.files.length ? { files: reply.files } : {}),
+          ...(reply.imageFiles.length ? { imageFiles: reply.imageFiles } : {}),
           ...(reply.error ? { error: reply.error } : {}),
         });
       };
